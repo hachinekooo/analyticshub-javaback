@@ -1,0 +1,140 @@
+HELP.md
+target/
+.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### VS Code ###
+.vscode/
+
+# macOS
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Environment / secrets
+.env
+.env.*
+.env.local
+.env.example
+.env.prod
+.env.dev
+.env.test
+
+# Local development configs
+config/
+local.properties
+secrets.properties
+
+# IDE specific files
+*.swp
+*.swo
+*~
+
+# Application logs
+*.log
+logs/
+
+# Maven build artifacts
+target/
+
+# Docker
+Dockerfile.local
+docker-compose.override.yml
+
+# Backup and temp files
+*.bak
+*-backup
+*_backup
+*.tmp
+*.swp
+
+# Java build / IDE
+*.class
+*.jar
+*.war
+*.ear
+out/
+build/
+
+### Maven ###
+# target/ is already ignored above but keep for clarity
+target/
+
+### Gradle ###
+.gradle/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+
+### Eclipse / STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+### VS Code (already present) ###
+.vscode/
+
+### Test / Coverage ###
+coverage/
+*.coverage
+jacoco.exec
+surefire-reports/
+
+### Docker ###
+docker-compose.override.yml
+
+### Node (docs folder may use node) ###
+node_modules/
+npm-debug.log*
+pnpm-lock.yaml
+package-lock.json
+
+### Misc ###
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
