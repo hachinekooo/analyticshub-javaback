@@ -1,0 +1,165 @@
+# ============================================================
+# Analytics Hub - Spring Boot 4 Application Configuration
+# Multi-Project Analytics Backend Service
+# JDK 25 + Spring Boot 4.0.1
+# ============================================================
+
+spring:
+  application:
+    name: analyticshub-javaback
+  
+  profiles:
+    active: dev
+  
+  # ============================================================
+  # ============================================================
+  # Database Configuration (System Database)
+  # ============================================================
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:analytics}
+    username: ${DB_USER:root}
+    password: ${DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      idle-timeout: 30000
+      connection-timeout: 30000
+      max-lifetime: 1800000
+      pool-name: AnalyticsSystemPool
+  
+  # Flyway Configuration
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 0
+    locations: classpath:db/migration
+    table: flyway_schema_history
+    clean-disabled: true
+    validate-on-migrate: true
+  
+  # MyBatis Plus Configuration
+
+# MyBatis Plus Settings
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+  mapper-locations: classpath*:/mapper/**/*.xml
+  type-aliases-package: com.github.analyticshub.entity
+  
+  # Jackson Configuration
+  jackson:
+    time-zone: UTC
+    date-format: yyyy-MM-dd'T'HH:mm:ss.SSS'Z'
+    default-property-inclusion: non_null
+
+# ============================================================
+# Server Configuration
+# ============================================================
+server:
+  port: 3001
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/xml,text/plain
+  error:
+    include-message: always
+    include-binding-errors: always
+
+# ============================================================
+# Management & Actuator
+# ============================================================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+  health:
+    defaults:
+      enabled: true
+
+# ============================================================
+# Logging Configuration
+# ============================================================
+logging:
+  level:
+    root: INFO
+    com.github.analyticshub: DEBUG
+    org.springframework.web: INFO
+    org.springframework.security: INFO
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# ============================================================
+# Application Custom Configuration
+# ============================================================
+app:
+  cors:
+    allowed-origins: "*"
+    allowed-methods: GET,POST,PUT,DELETE,OPTIONS
+    allowed-headers: Content-Type,Authorization,X-API-Key,X-Device-ID,X-User-ID,X-Timestamp,X-Signature,X-App-Version,X-Project-ID,X-Admin-Token
+    max-age: 3600
+  
+  rate-limit:
+    enabled: true
+    requests: 100
+    window-ms: 60000
+  
+  security:
+    admin-token: ${ADMIN_TOKEN:}
+    # 签名有效期（毫秒）
+    signature-validity-ms: 300000
+
+# 多项目数据源配置（从环境变量读取）
+analytics:
+  datasource:
+    host: ${DB_HOST:localhost}
+    port: ${DB_PORT:5432}
+    database: ${DB_NAME:analytics}
+    username: ${DB_USER:root}
+    password: ${DB_PASSWORD:}
+
+---
+# ============================================================
+# Development Profile
+# ============================================================
+spring:
+  config:
+    activate:
+      on-profile: dev
+  
+  jpa:
+    show-sql: true
+  
+  flyway:
+    clean-disabled: false
+
+logging:
+  level:
+    com.github.analyticshub: DEBUG
+
+---
+# ============================================================
+# Production Profile
+# ============================================================
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+logging:
+  level:
+    root: WARN
+    com.github.analyticshub: INFO
+    org.hibernate.SQL: WARN
