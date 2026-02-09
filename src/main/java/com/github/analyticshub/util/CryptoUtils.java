@@ -6,6 +6,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
+import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.Base64;
@@ -61,6 +62,12 @@ public final class CryptoUtils {
         return "evt_" + timestamp + "_" + randomPart;
     }
 
+    public static String generateTrafficMetricId() {
+        long timestamp = System.currentTimeMillis();
+        String randomPart = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        return "tm_" + timestamp + "_" + randomPart;
+    }
+
     /**
      * 验证UUID格式
      */
@@ -73,6 +80,19 @@ public final class CryptoUtils {
             return true;
         } catch (IllegalArgumentException e) {
             return false;
+        }
+    }
+
+    public static String sha256Hex(String data) {
+        if (data == null) {
+            data = "";
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] bytes = digest.digest(data.getBytes(StandardCharsets.UTF_8));
+            return Hex.encodeHexString(bytes);
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("SHA-256 unavailable", e);
         }
     }
 

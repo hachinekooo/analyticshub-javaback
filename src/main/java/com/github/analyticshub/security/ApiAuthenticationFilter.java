@@ -46,6 +46,7 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
             "/actuator",
             "/api/v1/auth/register",
             "/api/v1/auth/admin-token/verify",
+            "/api/public",
             "/api/admin"
     };
 

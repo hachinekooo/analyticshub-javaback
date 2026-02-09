@@ -338,6 +338,15 @@ else
   cd /tmp && rm -rf "${TEMP_DIR}"
 fi
 
+# 确保 schema 权限（有些系统会在 template1 里收紧 public schema 权限，导致 Flyway 建表失败）
+echo ">>> Ensuring schema privileges on database: ${PG_DB} ..."
+TEMP_DIR="$(mktemp -d)"
+cd "${TEMP_DIR}" || exit 1
+sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER DATABASE ${PG_DB} OWNER TO ${PG_USER};"
+sudo -u postgres psql -v ON_ERROR_STOP=1 -d "${PG_DB}" -c "GRANT USAGE, CREATE ON SCHEMA public TO ${PG_USER};"
+sudo -u postgres psql -v ON_ERROR_STOP=1 -d "${PG_DB}" -c "ALTER SCHEMA public OWNER TO ${PG_USER};"
+cd /tmp && rm -rf "${TEMP_DIR}"
+
 # -----------------------------
 # 4. 部署后端（systemd）- 支持跳过
 # -----------------------------

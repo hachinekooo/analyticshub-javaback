@@ -168,7 +168,8 @@ public class AdminProjectService {
                 prefix + "devices",
                 prefix + "events",
                 prefix + "sessions",
-                prefix + "traffic_metrics"
+                prefix + "traffic_metrics",
+                prefix + "counters"
         );
 
         return new ProjectInitResult("项目 " + config.projectId() + " 数据库初始化成功", tables);
