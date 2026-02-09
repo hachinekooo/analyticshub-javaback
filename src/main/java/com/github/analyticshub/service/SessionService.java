@@ -9,6 +9,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.Timestamp;
 import java.time.Instant;
 
 /**
@@ -71,7 +72,7 @@ public class SessionService {
                     request.sessionId().toString(),
                     context.getDevice().getDeviceId().toString(),
                     context.getUserId(),
-                    request.sessionStartTime(),
+                    Timestamp.from(request.sessionStartTime()),
                     request.sessionDurationMs() != null ? request.sessionDurationMs() : 0L,
                     request.deviceModel(),
                     request.osVersion(),
@@ -80,7 +81,7 @@ public class SessionService {
                     request.screenCount() != null ? request.screenCount() : 0,
                     request.eventCount() != null ? request.eventCount() : 0,
                     context.getProjectId(),
-                    Instant.now()
+                    Timestamp.from(Instant.now())
             );
 
             log.log(System.Logger.Level.INFO, "会话已更新: {0}", request.sessionId());

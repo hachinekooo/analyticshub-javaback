@@ -13,7 +13,7 @@
 
 - API 接入层：Controller、DTO、全局异常处理
 - 安全层：Admin Token 认证、API Key + HMAC 认证、请求上下文
-- 业务层：设备注册、事件采集、会话上传、项目管理
+- 业务层：设备注册、事件采集、会话上传、流量指标采集、运营计数器、项目管理
 - 数据源层：多项目数据源管理、项目配置加载、表名拼接
 - 数据层：PostgreSQL + Flyway 迁移
 
@@ -45,6 +45,12 @@ flowchart TB
 - 采集端（/api/v1/**）：API Key + HMAC 签名 + 时间戳
 - 管理端（/api/admin/**）：Admin Token（X-Admin-Token 或 Authorization: Bearer）
 - 管理端 Token 校验（/api/v1/auth/admin-token/verify）：专用校验接口
+- 官网/公共入口：
+  - 流量采集（/api/public/traffic/**）：无需 HMAC 签名。基于 Cookie (`ah_did`) 自动识别设备。
+  - 公开汇总（GET /api/public/traffic/summary）：用于官网展示实时 PV/UV。
+  - 项目识别：支持通过请求头 `X-Project-ID` 或 URL 参数 `projectId` 传递。
+  - 安全：可选 `X-Traffic-Token` 校验。
+  - 运营计数器（/api/public/counters/**）：只读公开计数器（isPublic=true）
 - 生产环境 /actuator/**：仅在 prod profile 强制 Admin Token
 
 ## 请求处理总览
@@ -124,8 +130,10 @@ sequenceDiagram
 签名串格式（服务端使用）：
 
 ```
-method|path|timestamp|deviceId|userId|body
+method|path|timestamp|deviceId|userId|
 ```
+
+说明：为避免读取并消耗请求体，服务端不参与 body 签名；客户端应按上述格式签名。
 
 示例请求：
 
@@ -135,7 +143,7 @@ Content-Type: application/json
 X-Project-ID: your-project-id
 X-API-Key: ak_xxxxxxxxxxxxx
 X-Device-ID: 550e8400-e29b-41d4-a716-446655440000
-X-User-ID: user123
+X-User-ID: 00112233445566778899aabbccddeeff
 X-Timestamp: 1700000000000
 X-Signature: hmac_signature_here
 

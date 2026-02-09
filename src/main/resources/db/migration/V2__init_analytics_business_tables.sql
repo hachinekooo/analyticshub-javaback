@@ -105,5 +105,27 @@ CREATE INDEX idx_traffic_type ON analytics_traffic_metrics(metric_type);
 CREATE INDEX idx_traffic_created_at ON analytics_traffic_metrics(created_at DESC);
 CREATE INDEX idx_traffic_project_device ON analytics_traffic_metrics(project_id, device_id);
 CREATE INDEX idx_traffic_project_created ON analytics_traffic_metrics(project_id, created_at DESC);
+CREATE INDEX idx_traffic_page_path ON analytics_traffic_metrics(page_path);
+CREATE INDEX idx_traffic_referrer ON analytics_traffic_metrics(referrer);
+CREATE INDEX idx_traffic_metadata ON analytics_traffic_metrics USING gin(metadata);
 
 COMMENT ON TABLE analytics_traffic_metrics IS '流量指标记录表';
+
+-- 5. 运营累计统计计数器（可选）
+CREATE TABLE IF NOT EXISTS analytics_counters (
+    id BIGSERIAL PRIMARY KEY,
+    counter_key VARCHAR(100) NOT NULL,
+    counter_value BIGINT NOT NULL DEFAULT 0,
+    display_name VARCHAR(200),
+    unit VARCHAR(50),
+    is_public BOOLEAN DEFAULT FALSE,
+    description TEXT,
+    project_id VARCHAR(50) NOT NULL DEFAULT 'analytics-system',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT uq_counters_project_key UNIQUE (project_id, counter_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_counters_project_updated ON analytics_counters(project_id, updated_at DESC);
+
+COMMENT ON TABLE analytics_counters IS '运营累计统计计数器';

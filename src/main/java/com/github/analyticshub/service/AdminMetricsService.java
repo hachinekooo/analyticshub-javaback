@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import javax.sql.DataSource;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
@@ -214,10 +215,17 @@ public class AdminMetricsService {
         String sql = String.format(template, table);
         Map<Instant, Long> result = new HashMap<>();
         jdbcTemplate.query(sql, rs -> {
-            Timestamp bucket = rs.getTimestamp("bucket");
+            Instant bucket;
+            try {
+                OffsetDateTime odt = rs.getObject("bucket", OffsetDateTime.class);
+                bucket = odt != null ? odt.toInstant() : null;
+            } catch (Exception e) {
+                Timestamp ts = rs.getTimestamp("bucket");
+                bucket = ts != null ? ts.toInstant() : null;
+            }
             long total = rs.getLong("total");
             if (bucket != null) {
-                result.put(bucket.toInstant(), total);
+                result.put(bucket, total);
             }
         }, args);
         return result;

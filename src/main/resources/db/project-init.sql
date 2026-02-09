@@ -93,3 +93,23 @@ CREATE INDEX IF NOT EXISTS idx_traffic_type ON {{PREFIX}}traffic_metrics(metric_
 CREATE INDEX IF NOT EXISTS idx_traffic_created_at ON {{PREFIX}}traffic_metrics(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_traffic_project_device ON {{PREFIX}}traffic_metrics(project_id, device_id);
 CREATE INDEX IF NOT EXISTS idx_traffic_project_created ON {{PREFIX}}traffic_metrics(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_traffic_page_path ON {{PREFIX}}traffic_metrics(page_path);
+CREATE INDEX IF NOT EXISTS idx_traffic_referrer ON {{PREFIX}}traffic_metrics(referrer);
+CREATE INDEX IF NOT EXISTS idx_traffic_metadata ON {{PREFIX}}traffic_metrics USING gin(metadata);
+
+-- 5. 运营累计统计计数器（可选）
+CREATE TABLE IF NOT EXISTS {{PREFIX}}counters (
+    id BIGSERIAL PRIMARY KEY,
+    counter_key VARCHAR(100) NOT NULL,
+    counter_value BIGINT NOT NULL DEFAULT 0,
+    display_name VARCHAR(200),
+    unit VARCHAR(50),
+    is_public BOOLEAN DEFAULT FALSE,
+    description TEXT,
+    project_id VARCHAR(50) NOT NULL DEFAULT 'analytics-system',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT uq_counters_project_key UNIQUE (project_id, counter_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_counters_project_updated ON {{PREFIX}}counters(project_id, updated_at DESC);

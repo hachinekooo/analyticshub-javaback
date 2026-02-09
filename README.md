@@ -58,15 +58,26 @@ src/main/java/com/github/analyticshub/
 │   └── MultiDataSourceManager.java
 ├── controller/           # REST API 控制器
 │   ├── AuthController.java
+│   ├── AdminCounterController.java
 │   ├── EventController.java
+│   ├── TrafficMetricController.java
 │   ├── SessionController.java
+│   ├── PublicCounterController.java
+│   ├── PublicTrafficController.java
 │   └── HealthController.java
 ├── dto/                  # 请求/响应 DTO
 │   ├── DeviceRegisterRequest.java
 │   ├── DeviceRegisterResponse.java
+│   ├── CounterIncrementRequest.java
+│   ├── CounterRecord.java
+│   ├── CounterUpsertRequest.java
+│   ├── CountersResponse.java
 │   ├── EventTrackRequest.java
 │   ├── EventTrackResponse.java
-│   └── SessionUploadRequest.java
+│   ├── SessionUploadRequest.java
+│   ├── TrafficMetricSummaryResponse.java
+│   ├── TrafficMetricTrackRequest.java
+│   └── TrafficMetricTrackResponse.java
 ├── entity/               # JPA 实体类
 │   ├── AnalyticsProject.java
 │   ├── Device.java
@@ -82,8 +93,11 @@ src/main/java/com/github/analyticshub/
 │   └── RequestContext.java
 ├── service/              # 业务逻辑层
 │   ├── AuthService.java
+│   ├── CounterService.java
 │   ├── EventService.java
-│   └── SessionService.java
+│   ├── SessionService.java
+│   ├── TrafficMetricService.java
+│   └── TrafficMetricStatsService.java
 ├── util/                 # 工具类
 │   └── CryptoUtils.java
 └── AnalyticshubJavabackApplication.java
@@ -231,7 +245,7 @@ Content-Type: application/json
 X-Project-ID: your-project-id
 X-API-Key: ak_xxxxxxxxxxxxx
 X-Device-ID: 550e8400-e29b-41d4-a716-446655440000
-X-User-ID: user123
+X-User-ID: 00112233445566778899aabbccddeeff
 X-Timestamp: 1673520000000
 X-Signature: hmac_signature_here
 
@@ -246,6 +260,10 @@ X-Signature: hmac_signature_here
 }
 ```
 
+说明：
+- `X-User-ID` 必须是 32 位十六进制字符串（不含 `-`）。
+- HMAC 签名串格式：`method|path|timestamp|deviceId|userId|`（服务端不参与 body 签名）。  
+
 ### 会话上传
 
 ```http
@@ -254,7 +272,7 @@ Content-Type: application/json
 X-Project-ID: your-project-id
 X-API-Key: ak_xxxxxxxxxxxxx
 X-Device-ID: 550e8400-e29b-41d4-a716-446655440000
-X-User-ID: user123
+X-User-ID: 00112233445566778899aabbccddeeff
 X-Timestamp: 1673520000000
 X-Signature: hmac_signature_here
 
@@ -270,10 +288,115 @@ X-Signature: hmac_signature_here
 }
 ```
 
+### 流量指标采集（采集端）
+
+```http
+POST /api/v1/traffic-metrics/track
+Content-Type: application/json
+X-Project-ID: your-project-id
+X-API-Key: ak_xxxxxxxxxxxxx
+X-Device-ID: 550e8400-e29b-41d4-a716-446655440000
+X-User-ID: 00112233445566778899aabbccddeeff
+X-Timestamp: 1673520000000
+X-Signature: hmac_signature_here
+
+{
+  "metricType": "page_view",
+  "pagePath": "/",
+  "referrer": "https://www.google.com",
+  "timestamp": 1673520000000,
+  "sessionId": null,
+  "metadata": {
+    "utm_source": "google"
+  }
+}
+```
+
+支持批量写入：
+
+```http
+POST /api/v1/traffic-metrics/batch
+```
+
+### 流量指标采集（官网 / 公共入口）
+
+该入口专为“官网流量统计”设计，追求接入极简：
+- **认证**：无需 HMAC 签名。基于 Cookie (`ah_did`) 自动识别设备。
+- **项目识别**：支持通过请求头 `X-Project-ID` 或 URL 参数 `projectId` 传递（如 `?projectId=memobox`）。
+- **设备识别**：前端无需传递任何 ID。服务端通过 `ah_did` Cookie 自动识别访客（用于 UV 统计）。
+- **跨域支持**：请求请开启 `credentials: 'include'` 确保 Cookie 正常传递。
+- **元数据**：服务端会自动解析 `userAgent`、机器人标记 (`isBot`)，并自动补全 `referrer`（基于 Header Fallback）。
+
+查询汇总数据（供官网展示实时 PV/UV）：
+```http
+GET /api/public/traffic/summary?projectId=your-project-id&from=...&to=...
+```
+- 响应内容同管理端 `summary` 接口，但针对官网公开展示设计。
+- 自动过滤机器人数据。
+
+```http
+POST /api/public/traffic/track
+Content-Type: application/json
+X-Project-ID: your-project-id
+X-Traffic-Token: your_traffic_token
+```
+
+支持批量写入：
+
+```http
+POST /api/public/traffic/batch
+```
+
+### 管理端流量指标（查询与分析）
+
+```http
+GET /api/admin/traffic-metrics?projectId=your-project-id&metricType=page_view&page=1&pageSize=20
+GET /api/admin/traffic-metrics/summary?projectId=your-project-id&from=...&to=...
+GET /api/admin/traffic-metrics/trends?projectId=your-project-id&granularity=day # 趋势分析
+GET /api/admin/traffic-metrics/top-pages?projectId=your-project-id&limit=10    # 热门页面分析
+GET /api/admin/traffic-metrics/top-referrers?projectId=your-project-id&limit=10 # 热门来源分析
+```
+
+接口说明：
+- `summary`：返回核心计数（PV、UV），自动排除机器人流量。
+- `trends`：返回时间维度的访问趋势。
+- `top-pages`：返回访问量最高的页面路径排行。
+- `top-referrers`：返回流量来源站点的排行。
+
+### 运营累计统计（Counters）
+
+适用于“累计写信 10000 封”这类高性能运营展示。
+
+#### 官网展示集成（公开接口）
+
+针对官网场景，推荐以下接入方式：
+
+1. **批量加载（推荐首页使用）**：
+   一次性获取所有标记为 `isPublic=true` 的数据，避免多次网络 IO。
+   ```http
+   GET /api/public/counters?projectId=your-project-id
+   ```
+   **Keys 自动发现**：前端开发时，先在管理后台为项目创建 `total_users` (守护人数)、`total_letters` (寄出信件) 等 Key 并设为公开，前端代码直接遍历接口返回的 `items` 数组即可实现自动化渲染。
+
+2. **精准点对点查询**：
+   ```http
+   GET /api/public/counters/{key}?projectId=your-project-id
+   ```
+
+#### 管理端操作（需要 Admin Token）
+
+用于业务系统同步数据（如信件发送成功后累加）：
+```http
+GET  /api/admin/counters?projectId=your-project-id
+PUT  /api/admin/counters/{key}?projectId=your-project-id # 创建/全量更新
+POST /api/admin/counters/{key}/increment?projectId=your-project-id # 偏移累加（原子操作）
+```
+
 ## 认证机制
 
 - 管理端接口：`X-Admin-Token` 或 `Authorization: Bearer <token>`，不走 HMAC
 - 采集端接口：API Key + HMAC 签名 + 时间戳校验
+- 官网流量采集：`/api/public/traffic/**` 不走 HMAC；可选 `X-Traffic-Token`
 - 详细流程与时序说明见 `docs/ARCHITECTURE.md`
 
 ## 数据库迁移
@@ -328,6 +451,7 @@ mvn flyway:migrate
 - `spring.flyway.*`: Flyway 迁移配置
 - `app.rate-limit.*`: 请求限流配置
 - `app.security.*`: 安全配置
+- `app.traffic.*`: 官网流量采集配置（Token、IP 哈希盐）
 
 ### 环境配置
 
