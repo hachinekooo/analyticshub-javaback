@@ -12,7 +12,7 @@
 ### 逻辑模块
 
 - API 接入层：Controller、DTO、全局异常处理
-- 安全层：Admin Token 认证、API Key + HMAC 认证、IP 限流防护、邮件告警、请求上下文
+- 安全层：Admin Token 认证、**双因素认证 (2FA/TOTP)**、API Key + HMAC 认证、IP 限流防护、邮件告警、请求上下文
 - 业务层：设备注册、事件采集、会话上传、流量指标采集、运营计数器、项目管理
 - 数据源层：多项目数据源管理、项目配置加载、表名拼接
 - 数据层：PostgreSQL + Flyway 迁移
@@ -44,7 +44,10 @@ flowchart TB
 
 - 采集端（/api/v1/**）：API Key + HMAC 签名 + 时间戳
 - 管理端（/api/admin/**）：Admin Token（X-Admin-Token 或 Authorization: Bearer）
-  - **安全防护**：IP 限流（5 次失败封禁 15 分钟）+ 邮件告警 + 防时序攻击
+  - **安全防护**：
+    - **双因素认证 (2FA)**：基于 TOTP (Google/Microsoft Authenticator)。在新环境/IP 访问时强制要求 `X-Admin-OTP` 校验。
+    - **信任设备**：成功验证后 IP 加入 24 小时信任白名单，减少重复验证感。
+    - **IP 限流**：5 次失败封禁 15 分钟 + 邮件告警。
 - 管理端 Token 校验（/api/v1/auth/admin-token/verify）：专用校验接口
 - 官网/公共入口：
   - 流量采集（/api/public/traffic/**）：无需 HMAC 签名。基于 Cookie (`ah_did`) 自动识别设备。
@@ -59,6 +62,8 @@ flowchart TB
 ### 统一处理顺序（高层）
 
 1. 进入 FilterChain（根据路径命中不同认证过滤器）
+    - **Admin 链路**：验证 Token -> 验证 2FA (若开启且为新 IP) -> 验证通过
+    - **API 链路**：验证 API Key -> 验证签名 -> 校验时间戳 -> 验证通过
 2. 认证通过后进入 Controller
 3. Controller 调用 Service
 4. Service 通过 MultiDataSourceManager 获取项目数据源
