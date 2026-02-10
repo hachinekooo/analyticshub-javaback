@@ -27,10 +27,12 @@ public class EventService {
 
     private final MultiDataSourceManager dataSourceManager;
     private final ObjectMapper objectMapper;
+    private final CounterService counterService;
 
-    public EventService(MultiDataSourceManager dataSourceManager, ObjectMapper objectMapper) {
+    public EventService(MultiDataSourceManager dataSourceManager, ObjectMapper objectMapper, CounterService counterService) {
         this.dataSourceManager = dataSourceManager;
         this.objectMapper = objectMapper;
+        this.counterService = counterService;
     }
 
     /**
@@ -85,6 +87,13 @@ public class EventService {
             );
 
             log.log(System.Logger.Level.INFO, "事件已记录: {0} ({1})", request.eventType(), eventId);
+
+            // 触发计数器自动化 (异步/原子由 CounterService 保证处理)
+            try {
+                counterService.processEventAutoIncrements(context.getProjectId(), request.eventType(), request.properties());
+            } catch (Exception e) {
+                log.log(System.Logger.Level.WARNING, "计数器自动维护失败: {0}", e.getMessage());
+            }
 
             return new EventTrackResponse(eventId);
 
@@ -163,5 +172,29 @@ public class EventService {
         );
 
         jdbcTemplate.update(insertSql, args.toArray());
+
+        // 批量触发计数器自动化
+        for (EventTrackRequest event : events) {
+            if (event == null || event.eventType() == null) continue;
+            try {
+                counterService.processEventAutoIncrements(context.getProjectId(), event.eventType(), event.properties());
+            } catch (Exception e) {
+                log.log(System.Logger.Level.WARNING, "批量计数器自动维护失败: {0}", e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * 获取项目下所有不重复的事件类型 (用于配置 UI)
+     */
+    public List<String> getDistinctEventTypes(String projectId) {
+        MultiDataSourceManager.ProjectConfig config = dataSourceManager.getProjectConfig(projectId);
+        if (config == null) return List.of();
+        
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSourceManager.getDataSource(projectId));
+        String table = dataSourceManager.getTableName(projectId, "events");
+        
+        String sql = String.format("SELECT DISTINCT event_type FROM %s WHERE project_id = ?", table);
+        return jdbcTemplate.queryForList(sql, String.class, projectId);
     }
 }

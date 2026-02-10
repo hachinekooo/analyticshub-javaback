@@ -1,4 +1,6 @@
-**0. 如果你的 postgreSQL 部署在 docker 中，这样进入交互式操作**
+## 如果你是 docker
+
+这样进入交互式操作**
 
 ```
 PG_CONTAINER=infra-postgres15
@@ -18,20 +20,35 @@ WHERE datname = '数据库名' AND pid <> pg_backend_pid();
 DROP DATABASE IF EXISTS 数据库名;
 ```
 
+## 用户操作
 
-**2. -- 1. 先创建analytics用户（设置密码，按需修改）：**
+查看所有用户
+
+```sql
+\du
+```
+
+精准查询 analytics 用户
+```sql
+SELECT analytics FROM pg_user WHERE usename = 'analytics';
+```
+
+创建用户
+
 ```
 CREATE ROLE analytics WITH
 LOGIN
 PASSWORD 'analytics';
 ```
 
-修改密码：
+修改用户的密码：
 ```sql
 ALTER ROLE analytics WITH PASSWORD '你的新密码';
 ```
+## 数据库操作
 
-**3. 创建数据库（UTF8编码，en_US.UTF-8排序规则）：**
+创建数据库（UTF8编码，en_US.UTF-8排序规则）
+
 ```sql
 -- 创建数据库并指定所有者
 CREATE DATABASE analytics
@@ -43,7 +60,8 @@ CREATE DATABASE analytics
     TEMPLATE = template0;      -- 关键：指定template0模板
 ```
 
-**4. 查看数据库信息：**
+查看数据库信息
+
 ```sql
 -- 在psql命令行中使用
 \l 数据库名     -- 查看特定数据库信息
