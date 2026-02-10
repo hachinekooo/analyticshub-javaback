@@ -23,16 +23,16 @@ public class EmailService {
     @Value("${spring.mail.enabled:false}")
     private boolean emailEnabled;
 
-    public EmailService(JavaMailSender mailSender) {
-        this.mailSender = mailSender;
+    public EmailService(org.springframework.beans.factory.ObjectProvider<JavaMailSender> mailSenderProvider) {
+        this.mailSender = mailSenderProvider.getIfAvailable();
     }
 
     /**
      * 发送安全告警邮件
      */
     public void sendSecurityAlert(String subject, String content) {
-        if (!emailEnabled || alertRecipient == null || alertRecipient.isBlank()) {
-            System.err.println("[邮件未配置] 安全告警: " + subject + " - " + content);
+        if (!emailEnabled || alertRecipient == null || alertRecipient.isBlank() || mailSender == null) {
+            System.err.println("[邮件系统未就绪/未启用] 安全告警: " + subject + " - " + content);
             return;
         }
 

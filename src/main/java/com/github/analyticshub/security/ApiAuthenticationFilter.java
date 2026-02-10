@@ -25,7 +25,6 @@ import java.util.regex.Pattern;
  * 验证多项目的API Key和HMAC签名
  * 支持项目隔离和动态数据源切换
  */
-@Component
 public class ApiAuthenticationFilter extends OncePerRequestFilter {
 
     private static final System.Logger log = System.getLogger(ApiAuthenticationFilter.class.getName());
@@ -35,8 +34,7 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
 
     private static final Pattern USER_ID_PATTERN = Pattern.compile("^[a-fA-F0-9]{32}$");
 
-    @Value("${app.security.signature-validity-ms:300000}")
-    private long signatureValidityMs;
+    private final long signatureValidityMs;
 
     // 不需要 HMAC 认证的路径
     // 注意：该过滤器是 @Component，可能会被 Servlet 容器全局注册。
@@ -50,9 +48,12 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
             "/api/admin"
     };
 
-    public ApiAuthenticationFilter(MultiDataSourceManager dataSourceManager, ObjectMapper objectMapper) {
+    public ApiAuthenticationFilter(MultiDataSourceManager dataSourceManager, 
+                                   ObjectMapper objectMapper,
+                                   long signatureValidityMs) {
         this.dataSourceManager = dataSourceManager;
         this.objectMapper = objectMapper;
+        this.signatureValidityMs = signatureValidityMs;
     }
 
     @Override
