@@ -79,7 +79,7 @@ public class TrafficMetricStatsService {
                 table
         );
 
-        java.util.Map<java.time.Instant, TrafficMetricTrendPoint> dataMap = new java.util.HashMap<>();
+        java.util.Map<String, TrafficMetricTrendPoint> dataMap = new java.util.HashMap<>();
         jdbcTemplate.query(sql, rs -> {
             java.time.Instant time;
             try {
@@ -90,7 +90,8 @@ public class TrafficMetricStatsService {
                 time = ts != null ? ts.toInstant() : null;
             }
             if (time != null) {
-                dataMap.put(time, new TrafficMetricTrendPoint(time.toString(), rs.getLong("pv"), rs.getLong("uv")));
+                String key = bucket.format(time);
+                dataMap.put(key, new TrafficMetricTrendPoint(time.toString(), rs.getLong("pv"), rs.getLong("uv")));
             }
         }, bucket.value(), normalizedProjectId, start, end);
 
@@ -98,8 +99,9 @@ public class TrafficMetricStatsService {
         java.time.ZonedDateTime cursor = bucket.truncate(range.start());
         java.time.ZonedDateTime endCursor = range.end().atZone(java.time.ZoneOffset.UTC);
         while (cursor.isBefore(endCursor)) {
-            java.time.Instant key = cursor.toInstant();
-            points.add(dataMap.getOrDefault(key, new TrafficMetricTrendPoint(key.toString(), 0L, 0L)));
+            java.time.Instant instant = cursor.toInstant();
+            String key = bucket.format(instant);
+            points.add(dataMap.getOrDefault(key, new TrafficMetricTrendPoint(instant.toString(), 0L, 0L)));
             cursor = bucket.next(cursor);
         }
 
@@ -191,8 +193,11 @@ public class TrafficMetricStatsService {
     }
 
     private enum Granularity {
+        HOUR("hour", java.time.temporal.ChronoUnit.HOURS),
         DAY("day", java.time.temporal.ChronoUnit.DAYS),
-        HOUR("hour", java.time.temporal.ChronoUnit.HOURS);
+        WEEK("week", java.time.temporal.ChronoUnit.WEEKS),
+        MONTH("month", java.time.temporal.ChronoUnit.MONTHS),
+        YEAR("year", java.time.temporal.ChronoUnit.YEARS);
 
         private final String value;
         private final java.time.temporal.ChronoUnit unit;
@@ -213,13 +218,29 @@ public class TrafficMetricStatsService {
             return switch (value.trim().toLowerCase(java.util.Locale.ROOT)) {
                 case "hour", "hours" -> HOUR;
                 case "day", "days" -> DAY;
+                case "week", "weeks" -> WEEK;
+                case "month", "months" -> MONTH;
+                case "year", "years" -> YEAR;
                 default -> DAY;
             };
         }
 
         public java.time.ZonedDateTime truncate(java.time.Instant instant) {
             java.time.ZonedDateTime zdt = instant.atZone(java.time.ZoneOffset.UTC);
+            if (this == YEAR) return zdt.truncatedTo(java.time.temporal.ChronoUnit.DAYS).withDayOfYear(1);
+            if (this == MONTH) return zdt.truncatedTo(java.time.temporal.ChronoUnit.DAYS).withDayOfMonth(1);
+            if (this == WEEK) return zdt.truncatedTo(java.time.temporal.ChronoUnit.DAYS).minusDays(zdt.getDayOfWeek().getValue() - 1);
             return zdt.truncatedTo(unit);
+        }
+
+        public String format(java.time.Instant instant) {
+            String pattern = switch (this) {
+                case HOUR -> "yyyy-MM-dd HH";
+                case YEAR -> "yyyy";
+                case MONTH -> "yyyy-MM";
+                default -> "yyyy-MM-dd";
+            };
+            return java.time.format.DateTimeFormatter.ofPattern(pattern).withZone(java.time.ZoneOffset.UTC).format(instant);
         }
 
         public java.time.ZonedDateTime next(java.time.ZonedDateTime zdt) {
