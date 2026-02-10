@@ -19,22 +19,25 @@ import java.nio.charset.StandardCharsets;
  * 管理端 API 认证过滤器
  * 集成限流防护和邮件告警
  */
-@Component
 public class AdminApiAuthenticationFilter extends OncePerRequestFilter {
 
     private final ObjectMapper objectMapper;
     private final RateLimitService rateLimitService;
     private final EmailService emailService;
+    private final TwoFactorAuthService twoFactorAuthService;
 
-    @Value("${app.security.admin-token:}")
-    private String adminToken;
+    private final String adminToken;
 
     public AdminApiAuthenticationFilter(ObjectMapper objectMapper, 
                                        RateLimitService rateLimitService,
-                                       EmailService emailService) {
+                                       EmailService emailService,
+                                       TwoFactorAuthService twoFactorAuthService,
+                                       String adminToken) {
         this.objectMapper = objectMapper;
         this.rateLimitService = rateLimitService;
         this.emailService = emailService;
+        this.twoFactorAuthService = twoFactorAuthService;
+        this.adminToken = adminToken;
     }
 
     @Override
@@ -95,6 +98,42 @@ public class AdminApiAuthenticationFilter extends OncePerRequestFilter {
 
         // 认证成功，重置失败记录
         rateLimitService.resetFailures(clientIp);
+
+        // 2FA 双因素认证检查
+        if (twoFactorAuthService.isEnabled()) {
+            // 1. 检查是否在信任列表
+            if (!twoFactorAuthService.isTrusted(clientIp)) {
+                
+                // 2. 尝试获取并验证 OTP
+                String otpCode = request.getHeader("X-Admin-OTP");
+                if (otpCode != null && !otpCode.isBlank()) {
+                    try {
+                        int code = Integer.parseInt(otpCode.trim());
+                        if (twoFactorAuthService.verifyCode(code)) {
+                            // 验证成功，加入信任列表
+                            twoFactorAuthService.trustDevice(clientIp);
+                            filterChain.doFilter(request, response);
+                            return;
+                        } else {
+                            // OTP 错误
+                            sendErrorResponse(response, HttpServletResponse.SC_FORBIDDEN, "INVALID_OTP", 
+                                    "动态验证码错误，请检查 Authenticator App");
+                            return;
+                        }
+                    } catch (NumberFormatException e) {
+                        sendErrorResponse(response, HttpServletResponse.SC_BAD_REQUEST, "INVALID_OTP_FORMAT", 
+                                "动态验证码格式错误");
+                        return;
+                    }
+                }
+
+                // 3. 未提供 OTP 且不在信任列表 -> 拦截
+                sendErrorResponse(response, HttpServletResponse.SC_FORBIDDEN, "REQUIRE_2FA", 
+                        "检测到异常/新环境登录，需要双因素认证。请提供 6 位动态验证码 (Header: X-Admin-OTP)。");
+                return;
+            }
+        }
+
         filterChain.doFilter(request, response);
     }
 

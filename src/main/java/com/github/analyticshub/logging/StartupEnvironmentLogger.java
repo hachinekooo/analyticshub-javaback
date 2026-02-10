@@ -30,7 +30,12 @@ public class StartupEnvironmentLogger {
             "COOKIE",
             "DATABASE_URL",
             "JDBC",
-            "DATASOURCE"
+            "DATASOURCE",
+            "USER",
+            "USERNAME",
+            "EMAIL",
+            "ADDR",
+            "HOST"
     };
 
     private static final String[] RELEVANT_ENV_KEYS = {
@@ -49,7 +54,15 @@ public class StartupEnvironmentLogger {
             "LOG_FILE",
             "LOG_MAX_FILE_SIZE",
             "LOG_MAX_HISTORY",
-            "LOG_TOTAL_SIZE_CAP"
+            "LOG_TOTAL_SIZE_CAP",
+            "MAIL_ENABLED",
+            "MAIL_HOST",
+            "MAIL_PORT",
+            "MAIL_USERNAME",
+            "MAIL_PASSWORD",
+            "ALERT_EMAIL",
+            "APP_SECURITY_2FA_ENABLED",
+            "APP_SECURITY_2FA_SECRET"
     };
 
     private final Environment environment;
@@ -90,10 +103,6 @@ public class StartupEnvironmentLogger {
             }
             if (isDev) {
                 log.log(System.Logger.Level.INFO, "{0}={1}", key, value);
-                continue;
-            }
-            if ("ADMIN_TOKEN".equalsIgnoreCase(key)) {
-                log.log(System.Logger.Level.INFO, "{0}={1}", key, mask(value));
             } else {
                 log.log(System.Logger.Level.INFO, "{0}={1}", key, maskIfSensitive(key, value));
             }
@@ -101,13 +110,25 @@ public class StartupEnvironmentLogger {
     }
 
     private static String maskIfSensitive(String key, String value) {
-        if (value == null) {
+        if (value == null || value.isBlank()) {
             return "";
         }
+        
+        // "rootroot 除外" - 常见的开发默认值不脱敏，方便识别环境
+        if (isCommonDefault(value)) {
+            return value;
+        }
+
         if (!isSensitiveKey(key)) {
             return value;
         }
         return mask(value);
+    }
+
+    private static boolean isCommonDefault(String value) {
+        if (value == null) return false;
+        String v = value.toLowerCase().trim();
+        return v.equals("root") || v.equals("rootroot") || v.equals("localhost") || v.equals("127.0.0.1");
     }
 
     private static boolean isSensitiveKey(String key) {
