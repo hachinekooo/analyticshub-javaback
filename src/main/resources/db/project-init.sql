@@ -102,8 +102,9 @@ CREATE TABLE IF NOT EXISTS {{PREFIX}}counters (
     id BIGSERIAL PRIMARY KEY,
     counter_key VARCHAR(100) NOT NULL,
     counter_value BIGINT NOT NULL DEFAULT 0,
-    display_name VARCHAR(200),
-    unit VARCHAR(50),
+    display_name JSONB,
+    unit JSONB,
+    event_trigger JSONB,
     is_public BOOLEAN DEFAULT FALSE,
     description TEXT,
     project_id VARCHAR(50) NOT NULL DEFAULT 'analytics-system',
@@ -113,3 +114,7 @@ CREATE TABLE IF NOT EXISTS {{PREFIX}}counters (
 );
 
 CREATE INDEX IF NOT EXISTS idx_counters_project_updated ON {{PREFIX}}counters(project_id, updated_at DESC);
+
+-- 初始运营数据建议 (带自动化触发规则)
+-- INSERT INTO {{PREFIX}}counters (counter_key, counter_value, display_name, unit, is_public, project_id, event_trigger)
+-- VALUES ('total_letters', 0, '{"zh": "累计寄出信件", "en": "Total Letters Sent"}', '{"zh": "封", "en": "Letters"}', TRUE, '{{PROJECT_ID}}', '{"event_type": "send_letter"}');

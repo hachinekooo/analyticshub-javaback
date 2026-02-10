@@ -19,9 +19,13 @@
 - 每个项目可配置独立数据库
 - 项目级数据隔离
 
-### 2. 安全认证
+### 2. 安全认证与防护
 - 采集端接口：API Key + Secret Key 双密钥机制 + HMAC-SHA256 签名
 - 管理端接口：Admin Token（`X-Admin-Token` / `Authorization: Bearer <token>`），不使用 HMAC
+- **暴力破解防护**：
+  - 基于 IP 的限流机制（5 次失败封禁 15 分钟）
+  - 防时序攻击的常量时间比较
+  - 自动邮件告警（达到封禁阈值时通知管理员）
 - 防重放攻击（时间戳验证）
 - 设备级认证和封禁管理
 
@@ -105,8 +109,7 @@ src/main/java/com/github/analyticshub/
 src/main/resources/
 ├── application.yml       # 应用配置
 └── db/migration/         # Flyway 迁移脚本
-    ├── V1__init_analytics_projects.sql
-    └── V2__init_analytics_business_tables.sql
+    └── V1__init_complete_schema.sql  # 完整数据库初始化
 ```
 
 ## 快速开始
@@ -164,6 +167,27 @@ java -jar target/analyticshub-0.0.1-SNAPSHOT.jar
 本项目支持用环境变量覆盖数据库连接与管理端 Token，适合在 IDEA Run Configuration 里做 DEV 开发（支持手动填写或从文件加载，二选一），并且需要理解 YAML 与环境变量的覆盖优先级：
 
 - 操作步骤与优先级说明见：[快速启动指南：在 IDEA 里用环境变量进行 DEV 开发](QUICKSTART.md#在-idea-里用环境变量进行-dev-开发)
+
+### 5. 环境变量配置
+
+**必需配置：**
+```bash
+export ADMIN_TOKEN=your_secure_admin_token_here
+export DB_PASSWORD=your_db_password
+```
+
+**可选配置（邮件告警）：**
+```bash
+# 阿里云邮件推送配置
+export MAIL_ENABLED=true
+export MAIL_HOST=smtpdm.aliyun.com
+export MAIL_PORT=465
+export MAIL_USERNAME=notify@mail.yourdomain.com
+export MAIL_PASSWORD=your_smtp_password
+export ALERT_EMAIL=admin@yourdomain.com
+```
+
+详细配置指南见：[docs/EMAIL_SETUP.md](docs/EMAIL_SETUP.md)
 
 ## API 端点
 
@@ -365,31 +389,52 @@ GET /api/admin/traffic-metrics/top-referrers?projectId=your-project-id&limit=10 
 
 ### 运营累计统计（Counters）
 
-适用于“累计写信 10000 封”这类高性能运营展示。
+适用于“累计写信 10000 封”这类高性能运营展示。支持**自动化触发规则**和**内置国际化 (i18n)**。
 
-#### 官网展示集成（公开接口）
+#### 1. 官网展示集成（公开接口）
 
 针对官网场景，推荐以下接入方式：
 
-1. **批量加载（推荐首页使用）**：
-   一次性获取所有标记为 `isPublic=true` 的数据，避免多次网络 IO。
-   ```http
-   GET /api/public/counters?projectId=your-project-id
-   ```
-   **Keys 自动发现**：前端开发时，先在管理后台为项目创建 `total_users` (守护人数)、`total_letters` (寄出信件) 等 Key 并设为公开，前端代码直接遍历接口返回的 `items` 数组即可实现自动化渲染。
+*   **批量加载（推荐首页使用）**：
+    返回所有标记为 `isPublic=true` 的计数器，并**自动根据请求头切换语言**。
+    ```http
+    GET /api/public/counters?projectId=your-project-id
+    Accept-Language: zh-CN  # 或 en-US
+    ```
+*   **精准查询**：
+    ```http
+    GET /api/public/counters/{key}?projectId=your-project-id
+    ```
 
-2. **精准点对点查询**：
-   ```http
-   GET /api/public/counters/{key}?projectId=your-project-id
-   ```
+**i18n 逻辑**：服务端会根据 `Accept-Language` 自动从 `displayName` 和 `unit` 的 JSON 结构中摘取对应文字。如果未匹配到，则自动 Fallback 到中文。
 
-#### 管理端操作（需要 Admin Token）
+#### 2. 配置化自动化（Lambda 引擎）
 
-用于业务系统同步数据（如信件发送成功后累加）：
+你不再需要在业务代码中手动累加数值。通过配置 `event_trigger`，计数器会在事件上报时**全自动维护**：
+
+*   **配置示例 (PUT /api/admin/counters/{key})**：
+    ```json
+    {
+      "displayName": {"zh": "累计寄信", "en": "Total Letters"},
+      "unit": {"zh": "封", "en": "Letters"},
+      "eventTrigger": {
+        "event_type": "send_letter",
+        "conditions": {"status": "success"}
+      },
+      "isPublic": true
+    }
+    ```
+*   **效果**：当采集 API 监听到 `send_letter` 且属性中 `status == "success"` 时，该计数器自动 +1。
+
+#### 3. 管理端操作（需要 Admin Token）
+
+用于管理配置或手动同步数据：
 ```http
-GET  /api/admin/counters?projectId=your-project-id
-PUT  /api/admin/counters/{key}?projectId=your-project-id # 创建/全量更新
-POST /api/admin/counters/{key}/increment?projectId=your-project-id # 偏移累加（原子操作）
+GET    /api/admin/counters?projectId=...
+GET    /api/admin/counters/metadata/event-types?projectId=... # 获取已有事件名建议
+PUT    /api/admin/counters/{key}?projectId=...     # 创建或更新规则/元数据
+POST   /api/admin/counters/{key}/increment?projectId=... # 手动累加（偏移操作）
+DELETE /api/admin/counters/{key}?projectId=...     # 删除计数器配置
 ```
 
 ## 认证机制

@@ -6,6 +6,7 @@ import com.github.analyticshub.dto.CounterRecord;
 import com.github.analyticshub.dto.CounterUpsertRequest;
 import com.github.analyticshub.dto.CountersResponse;
 import com.github.analyticshub.service.CounterService;
+import com.github.analyticshub.service.EventService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -21,14 +22,21 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminCounterController {
 
     private final CounterService counterService;
+    private final EventService eventService;
 
-    public AdminCounterController(CounterService counterService) {
+    public AdminCounterController(CounterService counterService, EventService eventService) {
         this.counterService = counterService;
+        this.eventService = eventService;
     }
 
     @GetMapping
     public ApiResponse<CountersResponse> list(@RequestParam("projectId") String projectId) {
         return ApiResponse.success(counterService.list(projectId, false));
+    }
+
+    @GetMapping("/metadata/event-types")
+    public ApiResponse<java.util.List<String>> getEventTypes(@RequestParam("projectId") String projectId) {
+        return ApiResponse.success(eventService.getDistinctEventTypes(projectId));
     }
 
     @GetMapping("/{key}")
@@ -42,6 +50,13 @@ public class AdminCounterController {
                                              @PathVariable("key") String key,
                                              @Valid @RequestBody(required = false) CounterUpsertRequest request) {
         return ApiResponse.success(counterService.upsert(projectId, key, request));
+    }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/{key}")
+    public ApiResponse<Void> delete(@RequestParam("projectId") String projectId,
+                                    @PathVariable("key") String key) {
+        counterService.delete(projectId, key);
+        return ApiResponse.success(null);
     }
 
     @PostMapping("/{key}/increment")
