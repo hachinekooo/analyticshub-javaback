@@ -17,11 +17,13 @@
 ### 1. 多项目支持
 - 支持多个项目共享一个后端服务
 - 每个项目可配置独立数据库
-- 项目级数据隔离
-
 ### 2. 安全认证与防护
 - 采集端接口：API Key + Secret Key 双密钥机制 + HMAC-SHA256 签名
 - 管理端接口：Admin Token（`X-Admin-Token` / `Authorization: Bearer <token>`），不使用 HMAC
+- **双因素认证 (2FA)**：
+  - 基于 TOTP (Google/Microsoft Authenticator)
+  - 针对异常 IP / 新设备强制校验
+  - 支持 24 小时信任白名单
 - **暴力破解防护**：
   - 基于 IP 的限流机制（5 次失败封禁 15 分钟）
   - 防时序攻击的常量时间比较
@@ -176,8 +178,6 @@ export ADMIN_TOKEN=your_secure_admin_token_here
 export DB_PASSWORD=your_db_password
 ```
 
-**可选配置（邮件告警）：**
-```bash
 # 阿里云邮件推送配置
 export MAIL_ENABLED=true
 export MAIL_HOST=smtpdm.aliyun.com
@@ -185,7 +185,10 @@ export MAIL_PORT=465
 export MAIL_USERNAME=notify@mail.yourdomain.com
 export MAIL_PASSWORD=your_smtp_password
 export ALERT_EMAIL=admin@yourdomain.com
-```
+
+# 双因素认证 (2FA) 配置
+export APP_SECURITY_2FA_ENABLED=true
+export APP_SECURITY_2FA_SECRET=your_totp_secret_key
 
 详细配置指南见：[docs/EMAIL_SETUP.md](docs/EMAIL_SETUP.md)
 
@@ -376,16 +379,18 @@ POST /api/public/traffic/batch
 ```http
 GET /api/admin/traffic-metrics?projectId=your-project-id&metricType=page_view&page=1&pageSize=20
 GET /api/admin/traffic-metrics/summary?projectId=your-project-id&from=...&to=...
-GET /api/admin/traffic-metrics/trends?projectId=your-project-id&granularity=day # 趋势分析
+GET /api/admin/traffic-metrics/trends?projectId=your-project-id&granularity=day # 趋势分析 (支持 day, hour, week, month, year)
 GET /api/admin/traffic-metrics/top-pages?projectId=your-project-id&limit=10    # 热门页面分析
 GET /api/admin/traffic-metrics/top-referrers?projectId=your-project-id&limit=10 # 热门来源分析
+GET /api/admin/security/2fa/setup                                           # 2FA 绑定指引
 ```
 
 接口说明：
 - `summary`：返回核心计数（PV、UV），自动排除机器人流量。
-- `trends`：返回时间维度的访问趋势。
+- `trends`：返回时间维度的访问趋势，参数 `granularity` 支持 `hour`, `day`, `week`, `month`, `year`。
 - `top-pages`：返回访问量最高的页面路径排行。
 - `top-referrers`：返回流量来源站点的排行。
+- `2fa/setup`：获取双因素认证的 Secret 和绑定 URL。
 
 ### 运营累计统计（Counters）
 
