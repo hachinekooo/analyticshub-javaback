@@ -1,0 +1,21 @@
+[Unit]
+Description=analyticshub backend service
+After=network-online.target postgresql-15.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=analyticshub
+Group=analyticshub
+WorkingDirectory=/opt/analyticshub
+EnvironmentFile=/etc/analyticshub/analyticshub.env
+ExecStart=/usr/bin/java -jar /opt/analyticshub/app.jar
+SuccessExitStatus=143
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
