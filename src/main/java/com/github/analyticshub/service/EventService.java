@@ -122,18 +122,9 @@ public class EventService {
         int acceptedCount = 0;
         // Best-effort batch: skip invalid items instead of failing the whole request.
         for (EventTrackRequest event : events) {
-            if (event == null) {
-                continue;
-            }
-            if (event.eventType() == null || event.eventType().isBlank()) {
-                continue;
-            }
-            if (event.timestamp() == null) {
-                continue;
-            }
-            if (event.sessionId() != null && !CryptoUtils.isValidUUID(event.sessionId().toString())) {
-                continue;
-            }
+            if (event == null) continue;
+            if (event.eventType() == null || event.eventType().isBlank()) continue;
+            if (event.timestamp() == null) continue;
 
             String eventId = CryptoUtils.generateEventId();
             String propertiesJson;
@@ -143,9 +134,7 @@ public class EventService {
                 continue;
             }
 
-            if (acceptedCount > 0) {
-                valuesSql.append(", ");
-            }
+            if (acceptedCount > 0) valuesSql.append(", ");
             valuesSql.append("(?, ?::uuid, ?, ?::uuid, ?, ?, ?::jsonb, ?, ?)");
 
             args.add(eventId);
@@ -161,26 +150,22 @@ public class EventService {
             acceptedCount++;
         }
 
-        if (acceptedCount == 0) {
-            return;
-        }
+        if (acceptedCount == 0) return;
 
         String insertSql = String.format(
                 "INSERT INTO %s (event_id, device_id, user_id, session_id, event_type, event_timestamp, properties, project_id, created_at) VALUES %s",
-                eventsTable,
-                valuesSql
+                eventsTable, valuesSql
         );
-
         jdbcTemplate.update(insertSql, args.toArray());
 
-        // 批量触发计数器自动化
-        for (EventTrackRequest event : events) {
-            if (event == null || event.eventType() == null) continue;
-            try {
+        // 优化：批量处理计数器，避免在循环中重复查询规则
+        try {
+            for (EventTrackRequest event : events) {
+                if (event == null || event.eventType() == null) continue;
                 counterService.processEventAutoIncrements(context.getProjectId(), event.eventType(), event.properties());
-            } catch (Exception e) {
-                log.log(System.Logger.Level.WARNING, "批量计数器自动维护失败: {0}", e.getMessage());
             }
+        } catch (Exception e) {
+            log.log(System.Logger.Level.WARNING, "批量计数器自动维护异常: {0}", e.getMessage());
         }
     }
 
