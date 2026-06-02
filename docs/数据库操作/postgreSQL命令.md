@@ -9,6 +9,14 @@ PGPASSWORD=root
 docker exec -it -e PGPASSWORD="$PGPASSWORD" "$PG_CONTAINER" psql -U "$PGUSER" -d postgres
 ```
 
+**0.切换到系统postgres用户（需要sudo权限，免密）**
+```bash
+# 1. 切换到系统postgres用户（需要sudo权限，免密）
+sudo su - postgres
+# 2. 直接启动psql，自动进入交互式终端
+psql
+```
+
 **1. 断开数据库连接并删除数据库：**
 ```sql
 -- 断开所有连接到指定数据库的会话（不包括当前连接）

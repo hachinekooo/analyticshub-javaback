@@ -47,6 +47,7 @@
 - 管理端 API（`/api/admin/**`）：项目管理与健康检查；使用 Admin Token 认证
 - 管理端 Token 校验（`/api/v1/auth/admin-token/verify`）：用于管理端登录态/Token 有效性探测
 - 多项目多数据源：每个项目独立数据库与连接池，按项目动态切换
+- 系统数据库（spring.datasource）仅保存项目管理元数据（analytics_projects），不承载业务采集表
 - 运行状态：`/api/health` 公开；`/actuator/**` 生产环境需要 Admin Token
 - 架构与时序文档：`docs/ARCHITECTURE.md`
 
@@ -111,7 +112,7 @@ src/main/java/com/github/analyticshub/
 src/main/resources/
 ├── application.yml       # 应用配置
 └── db/migration/         # Flyway 迁移脚本
-    └── V1__init_complete_schema.sql  # 完整数据库初始化
+    └── V1__init_complete_schema.sql  # 系统库初始化（仅项目管理表）
 ```
 
 ## 快速开始
@@ -130,7 +131,9 @@ src/main/resources/
 CREATE DATABASE analytics;
 ```
 
-管理端创建项目**不会自动创建数据库/用户**，只会保存连接信息。为某个项目配置了 `dbName/dbUser/dbPassword` 后，需要你提前在 PostgreSQL 里创建对应的数据库与用户：
+系统数据库（`spring.datasource`）只用于项目管理。
+
+每个业务项目必须使用自己的目标数据库；管理端创建项目**不会自动创建数据库/用户**，只会保存连接信息。为某个项目配置了 `dbName/dbUser/dbPassword` 后，需要你提前在 PostgreSQL 里创建对应的数据库与用户：
 
 - Docker 安装的 PostgreSQL 操作示例见：[Docker_PostgreSQL_Guild.md 的 3.3 小节](docs/Docker_PostgreSQL_Guild.md#33-为项目创建数据库与用户管理端项目配置前置条件)
 
@@ -186,261 +189,19 @@ export MAIL_USERNAME=notify@mail.yourdomain.com
 export MAIL_PASSWORD=your_smtp_password
 export ALERT_EMAIL=admin@yourdomain.com
 
-# 双因素认证 (2FA) 配置
+## 双因素认证 (2FA) 配置
 export APP_SECURITY_2FA_ENABLED=true
 export APP_SECURITY_2FA_SECRET=your_totp_secret_key
 
 详细配置指南见：[docs/EMAIL_SETUP.md](docs/EMAIL_SETUP.md)
 
-## API 端点
+## API 文档
 
-### 健康检查
+详细的 API 接口文档已拆分为两个独立文档：
 
-```http
-GET /api/health
-```
+- **[采集端 API 文档](docs/API_COLLECTION.md)**：包含设备注册、事件上报、会话上传、公开流量与计数等面向客户端的接口。
+- **[管理端 API 文档](docs/API_MANAGEMENT.md)**：包含项目管理、健康检查、流量分析、运营配置等面向管理员的接口。
 
-响应示例：
-```json
-{
-  "status": "UP",
-  "service": "analyticshub-javaback",
-  "timestamp": "2026-01-12T10:00:00.000Z",
-  "version": "1.0.0"
-}
-```
-
-### 设备注册
-
-```http
-POST /api/v1/auth/register
-Content-Type: application/json
-X-Project-ID: your-project-id
-
-{
-  "deviceId": "550e8400-e29b-41d4-a716-446655440000",
-  "deviceModel": "iPhone15,2",
-  "osVersion": "iOS 26.0",
-  "appVersion": "1.0.0"
-}
-```
-
-### 管理端 Token 校验
-
-使用 `X-Admin-Token` 或 `Authorization: Bearer <token>` 其中一种即可。
-
-```http
-POST /api/v1/auth/admin-token/verify
-X-Admin-Token: your_admin_token
-```
-
-响应示例：
-```json
-{
-  "success": true,
-  "data": {
-    "valid": true
-  },
-  "error": null,
-  "timestamp": "2026-01-12T10:00:00.000Z"
-}
-```
-
-### 管理端 API（项目管理）
-
-管理端接口统一使用 `X-Admin-Token`（或 `Authorization: Bearer <token>`）进行认证，不走 HMAC 签名。
-
-管理端创建项目**不会自动创建数据库/用户**，只会保存连接信息：
-
-- Docker 安装的 PostgreSQL 操作示例见：[Docker_PostgreSQL_Guild.md 的 3.3 小节](docs/Docker_PostgreSQL_Guild.md#33-为项目创建数据库与用户管理端项目配置前置条件)
-
-```http
-GET    /api/admin/projects
-POST   /api/admin/projects
-PUT    /api/admin/projects/{id}
-DELETE /api/admin/projects/{id}
-POST   /api/admin/projects/{id}/test
-POST   /api/admin/projects/{id}/init
-GET    /api/admin/projects/{id}/health
-```
-
-### 事件追踪
-
-```http
-POST /api/v1/events/track
-Content-Type: application/json
-X-Project-ID: your-project-id
-X-API-Key: ak_xxxxxxxxxxxxx
-X-Device-ID: 550e8400-e29b-41d4-a716-446655440000
-X-User-ID: 00112233445566778899aabbccddeeff
-X-Timestamp: 1673520000000
-X-Signature: hmac_signature_here
-
-{
-  "eventType": "button_click",
-  "timestamp": 1673520000000,
-  "properties": {
-    "button_name": "submit",
-    "screen": "home"
-  },
-  "sessionId": "660e8400-e29b-41d4-a716-446655440000"
-}
-```
-
-说明：
-- `X-User-ID` 必须是 32 位十六进制字符串（不含 `-`）。
-- HMAC 签名串格式：`method|path|timestamp|deviceId|userId|`（服务端不参与 body 签名）。  
-
-### 会话上传
-
-```http
-POST /api/v1/sessions
-Content-Type: application/json
-X-Project-ID: your-project-id
-X-API-Key: ak_xxxxxxxxxxxxx
-X-Device-ID: 550e8400-e29b-41d4-a716-446655440000
-X-User-ID: 00112233445566778899aabbccddeeff
-X-Timestamp: 1673520000000
-X-Signature: hmac_signature_here
-
-{
-  "sessionId": "660e8400-e29b-41d4-a716-446655440000",
-  "sessionStartTime": "2026-01-12T10:00:00.000Z",
-  "sessionDurationMs": 120000,
-  "deviceModel": "iPhone15,2",
-  "osVersion": "iOS 26.0",
-  "appVersion": "1.0.0",
-  "screenCount": 5,
-  "eventCount": 20
-}
-```
-
-### 流量指标采集（采集端）
-
-```http
-POST /api/v1/traffic-metrics/track
-Content-Type: application/json
-X-Project-ID: your-project-id
-X-API-Key: ak_xxxxxxxxxxxxx
-X-Device-ID: 550e8400-e29b-41d4-a716-446655440000
-X-User-ID: 00112233445566778899aabbccddeeff
-X-Timestamp: 1673520000000
-X-Signature: hmac_signature_here
-
-{
-  "metricType": "page_view",
-  "pagePath": "/",
-  "referrer": "https://www.google.com",
-  "timestamp": 1673520000000,
-  "sessionId": null,
-  "metadata": {
-    "utm_source": "google"
-  }
-}
-```
-
-支持批量写入：
-
-```http
-POST /api/v1/traffic-metrics/batch
-```
-
-### 流量指标采集（官网 / 公共入口）
-
-该入口专为“官网流量统计”设计，追求接入极简：
-- **认证**：无需 HMAC 签名。基于 Cookie (`ah_did`) 自动识别设备。
-- **项目识别**：支持通过请求头 `X-Project-ID` 或 URL 参数 `projectId` 传递（如 `?projectId=demo_project`）。
-- **设备识别**：前端无需传递任何 ID。服务端通过 `ah_did` Cookie 自动识别访客（用于 UV 统计）。
-- **跨域支持**：请求请开启 `credentials: 'include'` 确保 Cookie 正常传递。
-- **元数据**：服务端会自动解析 `userAgent`、机器人标记 (`isBot`)，并自动补全 `referrer`（基于 Header Fallback）。
-
-查询汇总数据（供官网展示实时 PV/UV）：
-```http
-GET /api/public/traffic/summary?projectId=your-project-id&from=...&to=...
-```
-- 响应内容同管理端 `summary` 接口，但针对官网公开展示设计。
-- 自动过滤机器人数据。
-
-```http
-POST /api/public/traffic/track
-Content-Type: application/json
-X-Project-ID: your-project-id
-X-Traffic-Token: your_traffic_token
-```
-
-支持批量写入：
-
-```http
-POST /api/public/traffic/batch
-```
-
-### 管理端流量指标（查询与分析）
-
-```http
-GET /api/admin/traffic-metrics?projectId=your-project-id&metricType=page_view&page=1&pageSize=20
-GET /api/admin/traffic-metrics/summary?projectId=your-project-id&from=...&to=...
-GET /api/admin/traffic-metrics/trends?projectId=your-project-id&granularity=day # 趋势分析 (支持 day, hour, week, month, year)
-GET /api/admin/traffic-metrics/top-pages?projectId=your-project-id&limit=10    # 热门页面分析
-GET /api/admin/traffic-metrics/top-referrers?projectId=your-project-id&limit=10 # 热门来源分析
-GET /api/admin/security/2fa/setup                                           # 2FA 绑定指引
-```
-
-接口说明：
-- `summary`：返回核心计数（PV、UV），自动排除机器人流量。
-- `trends`：返回时间维度的访问趋势，参数 `granularity` 支持 `hour`, `day`, `week`, `month`, `year`。
-- `top-pages`：返回访问量最高的页面路径排行。
-- `top-referrers`：返回流量来源站点的排行。
-- `2fa/setup`：获取双因素认证的 Secret 和绑定 URL。
-
-### 运营累计统计（Counters）
-
-适用于“累计写信 10000 封”这类高性能运营展示。支持**自动化触发规则**和**内置国际化 (i18n)**。
-
-#### 1. 官网展示集成（公开接口）
-
-针对官网场景，推荐以下接入方式：
-
-*   **批量加载（推荐首页使用）**：
-    返回所有标记为 `isPublic=true` 的计数器，并**自动根据请求头切换语言**。
-    ```http
-    GET /api/public/counters?projectId=your-project-id
-    Accept-Language: zh-CN  # 或 en-US
-    ```
-*   **精准查询**：
-    ```http
-    GET /api/public/counters/{key}?projectId=your-project-id
-    ```
-
-**i18n 逻辑**：服务端会根据 `Accept-Language` 自动从 `displayName` 和 `unit` 的 JSON 结构中摘取对应文字。如果未匹配到，则自动 Fallback 到中文。
-
-#### 2. 配置化自动化（Lambda 引擎）
-
-你不再需要在业务代码中手动累加数值。通过配置 `event_trigger`，计数器会在事件上报时**全自动维护**：
-
-*   **配置示例 (PUT /api/admin/counters/{key})**：
-    ```json
-    {
-      "displayName": {"zh": "累计寄信", "en": "Total Letters"},
-      "unit": {"zh": "封", "en": "Letters"},
-      "eventTrigger": {
-        "event_type": "send_letter",
-        "conditions": {"status": "success"}
-      },
-      "isPublic": true
-    }
-    ```
-*   **效果**：当采集 API 监听到 `send_letter` 且属性中 `status == "success"` 时，该计数器自动 +1。
-
-#### 3. 管理端操作（需要 Admin Token）
-
-用于管理配置或手动同步数据：
-```http
-GET    /api/admin/counters?projectId=...
-GET    /api/admin/counters/metadata/event-types?projectId=... # 获取已有事件名建议
-PUT    /api/admin/counters/{key}?projectId=...     # 创建或更新规则/元数据
-POST   /api/admin/counters/{key}/increment?projectId=... # 手动累加（偏移操作）
-DELETE /api/admin/counters/{key}?projectId=...     # 删除计数器配置
-```
 
 ## 认证机制
 
@@ -525,7 +286,7 @@ mvn flyway:migrate
 INSERT INTO analytics_projects (
   project_id, project_name, db_host, db_port, db_name, db_user, table_prefix
 ) VALUES (
-  'new-project', 'New Project', 'localhost', 5432, 'analytics', 'root', 'analytics_'
+  'new-project', 'New Project', 'localhost', 5432, 'analytics_new_project', 'root', 'analytics_'
 );
 ```
 
