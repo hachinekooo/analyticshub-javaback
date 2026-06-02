@@ -37,7 +37,7 @@ public class Device {
     private String appVersion;
 
     @TableField("project_id")
-    private String projectId = "analytics-system";
+    private String projectId;
 
     @TableField("is_banned")
     private Boolean isBanned = false;

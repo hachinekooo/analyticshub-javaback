@@ -14,7 +14,6 @@ import com.github.analyticshub.mapper.AnalyticsProjectMapper;
 import com.github.analyticshub.util.CryptoUtils;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpStatus;
@@ -28,7 +27,6 @@ import java.sql.Connection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.regex.Pattern;
 
 /**
@@ -50,8 +48,6 @@ public class AdminProjectService {
     private final AnalyticsProjectMapper projectMapper;
     private final MultiDataSourceManager dataSourceManager;
 
-    @Value("${spring.datasource.password:}")
-    private String systemDbPassword;
 
     public AdminProjectService(AnalyticsProjectMapper projectMapper, MultiDataSourceManager dataSourceManager) {
         this.projectMapper = projectMapper;
@@ -169,7 +165,8 @@ public class AdminProjectService {
                 prefix + "events",
                 prefix + "sessions",
                 prefix + "traffic_metrics",
-                prefix + "counters"
+                prefix + "counters",
+                prefix + "privacy_requests"
         );
 
         return new ProjectInitResult("项目 " + config.projectId() + " 数据库初始化成功", tables);
@@ -178,7 +175,7 @@ public class AdminProjectService {
     public ProjectHealthResult checkProjectHealth(Long id) {
         ProjectDbConfig config = resolveProjectConfig(id);
         String prefix = normalizeTablePrefix(config.tablePrefix());
-        List<String> requiredTables = List.of("devices", "events", "sessions", "traffic_metrics");
+        List<String> requiredTables = List.of("devices", "events", "sessions", "traffic_metrics", "privacy_requests");
         Map<String, Boolean> tables = new LinkedHashMap<>();
 
         try (HikariDataSource dataSource = createDataSource(config)) {
@@ -219,9 +216,6 @@ public class AdminProjectService {
         String password = null;
         if (project.getDbPasswordEncrypted() != null && !project.getDbPasswordEncrypted().isBlank()) {
             password = CryptoUtils.decrypt(project.getDbPasswordEncrypted());
-        }
-        if ((password == null || password.isBlank()) && Objects.equals(projectId, "analytics-system")) {
-            password = systemDbPassword;
         }
 
         return new ProjectDbConfig(

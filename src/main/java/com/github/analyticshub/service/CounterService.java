@@ -246,7 +246,7 @@ public class CounterService {
                         "event_trigger JSONB, " +
                         "is_public BOOLEAN DEFAULT FALSE, " +
                         "description TEXT, " +
-                        "project_id VARCHAR(50) NOT NULL DEFAULT 'analytics-system', " +
+                        "project_id VARCHAR(50) NOT NULL, " +
                         "created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), " +
                         "updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), " +
                         "CONSTRAINT %s UNIQUE (project_id, counter_key)" +

@@ -1,6 +1,7 @@
 -- ============================================================
 -- Project Init Script (Template)
 -- 使用 {{PREFIX}} 作为表前缀占位符
+-- 该脚本运行在“项目自己的数据库”中
 -- ============================================================
 
 SET timezone = 'UTC';
@@ -14,7 +15,7 @@ CREATE TABLE IF NOT EXISTS {{PREFIX}}devices (
     device_model VARCHAR(100),
     os_version VARCHAR(50),
     app_version VARCHAR(50),
-    project_id VARCHAR(50) NOT NULL DEFAULT 'analytics-system',
+    project_id VARCHAR(50) NOT NULL,
     is_banned BOOLEAN DEFAULT FALSE,
     ban_reason TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -35,7 +36,7 @@ CREATE TABLE IF NOT EXISTS {{PREFIX}}events (
     event_type VARCHAR(100) NOT NULL,
     event_timestamp BIGINT NOT NULL,
     properties JSONB,
-    project_id VARCHAR(50) NOT NULL DEFAULT 'analytics-system',
+    project_id VARCHAR(50) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -61,7 +62,7 @@ CREATE TABLE IF NOT EXISTS {{PREFIX}}sessions (
     build_number VARCHAR(50),
     screen_count INTEGER DEFAULT 0,
     event_count INTEGER DEFAULT 0,
-    project_id VARCHAR(50) NOT NULL DEFAULT 'analytics-system',
+    project_id VARCHAR(50) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -83,7 +84,7 @@ CREATE TABLE IF NOT EXISTS {{PREFIX}}traffic_metrics (
     referrer VARCHAR(255),
     metric_timestamp BIGINT NOT NULL,
     metadata JSONB,
-    project_id VARCHAR(50) NOT NULL DEFAULT 'analytics-system',
+    project_id VARCHAR(50) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -107,7 +108,7 @@ CREATE TABLE IF NOT EXISTS {{PREFIX}}counters (
     event_trigger JSONB,
     is_public BOOLEAN DEFAULT FALSE,
     description TEXT,
-    project_id VARCHAR(50) NOT NULL DEFAULT 'analytics-system',
+    project_id VARCHAR(50) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     CONSTRAINT uq_counters_project_key UNIQUE (project_id, counter_key)
@@ -115,6 +116,36 @@ CREATE TABLE IF NOT EXISTS {{PREFIX}}counters (
 
 CREATE INDEX IF NOT EXISTS idx_counters_project_updated ON {{PREFIX}}counters(project_id, updated_at DESC);
 
--- 初始运营数据建议 (带自动化触发规则)
--- INSERT INTO {{PREFIX}}counters (counter_key, counter_value, display_name, unit, is_public, project_id, event_trigger)
--- VALUES ('total_letters', 0, '{"zh": "累计寄出信件", "en": "Total Letters Sent"}', '{"zh": "封", "en": "Letters"}', TRUE, '{{PROJECT_ID}}', '{"event_type": "send_letter"}');
+-- 6. 隐私请求工单表（人工导出/删除流程）
+CREATE TABLE IF NOT EXISTS {{PREFIX}}privacy_requests (
+    id BIGSERIAL PRIMARY KEY,
+    request_id VARCHAR(64) NOT NULL UNIQUE,
+    project_id VARCHAR(50) NOT NULL,
+    user_id VARCHAR(64) NOT NULL,
+    device_id UUID NOT NULL,
+    request_type VARCHAR(16) NOT NULL,
+    processor VARCHAR(32) NOT NULL,
+    source VARCHAR(32) NOT NULL DEFAULT 'APP_SETTINGS',
+    status VARCHAR(32) NOT NULL DEFAULT 'SUBMITTED',
+    contact_email VARCHAR(255),
+    requester_note TEXT,
+    operator VARCHAR(64),
+    operator_note TEXT,
+    result_payload JSONB,
+    metadata JSONB,
+    requested_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    processed_at TIMESTAMP WITH TIME ZONE,
+    closed_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_privacy_request_type CHECK (request_type IN ('EXPORT', 'DELETE')),
+    CONSTRAINT chk_privacy_processor CHECK (processor IN ('ANALYTICSHUB', 'POSTHOG')),
+    CONSTRAINT chk_privacy_status CHECK (status IN ('SUBMITTED', 'IN_PROGRESS', 'COMPLETED', 'REJECTED', 'CANCELLED'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_privacy_project_status_requested
+    ON {{PREFIX}}privacy_requests(project_id, status, requested_at DESC);
+CREATE INDEX IF NOT EXISTS idx_privacy_project_user_requested
+    ON {{PREFIX}}privacy_requests(project_id, user_id, requested_at DESC);
+CREATE INDEX IF NOT EXISTS idx_privacy_project_processor_requested
+    ON {{PREFIX}}privacy_requests(project_id, processor, requested_at DESC);

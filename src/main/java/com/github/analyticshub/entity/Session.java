@@ -49,7 +49,7 @@ public class Session {
     private Integer eventCount = 0;
 
     @TableField("project_id")
-    private String projectId = "analytics-system";
+    private String projectId;
 
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private Instant createdAt;
