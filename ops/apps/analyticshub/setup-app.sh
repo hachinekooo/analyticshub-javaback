@@ -1,14 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="analyticshub"
-APP_USER="analyticshub"
-APP_GROUP="analyticshub"
-APP_DIR="/opt/analyticshub"
-ENV_DIR="/etc/analyticshub"
-ENV_FILE="$ENV_DIR/analyticshub.env"
-LOG_DIR="/var/log/analyticshub"
-SERVICE_FILE="/etc/systemd/system/analyticshub.service"
+# Project-level setup for one backend app on a shared server.
+#
+# This script intentionally manages only AnalyticsHub runtime resources:
+#   - system user/group
+#   - /opt/<app> app directory
+#   - /etc/<app>/<app>.env
+#   - /var/log/<app>
+#   - systemd unit
+#
+# Server-wide packages, nginx, firewall, PostgreSQL, Redis, and other shared
+# services are managed by ops/server in exactly one repo. This keeps one server
+# running multiple backends without each project trying to own the host.
+APP_NAME="${APP_NAME:-analyticshub}"
+APP_USER="${APP_USER:-$APP_NAME}"
+APP_GROUP="${APP_GROUP:-$APP_USER}"
+APP_DIR="${APP_DIR:-/opt/$APP_NAME}"
+ENV_DIR="${ENV_DIR:-/etc/$APP_NAME}"
+ENV_FILE="${ENV_FILE:-$ENV_DIR/$APP_NAME.env}"
+LOG_DIR="${LOG_DIR:-/var/log/$APP_NAME}"
+SERVICE_FILE="${SERVICE_FILE:-/etc/systemd/system/$APP_NAME.service}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 require_root() {
@@ -47,9 +59,19 @@ install_env() {
 }
 
 install_service() {
-  install -m 644 -o root -g root "$SCRIPT_DIR/analyticshub.service.template" "$SERVICE_FILE"
+  local tmp_service
+  tmp_service="$(mktemp)"
+  sed \
+    -e "s|@APP_NAME@|$APP_NAME|g" \
+    -e "s|@APP_USER@|$APP_USER|g" \
+    -e "s|@APP_GROUP@|$APP_GROUP|g" \
+    -e "s|@APP_DIR@|$APP_DIR|g" \
+    -e "s|@ENV_FILE@|$ENV_FILE|g" \
+    "$SCRIPT_DIR/analyticshub.service.template" > "$tmp_service"
+  install -m 644 -o root -g root "$tmp_service" "$SERVICE_FILE"
+  rm -f "$tmp_service"
   systemctl daemon-reload
-  systemctl enable analyticshub
+  systemctl enable "$APP_NAME"
   echo "Installed service: $SERVICE_FILE"
 }
 
@@ -59,4 +81,8 @@ prepare_dirs
 install_env
 install_service
 
-echo "App setup done. Put jar at $APP_DIR/app.jar, edit $ENV_FILE, then run systemctl restart analyticshub."
+echo "App setup done."
+echo "  Jar: $APP_DIR/app.jar"
+echo "  Env: $ENV_FILE"
+echo "  Logs: $LOG_DIR"
+echo "Next: edit env, upload jar, then run: systemctl restart $APP_NAME"
