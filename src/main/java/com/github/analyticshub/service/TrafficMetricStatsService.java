@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import javax.sql.DataSource;
 import java.sql.Timestamp;
+import java.time.Instant;
 
 @Service
 public class TrafficMetricStatsService {
@@ -24,7 +25,7 @@ public class TrafficMetricStatsService {
 
     public TrafficMetricSummaryResponse getSummary(String projectId, String from, String to) {
         String normalizedProjectId = normalizeProjectId(projectId);
-        AdminQueryUtils.Range range = AdminQueryUtils.resolveRange(from, to);
+        AdminQueryUtils.Range range = resolveSummaryRange(from, to);
         ProjectContext context = requireProject(normalizedProjectId);
         JdbcTemplate jdbcTemplate = new JdbcTemplate(context.dataSource());
 
@@ -144,6 +145,13 @@ public class TrafficMetricStatsService {
         return new TrafficMetricTopResponse(normalizedProjectId, range.start().toString(), range.end().toString(), items);
     }
 
+    static AdminQueryUtils.Range resolveSummaryRange(String from, String to) {
+        if (isBlank(from) && isBlank(to)) {
+            return new AdminQueryUtils.Range(Instant.EPOCH, Instant.now());
+        }
+        return AdminQueryUtils.resolveRange(from, to);
+    }
+
     private ProjectContext requireProject(String projectId) {
         String normalizedProjectId = normalizeProjectId(projectId);
         if (normalizedProjectId.isBlank()) {
@@ -190,6 +198,10 @@ public class TrafficMetricStatsService {
             builder.append(c);
         }
         return builder.toString();
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     private enum Granularity {
