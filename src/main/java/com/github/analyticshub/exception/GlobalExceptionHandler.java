@@ -3,6 +3,7 @@ package com.github.analyticshub.exception;
 import com.github.analyticshub.common.dto.ApiResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -62,6 +63,24 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.error("INVALID_ARGUMENT", ex.getMessage()));
+    }
+
+    /**
+     * 处理数据读取/解析异常（如 JSON 格式错误或字段类型不匹配）
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiResponse<Void>> handleHttpMessageNotReadableException(
+            HttpMessageNotReadableException ex) {
+        log.log(System.Logger.Level.WARNING, "数据解析失败: {0}", ex.getMessage());
+        
+        String message = "数据解析失败，请检查参数格式";
+        if (ex.getMessage() != null && ex.getMessage().contains("UUID")) {
+            message = "会话ID或设备ID格式无效，必须是有效的UUID";
+        }
+        
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error("VALIDATION_ERROR", message));
     }
 
     /**

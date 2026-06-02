@@ -63,16 +63,26 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
             @NonNull FilterChain filterChain) throws ServletException, IOException {
 
         String path = request.getRequestURI();
-
+        
         // 跳过公开路径
         if (isPublicPath(path)) {
             filterChain.doFilter(request, response);
             return;
         }
 
+        // 包装请求以支持多次读取 Body（用于签名验证）
+        CachingHttpServletRequestWrapper wrappedRequest;
+        try {
+            wrappedRequest = new CachingHttpServletRequestWrapper(request);
+        } catch (Exception e) {
+            log.log(System.Logger.Level.ERROR, "无法读取请求体", e);
+            sendErrorResponse(response, "READ_ERROR", "无法读取请求数据");
+            return;
+        }
+
         try {
             // 1. 提取项目ID（必须）
-            String projectId = request.getHeader("X-Project-ID");
+            String projectId = wrappedRequest.getHeader("X-Project-ID");
             if (projectId == null || projectId.isBlank()) {
                 sendErrorResponse(response, "MISSING_PROJECT_ID", "缺少项目ID，请在请求头 X-Project-ID 传递");
                 return;
@@ -100,11 +110,11 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
             }
 
             // 3. 提取认证请求头
-            String apiKey = request.getHeader("X-API-Key");
-            String deviceId = request.getHeader("X-Device-ID");
-            String userId = request.getHeader("X-User-ID");
-            String timestamp = request.getHeader("X-Timestamp");
-            String signature = request.getHeader("X-Signature");
+            String apiKey = wrappedRequest.getHeader("X-API-Key");
+            String deviceId = wrappedRequest.getHeader("X-Device-ID");
+            String userId = wrappedRequest.getHeader("X-User-ID");
+            String timestamp = wrappedRequest.getHeader("X-Timestamp");
+            String signature = wrappedRequest.getHeader("X-Signature");
 
             // 4. 验证必需字段
             if (apiKey == null || deviceId == null || userId == null ||
@@ -161,12 +171,12 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
 
             // 8. 验证HMAC签名
             String signatureData = CryptoUtils.buildSignatureData(
-                    request.getMethod(),
-                    request.getRequestURI(),
+                    wrappedRequest.getMethod(),
+                    wrappedRequest.getRequestURI(),
                     timestamp,
                     deviceId,
                     userId,
-                    "" // 为避免消费请求体，这里不参与签名；如需签名 body，可用缓存包装器读取。
+                    wrappedRequest.getBody() // 现在包含 Body 进行签名验证
             );
 
             if (!CryptoUtils.verifySignature(signatureData, signature, device.getSecretKey())) {
@@ -184,8 +194,8 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
             context.setTablePrefix(projectConfig.tablePrefix());
             RequestContext.set(context);
 
-            // 10. 继续处理请求
-            filterChain.doFilter(request, response);
+            // 10. 继续处理请求 (使用包装后的请求)
+            filterChain.doFilter(wrappedRequest, response);
 
         } catch (Exception e) {
             log.log(System.Logger.Level.ERROR, "认证过滤器异常", e);

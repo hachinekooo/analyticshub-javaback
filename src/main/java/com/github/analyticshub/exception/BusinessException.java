@@ -63,6 +63,6 @@ public class BusinessException extends RuntimeException {
     }
 
     public static BusinessException invalidSessionId() {
-        return new BusinessException("INVALID_SESSION_ID", "会话ID格式无效");
+        return new BusinessException("VALIDATION_ERROR", "会话ID格式无效");
     }
 }
