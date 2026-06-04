@@ -470,13 +470,13 @@ Content-Type: application/json
 - `request_type`: `EXPORT / DELETE`
 - `processor`: `ANALYTICSHUB / POSTHOG`
 - `status`: `SUBMITTED / IN_PROGRESS / COMPLETED / REJECTED / CANCELLED`
-- `result_payload`: 人工处理结果快照（JSON）
+- `result_payload`: 处理结果快照（JSON）。`ANALYTICSHUB` 请求由服务端自动写入；`POSTHOG` 请求由运营人员处理后回填。
 
 ### 13. 隐私处理推荐流程
 
 1. **发起**：App 侧通过 [采集端 API](API_COLLECTION.md) 发起导出/删除请求。
-2. **建单**：后端落库工单，并触发内部通知（如邮件告警）。
-3. **人工处理**：运营人员根据工单信息，在对应系统（AnalyticsHub/PostHog）执行实际操作。
-4. **回填**：运营人员通过 Admin 接口调用 `PATCH` 回填处理结果。
-5. **通知**：回填成功后，后端自动（或手动）发送结果通知邮件给用户。
-
+2. **AnalyticsHub 自动处理**：当 `processor=ANALYTICSHUB` 时，后端会直接完成本地数据处理：
+   - `EXPORT`: 返回当前 `project_id + user_id + device_id` 匹配到的设备、事件、会话和流量指标 JSON 快照，并将工单置为 `COMPLETED`。
+   - `DELETE`: 删除当前用户/设备对应的事件、会话、流量指标，并删除设备采集凭证；工单保留为审计记录并置为 `COMPLETED`。
+3. **PostHog 人工处理**：当 `processor=POSTHOG` 时，后端只负责建单、记录 `distinctId/userId` 和触发内部通知。运营人员需要在 PostHog 中按 `distinct_id` 查找 Person；删除时使用 PostHog Persons API 的 bulk delete，并启用 `delete_events=true`，随后检查 deletion status。
+4. **回填与通知**：PostHog 请求处理完成后，运营人员通过 Admin `PATCH` 回填结果，并通过 `notifyUser` 或手动通知接口告知用户。

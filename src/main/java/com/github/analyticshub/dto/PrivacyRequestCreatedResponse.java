@@ -7,6 +7,7 @@ public record PrivacyRequestCreatedResponse(
         String status,
         String requestedAt,
         String contactEmail,
-        String message
+        String message,
+        Object resultPayload
 ) {
 }
