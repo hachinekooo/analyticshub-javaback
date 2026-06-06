@@ -44,6 +44,7 @@ sudo bash ops/server/cleanup-obsolete-db-roles.sh
 
 # 4. 数据库骨架。密码不写入 Git：可以通过环境变量传入；不传则自动生成到 root-only 文件。
 sudo bash ops/server/create-postgres-databases.sh
+sudo bash ops/server/check-db-isolation.sh
 
 # 5. 证书和 Nginx 路由。默认写入 /etc/nginx/conf.d/analyticshub-backends.conf。
 sudo bash ops/server/setup-certbot.sh
