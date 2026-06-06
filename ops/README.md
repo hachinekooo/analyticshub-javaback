@@ -38,20 +38,23 @@ sudo bash ops/server/setup-swap.sh
 sudo bash ops/server/setup-journald-limits.sh
 sudo bash ops/server/check-env.sh
 
-# 3. 数据库骨架。密码不写入 Git：可以通过环境变量传入；不传则自动生成到 root-only 文件。
+# 3. 可选：检查旧口径遗留文件；确认后再 APPLY=true 备份移走。
+sudo bash ops/server/cleanup-obsolete-state.sh
+
+# 4. 数据库骨架。密码不写入 Git：可以通过环境变量传入；不传则自动生成到 root-only 文件。
 sudo bash ops/server/create-postgres-databases.sh
 
-# 4. 证书和 Nginx 路由。默认写入 /etc/nginx/conf.d/analyticshub-backends.conf。
+# 5. 证书和 Nginx 路由。默认写入 /etc/nginx/conf.d/analyticshub-backends.conf。
 sudo bash ops/server/setup-certbot.sh
 sudo bash ops/server/install-nginx-routes.sh
 
-# 5. 创建四个 app 槽位。
+# 6. 创建四个 app 槽位。
 sudo -E env DEPLOY_ENV=prod bash ops/apps/demo_project/setup-app.sh
 sudo -E env DEPLOY_ENV=test bash ops/apps/demo_project/setup-app.sh
 sudo -E env DEPLOY_ENV=prod bash ops/apps/analyticshub/setup-app.sh
 sudo -E env DEPLOY_ENV=test bash ops/apps/analyticshub/setup-app.sh
 
-# 6. 上传 jar，编辑 /etc/<service>/<service>.env 后再启动。
+# 7. 上传 jar，编辑 /etc/<service>/<service>.env 后再启动。
 sudo systemctl restart demo_project-test analyticshub-test
 ```
 

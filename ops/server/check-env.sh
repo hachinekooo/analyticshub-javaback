@@ -2,6 +2,8 @@
 set -euo pipefail
 
 MIN_JAVA_MAJOR="${MIN_JAVA_MAJOR:-25}"
+DOMAIN="${DOMAIN:-analytics.example.com}"
+CERT_DIR="${CERT_DIR:-/etc/letsencrypt/live/${DOMAIN}}"
 failures=0
 
 ok() { echo "OK    $1"; }
@@ -58,6 +60,35 @@ check_service_optional() {
   fi
 }
 
+check_file_optional() {
+  local file="$1"
+  if [[ -f "$file" ]]; then
+    ok "file exists: $file"
+  else
+    warn "file missing: $file"
+  fi
+}
+
+check_swap() {
+  if swapon --show=NAME --noheadings | grep -q .; then
+    ok "swap is active"
+  else
+    warn "swap is not active"
+  fi
+}
+
+check_sysctl_value() {
+  local key="$1"
+  local expected="$2"
+  local actual
+  actual="$(sysctl -n "$key" 2>/dev/null || true)"
+  if [[ "$actual" == "$expected" ]]; then
+    ok "sysctl $key=$expected"
+  else
+    warn "sysctl $key is ${actual:-unset}, expected $expected"
+  fi
+}
+
 check_os
 check_java
 check_command curl
@@ -72,6 +103,12 @@ check_service_optional postgresql.service
 check_service_optional postgresql-15.service
 check_service_optional redis.service
 check_service_optional redis-server.service
+check_swap
+check_sysctl_value vm.swappiness 10
+check_sysctl_value vm.vfs_cache_pressure 50
+check_file_optional /etc/systemd/journald.conf.d/90-analyticshub-limits.conf
+check_file_optional "$CERT_DIR/fullchain.pem"
+check_file_optional "$CERT_DIR/privkey.pem"
 
 echo
 if (( failures > 0 )); then
