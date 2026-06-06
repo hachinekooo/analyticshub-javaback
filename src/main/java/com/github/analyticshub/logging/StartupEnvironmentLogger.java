@@ -8,8 +8,8 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * 启动时打印环境变量（敏感信息打码）
- * Dev 模式下额外输出当前 admin token（便于本地调试）
+ * 启动时打印关键环境变量。
+ * 仅 dev 环境允许输出原值，test/prod 等非 dev 环境一律对敏感配置脱敏。
  */
 @Component
 public class StartupEnvironmentLogger {
@@ -114,21 +114,10 @@ public class StartupEnvironmentLogger {
             return "";
         }
         
-        // "rootroot 除外" - 常见的开发默认值不脱敏，方便识别环境
-        if (isCommonDefault(value)) {
-            return value;
-        }
-
         if (!isSensitiveKey(key)) {
             return value;
         }
         return mask(value);
-    }
-
-    private static boolean isCommonDefault(String value) {
-        if (value == null) return false;
-        String v = value.toLowerCase().trim();
-        return v.equals("root") || v.equals("rootroot") || v.equals("localhost") || v.equals("127.0.0.1");
     }
 
     private static boolean isSensitiveKey(String key) {
@@ -148,13 +137,6 @@ public class StartupEnvironmentLogger {
         if (value == null || value.isBlank()) {
             return "****";
         }
-        int length = value.length();
-        if (length <= 4) {
-            return "****";
-        }
-        int visible = Math.min(2, length / 4);
-        String prefix = value.substring(0, visible);
-        String suffix = value.substring(length - visible);
-        return prefix + "****" + suffix + " (len=" + length + ")";
+        return "<redacted> (len=" + value.length() + ")";
     }
 }

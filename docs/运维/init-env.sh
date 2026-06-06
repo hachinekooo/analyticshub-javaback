@@ -373,7 +373,7 @@ echo ">>> Writing env file: ${APP_ENV_FILE} ..."
 # 确保 ADMIN_TOKEN 有值
 if [ -z "${ADMIN_TOKEN}" ]; then
   ADMIN_TOKEN="$(openssl rand -base64 48 | tr -d '=+/ ' | cut -c1-64)"
-  echo "🔐 自动生成 ADMIN_TOKEN: ${ADMIN_TOKEN}"
+  echo "🔐 ADMIN_TOKEN 已自动生成，将写入 root-only 凭据文件。"
 fi
 
 sudo tee "${APP_ENV_FILE}" >/dev/null <<EOF
@@ -454,10 +454,10 @@ sudo tee "${CRED_FILE}" >/dev/null <<EOF
   Port: ${PG_PORT}
   Database: ${PG_DB}
   Username: ${PG_USER}
-  Password: ${PG_PASSWORD}
+  Password: <redacted; see ${APP_ENV_FILE}>
 
 [AdminToken]
-  ADMIN_TOKEN: ${ADMIN_TOKEN}
+  ADMIN_TOKEN: <redacted; see ${APP_ENV_FILE}>
 
 [Commands]
   # 上传 jar 后启动：

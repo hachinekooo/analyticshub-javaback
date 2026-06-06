@@ -42,11 +42,11 @@ logs/
 # Environment / secrets
 .env
 .env.*
-.env.local
-.env.example
-.env.prod
-.env.dev
-.env.test
+!.env.example
+!.env.*.example
+*.pem
+*.p8
+*.p12
 
 # Local development configs
 config/
@@ -137,4 +137,3 @@ package-lock.json
 Thumbs.db
 ehthumbs.db
 desktop.ini
-
