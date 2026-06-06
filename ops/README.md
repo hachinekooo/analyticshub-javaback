@@ -40,6 +40,7 @@ sudo bash ops/server/check-env.sh
 
 # 3. 可选：检查旧口径遗留文件；确认后再 APPLY=true 备份移走。
 sudo bash ops/server/cleanup-obsolete-state.sh
+sudo bash ops/server/cleanup-obsolete-db-roles.sh
 
 # 4. 数据库骨架。密码不写入 Git：可以通过环境变量传入；不传则自动生成到 root-only 文件。
 sudo bash ops/server/create-postgres-databases.sh
