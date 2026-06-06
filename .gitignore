@@ -34,6 +34,8 @@ build/
 
 # macOS
 .DS_Store
+._*
+__MACOSX/
 
 # Logs
 logs/

@@ -1,9 +1,10 @@
 # AnalyticsHub 部署指南（环境准备 + JAR 部署）
 
 基本布置：
-- 自动化环境准备（`docs/运维/init-env.sh`）
+- 当前推荐自动化环境准备（`ops/server/` + `ops/apps/analyticshub/`）
 - 手动上传并部署 JAR（适合环境已准备好的情况）
 
+> `docs/运维/init-env.sh` 是早期一体化脚本，只保留为历史参考。正式上线前的服务器初始化、数据库、Nginx、systemd 和权限隔离，以 `ops/` 目录下脚本为准。
 
 ## 为项目创建数据库与用户（管理端项目配置前置条件）
 
@@ -11,10 +12,11 @@
 
 - Docker 安装的 PostgreSQL 操作示例见：[Docker_PostgreSQL_Guild.md 的 3.3 小节](../Docker_PostgreSQL_Guild.md#33-为项目创建数据库与用户管理端项目配置前置条件)
 
-## 自动化环境准备（init-env.sh）
+## 自动化环境准备（ops）
 
 ### 文件位置
-- 主脚本: `docs/运维/init-env.sh`
+- 服务器基础环境: `ops/server/`
+- AnalyticsHub 应用初始化: `ops/apps/analyticshub/`
 - 本文档: `docs/运维/DEPLOYMENT_GUIDE.md`
 
 ### 主要功能
@@ -24,23 +26,17 @@
 - 适配多种部署场景
 
 ### 环境变量配置
-部署脚本支持通过环境变量自定义所有路径和配置（以下变量由 `docs/运维/init-env.sh` 读取，用于生成/应用 Nginx 配置并准备前端静态目录；后端应用本身不读取 `VUE_DIST_DIR` / `NGINX_SERVER_NAME`）：
+应用初始化脚本支持通过环境变量自定义路径和配置。默认固定为一套 AnalyticsHub：
 
 ```bash
 # 应用配置
 export APP_NAME="analyticshub"
-export APP_PORT="3001"
-
-# 前端 dist 部署路径（Nginx 静态站点 root）
-export VUE_DIST_DIR="/usr/share/nginx/html/your-custom-path"
+export SERVER_PORT="3001"
 
 # 数据库配置
-export PG_DB="your_database_name"
-export PG_USER="your_database_user"
-export PG_PASSWORD="your_secure_password"
-
-# Nginx server_name（域名/公网IP，用于虚拟主机匹配）
-export NGINX_SERVER_NAME="your-domain.com"
+export DB_NAME="analytics"
+export DB_USER="analytic"
+export DB_SCHEMA="analytics"
 
 # 管理令牌
 export ADMIN_TOKEN="$(openssl rand -hex 32)"
@@ -49,15 +45,14 @@ export ADMIN_TOKEN="$(openssl rand -hex 32)"
 ### 快速自定义示例
 
 ```bash
-# 自定义前端部署路径
-export VUE_DIST_DIR="/usr/share/nginx/html/analyticshub-frontend/dist"
+# 服务器基础环境只执行一次
+sudo bash ops/server/init-env.sh
+sudo bash ops/server/setup-postgresql.sh
+sudo bash ops/server/create-postgres-databases.sh
+sudo bash ops/server/install-nginx-routes.sh
 
-# 自定义应用名称和端口
-export APP_NAME="my-analytics"
-export APP_PORT="8080"
-
-# 执行部署
-bash docs/运维/init-env.sh
+# AnalyticsHub 应用初始化
+sudo bash ops/apps/analyticshub/setup-app.sh
 ```
 
 ### 使用场景
@@ -65,23 +60,23 @@ bash docs/运维/init-env.sh
 1. 全新部署
 ```bash
 # 使用默认配置部署
-bash docs/运维/init-env.sh
+sudo bash ops/apps/analyticshub/setup-app.sh
 ```
 
 2. 自定义部署
 ```bash
 # 自定义配置部署
-export VUE_DIST_DIR="/opt/my-app/frontend"
-export APP_PORT="3002"
+export APP_NAME="analyticshub"
+export SERVER_PORT="3001"
 export ADMIN_TOKEN="$(openssl rand -hex 32)"
 
-bash docs/运维/init-env.sh
+sudo -E bash ops/apps/analyticshub/setup-app.sh
 ```
 
 3. 已有环境更新
 ```bash
 # 脚本会自动检测并跳过已安装的组件
-bash docs/运维/init-env.sh
+sudo bash ops/apps/analyticshub/setup-app.sh
 ```
 
 ### 目录结构说明
@@ -132,20 +127,24 @@ sudo firewall-cmd --reload
 1. 准备环境变量
 ```bash
 # 示例：按需自定义
-export APP_PORT="3001"
-export NGINX_PORT="3000"
-export VUE_DIST_DIR="/usr/share/nginx/html/analyticshub-frontend/dist"
+export APP_NAME="analyticshub"
+export SERVER_PORT="3001"
+export DB_NAME="analytics"
+export DB_USER="analytic"
+export DB_SCHEMA="analytics"
 export ADMIN_TOKEN="$(openssl rand -hex 32)"
 ```
 
 2. 执行部署
 ```bash
-# 执行部署脚本
-bash docs/运维/init-env.sh
+# 服务器基础环境和公共路由
+sudo bash ops/server/init-env.sh
+sudo bash ops/server/setup-postgresql.sh
+sudo bash ops/server/create-postgres-databases.sh
+sudo bash ops/server/install-nginx-routes.sh
 
-# 或者带自定义配置
-export VUE_DIST_DIR="/your/custom/path"
-bash docs/运维/init-env.sh
+# AnalyticsHub 单实例应用
+sudo -E bash ops/apps/analyticshub/setup-app.sh
 ```
 
 3. 部署前端
@@ -253,9 +252,9 @@ tail -f /var/log/analyticshub/analyticshub.log
 jar tf /opt/analyticshub/app.jar | head
 ```
 
-### 关于 `docs/运维/init-env.sh`
+### 关于旧 `docs/运维/init-env.sh`
 
-`init-env.sh` 只负责**初始化服务器环境**（安装依赖、创建目录、生成 systemd、Nginx 配置等），**不参与 JAR 打包**，也**不会替你上传 JAR**。
+`docs/运维/init-env.sh` 是早期一体化脚本，只适合回看历史部署方式。当前正式部署使用 `ops/server/` 和 `ops/apps/analyticshub/`，避免旧脚本覆盖现在的单服务、单库、单账号口径。
 
 ## 部署检查命令
 
@@ -320,7 +319,7 @@ sudo chmod -R 755 "${VUE_DIST_DIR}"
 sudo netstat -tlnp | grep :3001
 
 # 修改应用端口
-export APP_PORT="3002"
+export SERVER_PORT="3002"
 ```
 
 3. 服务启动失败

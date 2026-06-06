@@ -31,6 +31,7 @@ ADMIN_TOKEN="${ADMIN_TOKEN:-}"
 PG_VERSION="15"
 PG_DB="analytics"
 PG_USER="analytic"
+PG_SCHEMA="analytics"
 PG_PASSWORD="${PG_PASSWORD:-}"     # 留空则自动生成
 PG_HOST="127.0.0.1"
 PG_PORT="5432"
@@ -338,13 +339,13 @@ else
   cd /tmp && rm -rf "${TEMP_DIR}"
 fi
 
-# 确保 schema 权限（有些系统会在 template1 里收紧 public schema 权限，导致 Flyway 建表失败）
+# 确保 schema 权限。AnalyticsHub 固定使用 analytics schema，不使用 public 承载业务表。
 echo ">>> Ensuring schema privileges on database: ${PG_DB} ..."
 TEMP_DIR="$(mktemp -d)"
 cd "${TEMP_DIR}" || exit 1
 sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER DATABASE ${PG_DB} OWNER TO ${PG_USER};"
-sudo -u postgres psql -v ON_ERROR_STOP=1 -d "${PG_DB}" -c "GRANT USAGE, CREATE ON SCHEMA public TO ${PG_USER};"
-sudo -u postgres psql -v ON_ERROR_STOP=1 -d "${PG_DB}" -c "ALTER SCHEMA public OWNER TO ${PG_USER};"
+sudo -u postgres psql -v ON_ERROR_STOP=1 -d "${PG_DB}" -c "CREATE SCHEMA IF NOT EXISTS ${PG_SCHEMA} AUTHORIZATION ${PG_USER};"
+sudo -u postgres psql -v ON_ERROR_STOP=1 -d "${PG_DB}" -c "GRANT USAGE, CREATE ON SCHEMA ${PG_SCHEMA} TO ${PG_USER};"
 cd /tmp && rm -rf "${TEMP_DIR}"
 
 # -----------------------------
@@ -380,9 +381,12 @@ sudo tee "${APP_ENV_FILE}" >/dev/null <<EOF
 SPRING_PROFILES_ACTIVE=${SPRING_PROFILE}
 SERVER_PORT=${APP_PORT}
 
-SPRING_DATASOURCE_URL=jdbc:postgresql://${PG_HOST}:${PG_PORT}/${PG_DB}
+SPRING_DATASOURCE_URL=jdbc:postgresql://${PG_HOST}:${PG_PORT}/${PG_DB}?currentSchema=${PG_SCHEMA},public
 SPRING_DATASOURCE_USERNAME=${PG_USER}
 SPRING_DATASOURCE_PASSWORD=${PG_PASSWORD}
+DB_NAME=${PG_DB}
+DB_USER=${PG_USER}
+DB_SCHEMA=${PG_SCHEMA}
 
 ADMIN_TOKEN=${ADMIN_TOKEN}
 EOF

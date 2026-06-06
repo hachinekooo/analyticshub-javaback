@@ -77,7 +77,7 @@
 spring:
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:analytics}?currentSchema=${DB_SCHEMA:analytics},public
-    username: ${DB_USER:root}
+    username: ${DB_USER:analytic}
     password: ${DB_PASSWORD:root}
   flyway:
     default-schema: ${DB_SCHEMA:analytics}

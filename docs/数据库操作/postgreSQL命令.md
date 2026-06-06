@@ -36,22 +36,22 @@ DROP DATABASE IF EXISTS 数据库名;
 \du
 ```
 
-精准查询 analytics 用户
+精准查询 AnalyticsHub 业务用户
 ```sql
-SELECT analytics FROM pg_user WHERE usename = 'analytics';
+SELECT usename FROM pg_user WHERE usename = 'analytic';
 ```
 
 创建用户
 
 ```
-CREATE ROLE analytics WITH
+CREATE ROLE analytic WITH
 LOGIN
-PASSWORD 'analytics';
+PASSWORD 'replace-with-strong-password';
 ```
 
 修改用户的密码：
 ```sql
-ALTER ROLE analytics WITH PASSWORD '你的新密码';
+ALTER ROLE analytic WITH PASSWORD '你的新密码';
 ```
 ## 数据库操作
 
@@ -61,11 +61,21 @@ ALTER ROLE analytics WITH PASSWORD '你的新密码';
 -- 创建数据库并指定所有者
 CREATE DATABASE analytics
     WITH
-    OWNER = analytics
+    OWNER = analytic
     ENCODING = 'UTF8'
     LC_COLLATE = 'en_US.utf8'  -- 和模板库一致的小写utf8
     LC_CTYPE = 'en_US.utf8'
     TEMPLATE = template0;      -- 关键：指定template0模板
+```
+
+创建业务 schema：
+
+```sql
+\c analytics
+CREATE SCHEMA IF NOT EXISTS analytics AUTHORIZATION analytic;
+ALTER DATABASE analytics OWNER TO analytic;
+REVOKE CONNECT ON DATABASE analytics FROM PUBLIC;
+GRANT CONNECT ON DATABASE analytics TO analytic;
 ```
 
 查看数据库信息

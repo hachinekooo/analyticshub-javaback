@@ -90,9 +90,9 @@ ExecStart=/usr/bin/java ${JAVA_OPTS} -jar ${APP_DIR}/app.jar
 EOF
   cat >"/etc/systemd/system/$APP_NAME.service.d/20-resource-guard.conf" <<EOF
 [Service]
+# Alibaba Cloud Linux 3 当前 systemd 239 不支持 OOMPolicy；只写可生效的内存限制。
 MemoryHigh=${MEMORY_HIGH}
 MemoryMax=${MEMORY_MAX}
-OOMPolicy=stop
 Restart=on-failure
 RestartSec=10
 EOF

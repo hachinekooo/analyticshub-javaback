@@ -17,7 +17,7 @@ spring:
   # ============================================================
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:analytics}?currentSchema=${DB_SCHEMA:analytics},public
-    username: ${DB_USER:root}
+    username: ${DB_USER:analytic}
     password: ${DB_PASSWORD:}
     driver-class-name: org.postgresql.Driver
     hikari:
@@ -153,7 +153,7 @@ analytics:
     host: ${DB_HOST:localhost}
     port: ${DB_PORT:5432}
     database: ${DB_NAME:analytics}
-    username: ${DB_USER:root}
+    username: ${DB_USER:analytic}
     password: ${DB_PASSWORD:}
 
 ---
