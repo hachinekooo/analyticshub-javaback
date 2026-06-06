@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="${APP_NAME:-analyticshub}"
+BASE_NAME="${BASE_NAME:-analyticshub}"
+DEPLOY_ENV="${DEPLOY_ENV:-prod}"
+APP_NAME="${APP_NAME:-${BASE_NAME}-${DEPLOY_ENV}}"
 ENV_FILE="${ENV_FILE:-/etc/$APP_NAME/$APP_NAME.env}"
 APP_DIR="${APP_DIR:-/opt/$APP_NAME}"
 HOST="${HOST:-127.0.0.1}"
@@ -21,9 +23,9 @@ require_real_value() {
   local key="$1"
   local value="${!key:-}"
   if is_placeholder "$value"; then
-    fail "$key must be replaced with a real production value"
+    fail "$key must be replaced with a real value"
   else
-    ok "env production value configured: $key"
+    ok "env value configured: $key"
   fi
 }
 
@@ -50,6 +52,17 @@ admin_token="${ADMIN_TOKEN:-}"
 (( ${#admin_token} >= 32 )) && ok "ADMIN_TOKEN length OK" || fail "ADMIN_TOKEN must be at least 32 characters"
 [[ -f "$APP_DIR/app.jar" ]] && ok "jar exists: $APP_DIR/app.jar" || warn "jar missing: $APP_DIR/app.jar"
 
+case "$DEPLOY_ENV" in
+  prod)
+    [[ "${SERVER_PORT:-}" == "3001" ]] && ok "prod port OK" || warn "prod expected SERVER_PORT=3001"
+    [[ "${DB_NAME:-}" == "analytics_prod" ]] && ok "prod DB OK" || warn "prod expected DB_NAME=analytics_prod"
+    ;;
+  test)
+    [[ "${SERVER_PORT:-}" == "13001" ]] && ok "test port OK" || warn "test expected SERVER_PORT=13001"
+    [[ "${DB_NAME:-}" == "analytics_test" ]] && ok "test DB OK" || warn "test expected DB_NAME=analytics_test"
+    ;;
+esac
+
 if [[ "${MAIL_ENABLED:-false}" == "true" ]]; then
   for key in MAIL_HOST MAIL_USERNAME MAIL_PASSWORD ALERT_EMAIL; do
     require_real_value "$key"
@@ -70,7 +83,11 @@ if command_exists psql; then
   else
     fail "PostgreSQL login failed"
   fi
-  if PGPASSWORD="${DB_PASSWORD:-}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U "${DB_USER:-}" -d "${DB_NAME:-}" -v ON_ERROR_STOP=1 -c "select 1 from information_schema.schemata where schema_name = '${DB_SCHEMA:-analytics}'" >/dev/null 2>&1; then
+  schema_count="$(
+    PGPASSWORD="${DB_PASSWORD:-}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U "${DB_USER:-}" -d "${DB_NAME:-}" \
+      -v ON_ERROR_STOP=1 -tAc "select count(*) from information_schema.schemata where schema_name = '${DB_SCHEMA:-analytics}'" 2>/dev/null || true
+  )"
+  if [[ "$schema_count" == "1" ]]; then
     ok "PostgreSQL schema exists: ${DB_SCHEMA:-analytics}"
   else
     fail "PostgreSQL schema missing: ${DB_SCHEMA:-analytics}"
@@ -79,7 +96,7 @@ else
   warn "psql missing, skip database login check"
 fi
 
-if systemctl list-unit-files "$APP_NAME.service" >/dev/null 2>&1; then
+if systemctl cat "$APP_NAME.service" >/dev/null 2>&1; then
   ok "systemd service registered: $APP_NAME"
 else
   fail "systemd service missing: $APP_NAME"
