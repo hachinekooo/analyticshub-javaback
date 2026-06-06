@@ -41,7 +41,8 @@ sudo bash ops/server/check-env.sh
 # 3. 数据库骨架。密码不写入 Git：可以通过环境变量传入；不传则自动生成到 root-only 文件。
 sudo bash ops/server/create-postgres-databases.sh
 
-# 4. Nginx 路由。默认写入 /etc/nginx/conf.d/analyticshub-backends.conf。
+# 4. 证书和 Nginx 路由。默认写入 /etc/nginx/conf.d/analyticshub-backends.conf。
+sudo bash ops/server/setup-certbot.sh
 sudo bash ops/server/install-nginx-routes.sh
 
 # 5. 创建四个 app 槽位。
@@ -59,7 +60,7 @@ sudo systemctl restart demo_project-test analyticshub-test
 这些配置不适合直接写进仓库脚本，但重建服务器时必须确认：
 
 - DNS：`analytics.example.com` 必须解析到当前 ECS 公网 IP。
-- HTTPS 证书：`install-nginx-routes.sh` 默认使用 `/etc/letsencrypt/live/analytics.example.com/`，如果是全新机器，需要先签发或恢复证书。
+- HTTPS 证书：`setup-certbot.sh` 负责安装 certbot 和检查证书；全新机器签发证书时需要 DNS 已解析，并显式传 `ISSUE_CERT=true CERTBOT_EMAIL=...`。
 - 阿里云告警：内存、磁盘 IO、联系人和通知渠道属于云控制台配置，脚本不保存 AccessKey，也不自动修改云账号资源。
 - 真实密钥：数据库密码、Apple 登录/内购密钥、SMTP 密码、2FA secret 只写入服务器 root-only env，不提交到 Git。
 - 前端 dist：Nginx root 默认为 `/usr/share/nginx/html/inks-office-web/dist`，前端产物需要单独上传或部署。
@@ -80,6 +81,7 @@ sudo -E env DEPLOY_ENV=prod bash ops/apps/demo_project/check-app.sh
 sudo -E env DEPLOY_ENV=test bash ops/apps/demo_project/check-app.sh
 sudo -E env DEPLOY_ENV=prod bash ops/apps/analyticshub/check-app.sh
 sudo -E env DEPLOY_ENV=test bash ops/apps/analyticshub/check-app.sh
+sudo bash ops/server/check-public-routes.sh
 ```
 
 公网健康检查：

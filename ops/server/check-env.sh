@@ -68,6 +68,7 @@ check_command psql
 check_command redis-cli
 check_service_optional nginx.service
 check_service_optional firewalld.service
+check_service_optional postgresql.service
 check_service_optional postgresql-15.service
 check_service_optional redis.service
 check_service_optional redis-server.service
