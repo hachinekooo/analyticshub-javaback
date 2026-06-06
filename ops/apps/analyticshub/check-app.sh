@@ -43,6 +43,12 @@ for key in SPRING_PROFILES_ACTIVE SERVER_PORT DB_HOST DB_PORT DB_NAME DB_SCHEMA 
   [[ -n "${!key:-}" ]] && ok "env configured: $key" || fail "missing env: $key"
 done
 
+if [[ -n "${LOG_PATH:-}" ]]; then
+  [[ -d "$LOG_PATH" ]] && ok "log dir exists: $LOG_PATH" || fail "log dir missing: $LOG_PATH"
+else
+  warn "LOG_PATH is not configured, file logs will use application default"
+fi
+
 for key in DB_PASSWORD ADMIN_TOKEN; do
   require_real_value "$key"
 done
@@ -56,10 +62,12 @@ case "$DEPLOY_ENV" in
   prod)
     [[ "${SERVER_PORT:-}" == "3001" ]] && ok "prod port OK" || warn "prod expected SERVER_PORT=3001"
     [[ "${DB_NAME:-}" == "analytics_prod" ]] && ok "prod DB OK" || warn "prod expected DB_NAME=analytics_prod"
+    [[ "${DB_USER:-}" == "analytic_prod" ]] && ok "prod DB user OK" || warn "prod expected DB_USER=analytic_prod"
     ;;
   test)
     [[ "${SERVER_PORT:-}" == "13001" ]] && ok "test port OK" || warn "test expected SERVER_PORT=13001"
     [[ "${DB_NAME:-}" == "analytics_test" ]] && ok "test DB OK" || warn "test expected DB_NAME=analytics_test"
+    [[ "${DB_USER:-}" == "analytic_test" ]] && ok "test DB user OK" || warn "test expected DB_USER=analytic_test"
     ;;
 esac
 

@@ -18,12 +18,12 @@ ops/apps/demo_project/                   # Demo App/Inks app 槽位脚本
 
 ## 当前线上口径
 
-| 环境 | systemd | 数据库 | Schema | 端口 | Nginx 前缀 |
-|---|---|---|---|---:|---|
-| prod | `demo_project-prod.service` | `demo_project_prod` | `app` | `8080` | `/prod/demo_project/` |
-| test | `demo_project-test.service` | `demo_project_test` | `app` | `18080` | `/test/demo_project/` |
-| prod | `analyticshub-prod.service` | `analytics_prod` | `analytics` | `3001` | `/prod/analyticshub/` |
-| test | `analyticshub-test.service` | `analytics_test` | `analytics` | `13001` | `/test/analyticshub/` |
+| 环境 | systemd | 数据库 | 数据库用户 | Schema | 端口 | Nginx 前缀 |
+|---|---|---|---|---|---:|---|
+| prod | `demo_project-prod.service` | `demo_project_prod` | `demo_project_prod` | `app` | `8080` | `/prod/demo_project/` |
+| test | `demo_project-test.service` | `demo_project_test` | `demo_project_test` | `app` | `18080` | `/test/demo_project/` |
+| prod | `analyticshub-prod.service` | `analytics_prod` | `analytic_prod` | `analytics` | `3001` | `/prod/analyticshub/` |
+| test | `analyticshub-test.service` | `analytics_test` | `analytic_test` | `analytics` | `13001` | `/test/analyticshub/` |
 
 ## 重建顺序
 
@@ -38,9 +38,8 @@ sudo bash ops/server/setup-swap.sh
 sudo bash ops/server/setup-journald-limits.sh
 sudo bash ops/server/check-env.sh
 
-# 3. 数据库骨架。密码不写入 Git：通过环境变量传入，或让脚本生成后写 root-only 文件。
-sudo -E env MEMOBOX_DB_PASSWORD='replace-me' ANALYTICS_DB_PASSWORD='replace-me' \
-  bash ops/server/create-postgres-databases.sh
+# 3. 数据库骨架。密码不写入 Git：可以通过环境变量传入；不传则自动生成到 root-only 文件。
+sudo bash ops/server/create-postgres-databases.sh
 
 # 4. Nginx 路由。默认写入 /etc/nginx/conf.d/analyticshub-backends.conf。
 sudo bash ops/server/install-nginx-routes.sh
@@ -77,10 +76,10 @@ sudo systemctl restart demo_project-test analyticshub-test
 ## 健康检查
 
 ```bash
-DEPLOY_ENV=prod bash ops/apps/demo_project/check-app.sh
-DEPLOY_ENV=test bash ops/apps/demo_project/check-app.sh
-DEPLOY_ENV=prod bash ops/apps/analyticshub/check-app.sh
-DEPLOY_ENV=test bash ops/apps/analyticshub/check-app.sh
+sudo -E env DEPLOY_ENV=prod bash ops/apps/demo_project/check-app.sh
+sudo -E env DEPLOY_ENV=test bash ops/apps/demo_project/check-app.sh
+sudo -E env DEPLOY_ENV=prod bash ops/apps/analyticshub/check-app.sh
+sudo -E env DEPLOY_ENV=test bash ops/apps/analyticshub/check-app.sh
 ```
 
 公网健康检查：

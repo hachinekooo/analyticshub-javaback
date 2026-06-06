@@ -22,10 +22,12 @@ case "$DEPLOY_ENV" in
   prod)
     SERVER_PORT="${SERVER_PORT:-3001}"
     DB_NAME="${DB_NAME:-analytics_prod}"
+    DB_USER="${DB_USER:-analytic_prod}"
     ;;
   test)
     SERVER_PORT="${SERVER_PORT:-13001}"
     DB_NAME="${DB_NAME:-analytics_test}"
+    DB_USER="${DB_USER:-analytic_test}"
     ;;
   *)
     echo "DEPLOY_ENV must be prod or test, got: $DEPLOY_ENV" >&2
@@ -34,7 +36,6 @@ case "$DEPLOY_ENV" in
 esac
 
 DB_SCHEMA="${DB_SCHEMA:-analytics}"
-DB_USER="${DB_USER:-analyticshub}"
 SPRING_PROFILES_ACTIVE="${SPRING_PROFILES_ACTIVE:-prod}"
 JAVA_OPTS="${JAVA_OPTS:--Xms96m -Xmx256m -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=48m -XX:MaxDirectMemorySize=48m}"
 MEMORY_HIGH="${MEMORY_HIGH:-400M}"
@@ -76,8 +77,10 @@ install_env() {
     -e "s|SERVER_PORT=3001|SERVER_PORT=${SERVER_PORT}|" \
     -e "s|DB_NAME=analytics_prod|DB_NAME=${DB_NAME}|" \
     -e "s|DB_SCHEMA=analytics|DB_SCHEMA=${DB_SCHEMA}|" \
-    -e "s|DB_USER=analyticshub|DB_USER=${DB_USER}|" \
+    -e "s|DB_USER=analytic_prod|DB_USER=${DB_USER}|" \
     -e "s|SPRING_PROFILES_ACTIVE=prod|SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE}|" \
+    -e "s|LOG_PATH=/var/log/analyticshub-prod|LOG_PATH=${LOG_DIR}|" \
+    -e "s|LOG_FILE=analyticshub-prod|LOG_FILE=${APP_NAME}|" \
     -e "s|ADMIN_TOKEN=replace-with-at-least-32-random-characters|ADMIN_TOKEN=$(random_secret)|" \
     "$ENV_FILE"
   echo "Created env file: $ENV_FILE"
