@@ -16,6 +16,9 @@ public record AdminProjectUpdateRequest(
         @Max(value = 65535, message = "dbPort 不能大于 65535")
         Integer dbPort,
         String dbName,
+        @Size(max = 63, message = "dbSchema 长度不能超过 63")
+        @Pattern(regexp = "^[a-z0-9_]*$", message = "dbSchema 格式无效")
+        String dbSchema,
         String dbUser,
         String dbPassword,
         @Size(max = 40, message = "tablePrefix 长度不能超过 40")

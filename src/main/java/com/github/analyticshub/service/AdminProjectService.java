@@ -41,6 +41,8 @@ public class AdminProjectService {
     private static final int MAX_PROJECT_ID_LENGTH = 50;
     private static final int MAX_TABLE_PREFIX_LENGTH = 40;
     private static final int MAX_DB_NAME_LENGTH = 63;
+    private static final int MAX_SCHEMA_NAME_LENGTH = 63;
+    private static final String DEFAULT_DB_SCHEMA = "analytics";
 
     private static final Pattern PROJECT_ID_PATTERN = Pattern.compile("^[a-z0-9_-]+$");
     private static final Pattern IDENTIFIER_PATTERN = Pattern.compile("^[a-z0-9_]+$");
@@ -66,6 +68,7 @@ public class AdminProjectService {
         String tablePrefix = normalizeTablePrefix(request.tablePrefix());
         int dbPort = normalizeDbPort(request.dbPort());
         String dbName = normalizeDbName(request.dbName());
+        String dbSchema = normalizeDbSchema(request.dbSchema());
 
         AnalyticsProject existing = projectMapper.selectOne(
                 new LambdaQueryWrapper<AnalyticsProject>().eq(AnalyticsProject::getProjectId, projectId)
@@ -80,6 +83,7 @@ public class AdminProjectService {
         project.setDbHost(request.dbHost());
         project.setDbPort(dbPort);
         project.setDbName(dbName);
+        project.setDbSchema(dbSchema);
         project.setDbUser(request.dbUser());
         project.setDbPasswordEncrypted(CryptoUtils.encrypt(request.dbPassword()));
         project.setTablePrefix(tablePrefix);
@@ -107,6 +111,9 @@ public class AdminProjectService {
         }
         if (request.dbName() != null) {
             project.setDbName(normalizeDbName(request.dbName()));
+        }
+        if (request.dbSchema() != null) {
+            project.setDbSchema(normalizeDbSchema(request.dbSchema()));
         }
         if (request.dbUser() != null) {
             project.setDbUser(request.dbUser());
@@ -149,8 +156,9 @@ public class AdminProjectService {
 
     public ProjectInitResult initializeProjectDatabase(Long id) {
         ProjectDbConfig config = resolveProjectConfig(id);
+        String schema = normalizeDbSchema(config.dbSchema());
         String prefix = normalizeTablePrefix(config.tablePrefix());
-        String sql = loadProjectInitSql(prefix);
+        String sql = loadProjectInitSql(schema, prefix);
 
         try (HikariDataSource dataSource = createDataSource(config);
              Connection connection = dataSource.getConnection()) {
@@ -185,8 +193,9 @@ public class AdminProjectService {
             for (String table : requiredTables) {
                 String fullTableName = prefix + table;
                 Boolean exists = jdbcTemplate.queryForObject(
-                        "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?)",
+                        "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = ? AND table_name = ?)",
                         Boolean.class,
+                        config.dbSchema(),
                         fullTableName
                 );
                 tables.put(table, Boolean.TRUE.equals(exists));
@@ -212,6 +221,7 @@ public class AdminProjectService {
         AnalyticsProject project = requireProject(id);
         String projectId = normalizeProjectId(project.getProjectId());
         String tablePrefix = normalizeTablePrefix(project.getTablePrefix());
+        String dbSchema = normalizeDbSchema(project.getDbSchema());
 
         String password = null;
         if (project.getDbPasswordEncrypted() != null && !project.getDbPasswordEncrypted().isBlank()) {
@@ -223,6 +233,7 @@ public class AdminProjectService {
                 project.getDbHost(),
                 normalizeDbPort(project.getDbPort()),
                 normalizeDbName(project.getDbName()),
+                dbSchema,
                 project.getDbUser(),
                 password,
                 tablePrefix
@@ -270,14 +281,27 @@ public class AdminProjectService {
         return dbName;
     }
 
-    private static String loadProjectInitSql(String prefix) {
+    private static String normalizeDbSchema(String dbSchema) {
+        if (dbSchema == null || dbSchema.isBlank()) {
+            return DEFAULT_DB_SCHEMA;
+        }
+        if (dbSchema.length() > MAX_SCHEMA_NAME_LENGTH) {
+            throw new IllegalArgumentException("dbSchema 长度超限");
+        }
+        if (!IDENTIFIER_PATTERN.matcher(dbSchema).matches()) {
+            throw new IllegalArgumentException("dbSchema 格式无效");
+        }
+        return dbSchema;
+    }
+
+    private static String loadProjectInitSql(String schema, String prefix) {
         try {
             ClassPathResource resource = new ClassPathResource("db/project-init.sql");
             String sql;
             try (var inputStream = resource.getInputStream()) {
                 sql = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
             }
-            return sql.replace("{{PREFIX}}", prefix);
+            return sql.replace("{{SCHEMA}}", schema).replace("{{PREFIX}}", prefix);
         } catch (Exception e) {
             throw new BusinessException("PROJECT_INIT_TEMPLATE_MISSING", "加载初始化脚本失败", HttpStatus.INTERNAL_SERVER_ERROR);
         }
@@ -285,8 +309,8 @@ public class AdminProjectService {
 
     private static HikariDataSource createDataSource(ProjectDbConfig config) {
         HikariConfig hikariConfig = new HikariConfig();
-        hikariConfig.setJdbcUrl(String.format("jdbc:postgresql://%s:%d/%s",
-                config.dbHost(), config.dbPort(), config.dbName()));
+        hikariConfig.setJdbcUrl(String.format("jdbc:postgresql://%s:%d/%s?currentSchema=%s,public",
+                config.dbHost(), config.dbPort(), config.dbName(), config.dbSchema()));
         hikariConfig.setUsername(config.dbUser());
         hikariConfig.setPassword(config.dbPassword());
         hikariConfig.setDriverClassName("org.postgresql.Driver");
@@ -304,6 +328,7 @@ public class AdminProjectService {
             String dbHost,
             int dbPort,
             String dbName,
+            String dbSchema,
             String dbUser,
             String dbPassword,
             String tablePrefix

@@ -16,7 +16,7 @@ spring:
   # Database Configuration (System Database)
   # ============================================================
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:analytics}
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:analytics}?currentSchema=${DB_SCHEMA:analytics},public
     username: ${DB_USER:root}
     password: ${DB_PASSWORD:}
     driver-class-name: org.postgresql.Driver
@@ -34,6 +34,8 @@ spring:
     baseline-on-migrate: true
     baseline-version: 0
     locations: classpath:db/migration
+    default-schema: ${DB_SCHEMA:analytics}
+    schemas: ${DB_SCHEMA:analytics}
     table: flyway_schema_history
     clean-disabled: true
     validate-on-migrate: true

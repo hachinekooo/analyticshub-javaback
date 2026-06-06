@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS analytics_projects (
     db_host VARCHAR(255) NOT NULL,
     db_port INTEGER NOT NULL DEFAULT 5432,
     db_name VARCHAR(100) NOT NULL,
+    db_schema VARCHAR(63) NOT NULL DEFAULT 'analytics',
     db_user VARCHAR(100) NOT NULL,
     db_password_encrypted TEXT,
 

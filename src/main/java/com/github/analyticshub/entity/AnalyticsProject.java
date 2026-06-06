@@ -31,6 +31,9 @@ public class AnalyticsProject {
     @TableField("db_name")
     private String dbName;
 
+    @TableField("db_schema")
+    private String dbSchema = "analytics";
+
     @TableField("db_user")
     private String dbUser;
 
@@ -58,8 +61,8 @@ public class AnalyticsProject {
     }
 
     // 全参构造函数
-    public AnalyticsProject(Long id, String projectId, String projectName, String dbHost, 
-                           Integer dbPort, String dbName, String dbUser, String dbPasswordEncrypted,
+    public AnalyticsProject(Long id, String projectId, String projectName, String dbHost,
+                           Integer dbPort, String dbName, String dbSchema, String dbUser, String dbPasswordEncrypted,
                            String tablePrefix, Boolean isActive, Instant createdAt, Instant updatedAt) {
         this.id = id;
         this.projectId = projectId;
@@ -67,6 +70,7 @@ public class AnalyticsProject {
         this.dbHost = dbHost;
         this.dbPort = dbPort;
         this.dbName = dbName;
+        this.dbSchema = dbSchema;
         this.dbUser = dbUser;
         this.dbPasswordEncrypted = dbPasswordEncrypted;
         this.tablePrefix = tablePrefix;
@@ -122,6 +126,14 @@ public class AnalyticsProject {
 
     public void setDbName(String dbName) {
         this.dbName = dbName;
+    }
+
+    public String getDbSchema() {
+        return dbSchema;
+    }
+
+    public void setDbSchema(String dbSchema) {
+        this.dbSchema = dbSchema;
     }
 
     public String getDbUser() {

@@ -76,9 +76,12 @@
 ```yaml
 spring:
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:analytics}
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:analytics}?currentSchema=${DB_SCHEMA:analytics},public
     username: ${DB_USER:root}
     password: ${DB_PASSWORD:root}
+  flyway:
+    default-schema: ${DB_SCHEMA:analytics}
+    schemas: ${DB_SCHEMA:analytics}
 ```
 
 ### 管理令牌配置

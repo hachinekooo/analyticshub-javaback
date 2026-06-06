@@ -129,11 +129,13 @@ src/main/resources/
 
 ```sql
 CREATE DATABASE analytics;
+\c analytics
+CREATE SCHEMA IF NOT EXISTS analytics;
 ```
 
-系统数据库（`spring.datasource`）只用于项目管理。
+系统数据库（`spring.datasource`）只用于项目管理，默认使用 `analytics` schema 保存 `analytics_projects` 和 Flyway 历史。
 
-每个业务项目必须使用自己的目标数据库；管理端创建项目**不会自动创建数据库/用户**，只会保存连接信息。为某个项目配置了 `dbName/dbUser/dbPassword` 后，需要你提前在 PostgreSQL 里创建对应的数据库与用户：
+每个业务项目必须使用自己的目标数据库和 schema；管理端创建项目**不会自动创建数据库/用户**，初始化项目时会按 `dbSchema` 创建 schema 并创建采集表。为某个项目配置了 `dbName/dbSchema/dbUser/dbPassword` 后，需要你提前在 PostgreSQL 里创建对应的数据库与用户，并授予该用户创建/使用目标 schema 的权限：
 
 - Docker 安装的 PostgreSQL 操作示例见：[Docker_PostgreSQL_Guild.md 的 3.3 小节](docs/Docker_PostgreSQL_Guild.md#33-为项目创建数据库与用户管理端项目配置前置条件)
 
@@ -142,9 +144,12 @@ CREATE DATABASE analytics;
 ```yaml
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/analytics
+    url: jdbc:postgresql://localhost:5432/analytics?currentSchema=analytics,public
     username: root
     password: your_password
+  flyway:
+    default-schema: analytics
+    schemas: analytics
 ```
 
 ### 3. 构建项目
@@ -284,9 +289,9 @@ mvn flyway:migrate
 
 ```sql
 INSERT INTO analytics_projects (
-  project_id, project_name, db_host, db_port, db_name, db_user, table_prefix
+  project_id, project_name, db_host, db_port, db_name, db_schema, db_user, table_prefix
 ) VALUES (
-  'new-project', 'New Project', 'localhost', 5432, 'analytics_new_project', 'root', 'analytics_'
+  'new-project', 'New Project', 'localhost', 5432, 'analytics_new_project', 'analytics', 'root', 'analytics_'
 );
 ```
 

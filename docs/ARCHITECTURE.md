@@ -218,6 +218,7 @@ Content-Type: application/json
   "dbHost": "localhost",
   "dbPort": 5432,
   "dbName": "analytics",
+  "dbSchema": "analytics",
   "dbUser": "root",
   "dbPassword": "your_password",
   "tablePrefix": "analytics_"

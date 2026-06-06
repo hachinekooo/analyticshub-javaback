@@ -5,6 +5,8 @@
 -- ============================================================
 
 SET timezone = 'UTC';
+CREATE SCHEMA IF NOT EXISTS {{SCHEMA}};
+SET search_path TO {{SCHEMA}}, public;
 
 -- 1. 设备注册表
 CREATE TABLE IF NOT EXISTS {{PREFIX}}devices (

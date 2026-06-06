@@ -37,7 +37,7 @@ else
   fail "env file missing: $ENV_FILE"
 fi
 
-for key in SPRING_PROFILES_ACTIVE SERVER_PORT DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD ADMIN_TOKEN; do
+for key in SPRING_PROFILES_ACTIVE SERVER_PORT DB_HOST DB_PORT DB_NAME DB_SCHEMA DB_USER DB_PASSWORD ADMIN_TOKEN; do
   [[ -n "${!key:-}" ]] && ok "env configured: $key" || fail "missing env: $key"
 done
 
@@ -69,6 +69,11 @@ if command_exists psql; then
     ok "PostgreSQL login works"
   else
     fail "PostgreSQL login failed"
+  fi
+  if PGPASSWORD="${DB_PASSWORD:-}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U "${DB_USER:-}" -d "${DB_NAME:-}" -v ON_ERROR_STOP=1 -c "select 1 from information_schema.schemata where schema_name = '${DB_SCHEMA:-analytics}'" >/dev/null 2>&1; then
+    ok "PostgreSQL schema exists: ${DB_SCHEMA:-analytics}"
+  else
+    fail "PostgreSQL schema missing: ${DB_SCHEMA:-analytics}"
   fi
 else
   warn "psql missing, skip database login check"

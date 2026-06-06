@@ -24,6 +24,9 @@ public record AdminProjectCreateRequest(
         Integer dbPort,
         @NotBlank(message = "dbName 不能为空")
         String dbName,
+        @Size(max = 63, message = "dbSchema 长度不能超过 63")
+        @Pattern(regexp = "^[a-z0-9_]*$", message = "dbSchema 格式无效")
+        String dbSchema,
         @NotBlank(message = "dbUser 不能为空")
         String dbUser,
         String dbPassword,

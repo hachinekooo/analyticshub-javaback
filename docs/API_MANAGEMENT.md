@@ -53,7 +53,7 @@ X-Admin-Token: your_admin_token
 
 系统数据库（`spring.datasource`）只承载项目管理信息。
 
-每个业务项目都应使用自己独立的目标数据库；管理端创建项目**不会自动创建数据库/用户**，只会保存连接信息。为某个项目配置了 `dbName/dbUser/dbPassword` 后，需要你提前在 PostgreSQL 里创建对应的数据库与用户。详细参见 [Docker_PostgreSQL_Guild.md](Docker_PostgreSQL_Guild.md)。
+每个业务项目都应使用自己独立的目标数据库和 schema；管理端创建项目**不会自动创建数据库/用户**，只会保存连接信息。`dbSchema` 为空时默认使用 `analytics`，初始化项目时会创建该 schema 并创建采集表。为某个项目配置了 `dbName/dbSchema/dbUser/dbPassword` 后，需要你提前在 PostgreSQL 里创建对应的数据库与用户。详细参见 [Docker_PostgreSQL_Guild.md](Docker_PostgreSQL_Guild.md)。
 
 ```http
 GET    /api/admin/projects
@@ -75,7 +75,8 @@ GET    /api/admin/projects/{id}/health # 检查项目健康状态
       "id": 1,
       "projectId": "demo_project",
       "projectName": "Demo App App",
-      "dbName": "analytics_demo_project",
+      "dbName": "demo_project",
+      "dbSchema": "analytics",
       "createdAt": "2026-01-01T10:00:00Z"
     }
   ],
@@ -463,7 +464,7 @@ Content-Type: application/json
 
 ### 12. 隐私工单数据库参考
 
-每个项目在其自身数据库内创建 `{{PREFIX}}privacy_requests` 表（例如 `analytics_privacy_requests`）。
+每个项目在其自身数据库的 `dbSchema` 内创建 `{{PREFIX}}privacy_requests` 表（例如 `analytics.analytics_privacy_requests`）。
 
 核心字段说明：
 - `request_id`: 工单号（`prv_` 前缀）
@@ -479,4 +480,3 @@ Content-Type: application/json
 3. **人工处理**：运营人员根据工单信息，在对应系统（AnalyticsHub/PostHog）执行实际操作。
 4. **回填**：运营人员通过 Admin 接口调用 `PATCH` 回填处理结果。
 5. **通知**：回填成功后，后端自动（或手动）发送结果通知邮件给用户。
-

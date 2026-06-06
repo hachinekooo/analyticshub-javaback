@@ -7,7 +7,7 @@
 
 ## 为项目创建数据库与用户（管理端项目配置前置条件）
 
-管理端创建项目**不会自动创建数据库/用户**，只会保存连接信息。为某个项目配置了 `dbName/dbUser/dbPassword` 后，需要你提前在 PostgreSQL 里创建对应的数据库与用户。
+管理端创建项目**不会自动创建数据库/用户**，只会保存连接信息。为某个项目配置了 `dbName/dbSchema/dbUser/dbPassword` 后，需要你提前在 PostgreSQL 里创建对应的数据库与用户，并确保该用户可以创建/使用目标 schema。`dbSchema` 为空时默认使用 `analytics`。
 
 - Docker 安装的 PostgreSQL 操作示例见：[Docker_PostgreSQL_Guild.md 的 3.3 小节](../Docker_PostgreSQL_Guild.md#33-为项目创建数据库与用户管理端项目配置前置条件)
 
