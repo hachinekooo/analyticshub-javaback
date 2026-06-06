@@ -21,11 +21,16 @@ cd <project-dir>
 ### 创建数据库
 
 ```bash
-# 连接到 PostgreSQL
-psql -U root
+# 连接到 PostgreSQL 管理账号
+psql -U postgres
+
+# 创建系统库账号
+CREATE ROLE analytic LOGIN PASSWORD 'replace-with-local-analytic-password';
 
 # 创建数据库
-CREATE DATABASE analytics;
+CREATE DATABASE analytics OWNER analytic;
+\c analytics
+CREATE SCHEMA IF NOT EXISTS analytics AUTHORIZATION analytic;
 
 # 退出
 \q
@@ -39,7 +44,7 @@ CREATE DATABASE analytics;
 spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/analytics
-    username: root
+    username: analytic
     password: your_password  # 修改为你的密码
 ```
 
@@ -82,8 +87,8 @@ Run → Edit Configurations… → 选择你的 Application：
 
 - `DB_HOST=127.0.0.1`
 - `DB_PORT=5432`
-- `DB_NAME=analytics_flyway_test`
-- `DB_USER=<your_db_user>`
+- `DB_NAME=analytics`
+- `DB_USER=analytic`
 - `DB_PASSWORD=<your_db_password>`
 - `ADMIN_TOKEN=<your_admin_token>`
 
@@ -96,8 +101,8 @@ Run → Edit Configurations… → 选择你的 Application：
 ```bash
 DB_HOST=127.0.0.1
 DB_PORT=5432
-DB_NAME=analytics_flyway_test
-DB_USER=xxx
+DB_NAME=analytics
+DB_USER=analytic
 DB_PASSWORD=xxx
 ADMIN_TOKEN=xxx
 ```
@@ -195,7 +200,7 @@ server:
 **解决**:
 ```bash
 # 清理数据库
-psql -U root -d analytics -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+psql -U postgres -d analytics -c "DROP SCHEMA analytics CASCADE; CREATE SCHEMA analytics AUTHORIZATION analytic;"
 
 # 重新运行
 mvn spring-boot:run

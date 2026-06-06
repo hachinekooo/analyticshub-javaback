@@ -128,9 +128,11 @@ src/main/resources/
 创建数据库：
 
 ```sql
+CREATE ROLE analytic LOGIN PASSWORD 'replace-with-local-analytic-password';
 CREATE DATABASE analytics;
 \c analytics
-CREATE SCHEMA IF NOT EXISTS analytics;
+ALTER DATABASE analytics OWNER TO analytic;
+CREATE SCHEMA IF NOT EXISTS analytics AUTHORIZATION analytic;
 ```
 
 系统数据库（`spring.datasource`）只用于项目管理，默认使用 `analytics` schema 保存 `analytics_projects` 和 Flyway 历史。
@@ -145,7 +147,7 @@ CREATE SCHEMA IF NOT EXISTS analytics;
 spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/analytics?currentSchema=analytics,public
-    username: root
+    username: analytic
     password: your_password
   flyway:
     default-schema: analytics
