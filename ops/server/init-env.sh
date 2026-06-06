@@ -26,7 +26,7 @@ install_packages() {
   local manager="$1"
   case "$manager" in
     dnf|yum)
-      "$manager" install -y curl openssl firewalld postgresql redis vim git lsof net-tools || true
+      "$manager" install -y curl openssl firewalld vim git lsof net-tools htop tar gzip unzip || true
       if [[ "$INSTALL_NGINX" == "true" ]]; then
         "$manager" install -y nginx || true
       fi
@@ -36,7 +36,7 @@ install_packages() {
       ;;
     apt-get)
       apt-get update
-      apt-get install -y curl openssl postgresql-client redis-tools vim git lsof net-tools || true
+      apt-get install -y curl openssl vim git lsof net-tools htop tar gzip unzip || true
       if [[ "$INSTALL_NGINX" == "true" ]]; then
         apt-get install -y nginx || true
       fi

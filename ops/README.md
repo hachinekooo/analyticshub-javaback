@@ -5,7 +5,7 @@
 
 核心口径：
 
-- `ops/server/`：服务器基础环境，只维护一份。负责 Java、Nginx、firewalld、psql、redis-cli 等共享依赖。
+- `ops/server/`：服务器基础环境，只维护一份。负责 Java、Nginx、firewalld、PostgreSQL、Redis、swap、journald 等共享依赖。
 - `ops/apps/<app>/`：单个后端项目的运行目录、env、systemd、健康检查。通过 `DEPLOY_ENV=prod|test` 创建环境槽位。
 - 不在 app 脚本里安装/重配整台服务器，避免多个项目互相覆盖主机配置。
 - 不默认开机自启 4 个 Java 服务，避免 2C/2GiB 小机器重启后同时拉满导致 SSH 进不去。
@@ -31,8 +31,12 @@ ops/apps/demo_project/                   # Demo App/Inks app 槽位脚本
 # 1. 基础包、Nginx、firewalld 等主机依赖。
 sudo bash ops/server/init-env.sh
 
-# 2. 2C/2GiB 机器建议启用 2G swap。
+# 2. 本机数据库、Redis、swap 和日志上限。
+sudo bash ops/server/setup-postgresql.sh
+sudo bash ops/server/setup-redis.sh
 sudo bash ops/server/setup-swap.sh
+sudo bash ops/server/setup-journald-limits.sh
+sudo bash ops/server/check-env.sh
 
 # 3. 数据库骨架。密码不写入 Git：通过环境变量传入，或让脚本生成后写 root-only 文件。
 sudo -E env MEMOBOX_DB_PASSWORD='replace-me' ANALYTICS_DB_PASSWORD='replace-me' \
@@ -50,6 +54,16 @@ sudo -E env DEPLOY_ENV=test bash ops/apps/analyticshub/setup-app.sh
 # 6. 上传 jar，编辑 /etc/<service>/<service>.env 后再启动。
 sudo systemctl restart demo_project-test analyticshub-test
 ```
+
+## 需要人工确认的外部配置
+
+这些配置不适合直接写进仓库脚本，但重建服务器时必须确认：
+
+- DNS：`analytics.example.com` 必须解析到当前 ECS 公网 IP。
+- HTTPS 证书：`install-nginx-routes.sh` 默认使用 `/etc/letsencrypt/live/analytics.example.com/`，如果是全新机器，需要先签发或恢复证书。
+- 阿里云告警：内存、磁盘 IO、联系人和通知渠道属于云控制台配置，脚本不保存 AccessKey，也不自动修改云账号资源。
+- 真实密钥：数据库密码、Apple 登录/内购密钥、SMTP 密码、2FA secret 只写入服务器 root-only env，不提交到 Git。
+- 前端 dist：Nginx root 默认为 `/usr/share/nginx/html/inks-office-web/dist`，前端产物需要单独上传或部署。
 
 ## 目录约定
 
