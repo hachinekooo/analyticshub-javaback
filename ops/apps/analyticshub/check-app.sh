@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_NAME="${BASE_NAME:-analyticshub}"
-DEPLOY_ENV="${DEPLOY_ENV:-prod}"
-APP_NAME="${APP_NAME:-${BASE_NAME}-${DEPLOY_ENV}}"
+APP_NAME="${APP_NAME:-analyticshub}"
 ENV_FILE="${ENV_FILE:-/etc/$APP_NAME/$APP_NAME.env}"
 APP_DIR="${APP_DIR:-/opt/$APP_NAME}"
 HOST="${HOST:-127.0.0.1}"
@@ -54,22 +52,12 @@ for key in DB_PASSWORD ADMIN_TOKEN; do
 done
 
 [[ "${SPRING_PROFILES_ACTIVE:-}" == "prod" ]] && ok "prod profile enabled" || fail "SPRING_PROFILES_ACTIVE should be prod"
+[[ "${SERVER_PORT:-}" == "3001" ]] && ok "port OK" || warn "expected SERVER_PORT=3001"
+[[ "${DB_NAME:-}" == "analytics" ]] && ok "DB OK" || warn "expected DB_NAME=analytics"
+[[ "${DB_USER:-}" == "analytic" ]] && ok "DB user OK" || warn "expected DB_USER=analytic"
 admin_token="${ADMIN_TOKEN:-}"
 (( ${#admin_token} >= 32 )) && ok "ADMIN_TOKEN length OK" || fail "ADMIN_TOKEN must be at least 32 characters"
 [[ -f "$APP_DIR/app.jar" ]] && ok "jar exists: $APP_DIR/app.jar" || warn "jar missing: $APP_DIR/app.jar"
-
-case "$DEPLOY_ENV" in
-  prod)
-    [[ "${SERVER_PORT:-}" == "3001" ]] && ok "prod port OK" || warn "prod expected SERVER_PORT=3001"
-    [[ "${DB_NAME:-}" == "analytics_prod" ]] && ok "prod DB OK" || warn "prod expected DB_NAME=analytics_prod"
-    [[ "${DB_USER:-}" == "analytic_prod" ]] && ok "prod DB user OK" || warn "prod expected DB_USER=analytic_prod"
-    ;;
-  test)
-    [[ "${SERVER_PORT:-}" == "13001" ]] && ok "test port OK" || warn "test expected SERVER_PORT=13001"
-    [[ "${DB_NAME:-}" == "analytics_test" ]] && ok "test DB OK" || warn "test expected DB_NAME=analytics_test"
-    [[ "${DB_USER:-}" == "analytic_test" ]] && ok "test DB user OK" || warn "test expected DB_USER=analytic_test"
-    ;;
-esac
 
 if [[ "${MAIL_ENABLED:-false}" == "true" ]]; then
   for key in MAIL_HOST MAIL_USERNAME MAIL_PASSWORD ALERT_EMAIL; do

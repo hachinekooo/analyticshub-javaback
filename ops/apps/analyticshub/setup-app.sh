@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# AnalyticsHub app 槽位初始化。
+# AnalyticsHub 单实例初始化。
 # 用法：
-#   sudo -E env DEPLOY_ENV=prod bash ops/apps/analyticshub/setup-app.sh
-#   sudo -E env DEPLOY_ENV=test bash ops/apps/analyticshub/setup-app.sh
+#   sudo bash ops/apps/analyticshub/setup-app.sh
 
-BASE_NAME="${BASE_NAME:-analyticshub}"
-DEPLOY_ENV="${DEPLOY_ENV:-prod}"
-APP_NAME="${APP_NAME:-${BASE_NAME}-${DEPLOY_ENV}}"
+APP_NAME="${APP_NAME:-analyticshub}"
 APP_USER="${APP_USER:-$APP_NAME}"
 APP_GROUP="${APP_GROUP:-$APP_USER}"
 APP_DIR="${APP_DIR:-/opt/$APP_NAME}"
@@ -18,23 +15,9 @@ LOG_DIR="${LOG_DIR:-/var/log/$APP_NAME}"
 SERVICE_FILE="${SERVICE_FILE:-/etc/systemd/system/$APP_NAME.service}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-case "$DEPLOY_ENV" in
-  prod)
-    SERVER_PORT="${SERVER_PORT:-3001}"
-    DB_NAME="${DB_NAME:-analytics_prod}"
-    DB_USER="${DB_USER:-analytic_prod}"
-    ;;
-  test)
-    SERVER_PORT="${SERVER_PORT:-13001}"
-    DB_NAME="${DB_NAME:-analytics_test}"
-    DB_USER="${DB_USER:-analytic_test}"
-    ;;
-  *)
-    echo "DEPLOY_ENV must be prod or test, got: $DEPLOY_ENV" >&2
-    exit 1
-    ;;
-esac
-
+SERVER_PORT="${SERVER_PORT:-3001}"
+DB_NAME="${DB_NAME:-analytics}"
+DB_USER="${DB_USER:-analytic}"
 DB_SCHEMA="${DB_SCHEMA:-analytics}"
 SPRING_PROFILES_ACTIVE="${SPRING_PROFILES_ACTIVE:-prod}"
 JAVA_OPTS="${JAVA_OPTS:--Xms96m -Xmx256m -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=48m -XX:MaxDirectMemorySize=48m}"
@@ -75,12 +58,12 @@ install_env() {
   install -m 600 -o root -g root "$SCRIPT_DIR/analyticshub.env.example" "$ENV_FILE"
   sed -i \
     -e "s|SERVER_PORT=3001|SERVER_PORT=${SERVER_PORT}|" \
-    -e "s|DB_NAME=analytics_prod|DB_NAME=${DB_NAME}|" \
+    -e "s|DB_NAME=analytics|DB_NAME=${DB_NAME}|" \
     -e "s|DB_SCHEMA=analytics|DB_SCHEMA=${DB_SCHEMA}|" \
-    -e "s|DB_USER=analytic_prod|DB_USER=${DB_USER}|" \
+    -e "s|DB_USER=analytic|DB_USER=${DB_USER}|" \
     -e "s|SPRING_PROFILES_ACTIVE=prod|SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE}|" \
-    -e "s|LOG_PATH=/var/log/analyticshub-prod|LOG_PATH=${LOG_DIR}|" \
-    -e "s|LOG_FILE=analyticshub-prod|LOG_FILE=${APP_NAME}|" \
+    -e "s|LOG_PATH=/var/log/analyticshub|LOG_PATH=${LOG_DIR}|" \
+    -e "s|LOG_FILE=analyticshub|LOG_FILE=${APP_NAME}|" \
     -e "s|ADMIN_TOKEN=replace-with-at-least-32-random-characters|ADMIN_TOKEN=$(random_secret)|" \
     "$ENV_FILE"
   echo "Created env file: $ENV_FILE"
@@ -129,7 +112,7 @@ prepare_dirs
 install_env
 install_service
 
-echo "AnalyticsHub slot setup done."
+echo "AnalyticsHub setup done."
 echo "  Service: $APP_NAME"
 echo "  Jar: $APP_DIR/app.jar"
 echo "  Env: $ENV_FILE"
