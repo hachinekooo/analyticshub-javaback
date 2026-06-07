@@ -121,22 +121,12 @@ Run the narrowest useful verification first, then broader checks when touching s
 ## Git
 
 - Use Chinese commit messages in this format: `【模块-专题】简短说明`.
-- Allowed `模块` values:
-  - `文档`: documentation, README, AGENTS, guides, examples.
-  - `工程`: build, dependency, repository hygiene, CI, tooling.
-  - `配置`: application config, env examples, profile settings.
-  - `运维`: ops scripts, deployment, Nginx, systemd, backup, rotation.
-  - `安全`: auth, Admin Token, 2FA, rate limit, secret handling.
-  - `数据库`: Flyway migrations, schema, SQL, persistence config.
-  - `接口`: API contract, DTOs, response shape.
-  - `采集`: device registration, events, sessions, traffic collection.
-  - `管理`: admin project/device/event/session/metrics/counter features.
-  - `隐私`: privacy request workflows.
-  - `测试`: tests and test fixtures.
-- Allowed `专题` values:
-  - `开源口径`, `文档编排`, `脚本闭环`, `权限隔离`, `环境示例`, `发布检查`, `认证链路`, `密钥轮换`, `路由配置`, `迁移整理`, `接口契约`, `测试修复`.
-- If none of the allowed values fit, ask before inventing a new module or topic.
-- Example: `【文档-文档编排】统一文档头与索引口径`.
+- `模块` describes the affected domain. Prefer an existing product or technical area:
+  - Product domains: `认证`, `项目`, `设备`, `事件`, `会话`, `流量`, `指标`, `计数器`, `隐私`, `邮件`.
+  - Shared areas: `接口`, `数据库`, `安全`, `配置`, `运维`, `工程`, `文档`, `测试`.
+- `专题` describes the change type. Prefer short common words such as `新增`, `扩展`, `修复`, `重构`, `接口`, `校验`, `查询`, `统计`, `通知`, `配置`, `部署`, `脚本`, `权限`, `轮换`, `迁移`, `清理`, `文档编排`, `开源口径`, `测试补充`, `测试修复`.
+- Choose the closest existing module/topic. If a new word seems necessary, ask first.
+- Examples: `【事件-新增】支持批量事件上报`, `【安全-校验】收紧管理端 Token 传递方式`, `【文档-文档编排】统一文档头与索引口径`.
 - Keep each commit focused on one coherent topic.
 - Do not stage unrelated local changes.
 - Do not run destructive git commands unless the user explicitly asks for them.
