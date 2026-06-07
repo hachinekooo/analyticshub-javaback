@@ -51,7 +51,7 @@ logs/
 *.p12
 
 # Local development configs
-config/
+/config/
 local.properties
 secrets.properties
 
