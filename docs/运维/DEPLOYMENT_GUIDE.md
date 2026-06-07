@@ -1,3 +1,12 @@
+---
+title: AnalyticsHub 部署指南
+type: operations-guide
+status: current
+audience: operator
+scope: Linux 服务器部署、Nginx 路由、systemd、前端 dist、检查和定期维护
+agent_notes: 只维护 AnalyticsHub 自身部署；不要加入接入方业务项目脚本
+---
+
 # AnalyticsHub 部署指南
 
 本文只说明如何把 AnalyticsHub 后端部署到一台 Linux 服务器。运维脚本的统一入口是：

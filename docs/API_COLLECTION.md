@@ -1,6 +1,15 @@
+---
+title: 采集端 API
+type: api-reference
+status: current
+audience: frontend, client-sdk, backend
+scope: 设备注册、事件上报、会话上传、公开流量与计数接口
+agent_notes: 按路径或小节检索；不要作为默认上下文整篇读取
+---
+
 # 采集端 API 文档
 
-本部分主要涉及数据采集、事件上报以及公开数据展示等面向客户端和公开访问的接口。
+本文是 AnalyticsHub 面向客户端和公开入口的接口参考。
 
 ## 认证机制
 
@@ -67,7 +76,8 @@ X-Signature: hmac_signature_here
 
 说明：
 - `X-User-ID` 必须是 32 位十六进制字符串（不含 `-`）。
-- HMAC 签名串格式：`method|path|timestamp|deviceId|userId|`（服务端不参与 body 签名）。
+- HMAC 签名串格式：`method|path|timestamp|deviceId|userId|body`。
+- `body` 使用原始请求体字符串；没有请求体时为空字符串。
 
 **响应示例：**
 
@@ -81,7 +91,41 @@ X-Signature: hmac_signature_here
 }
 ```
 
-### 3. 会话上传
+### 3. 批量事件追踪
+
+```http
+POST /api/v1/events/batch
+Content-Type: application/json
+X-Project-ID: your-project-id
+X-API-Key: ak_xxxxxxxxxxxxx
+X-Device-ID: 550e8400-e29b-41d4-a716-446655440000
+X-User-ID: 00112233445566778899aabbccddeeff
+X-Timestamp: 1673520000000
+X-Signature: hmac_signature_here
+
+[
+  {
+    "eventType": "button_click",
+    "timestamp": 1673520000000,
+    "properties": {
+      "button_name": "submit",
+      "screen": "home"
+    },
+    "sessionId": "660e8400-e29b-41d4-a716-446655440000"
+  }
+]
+```
+
+**响应示例：**
+
+```json
+{
+  "success": true,
+  "timestamp": "2026-02-12T10:00:00.000Z"
+}
+```
+
+### 4. 会话上传
 
 ```http
 POST /api/v1/sessions
@@ -114,7 +158,7 @@ X-Signature: hmac_signature_here
 }
 ```
 
-### 4. 流量指标采集（采集端 App 内）
+### 5. 流量指标采集（采集端 App 内）
 
 ```http
 POST /api/v1/traffic-metrics/track
@@ -170,7 +214,7 @@ POST /api/v1/traffic-metrics/batch
 }
 ```
 
-### 5. 流量指标采集（官网 / 公共入口）
+### 6. 流量指标采集（官网 / 公共入口）
 
 该入口专为“官网流量统计”设计，追求接入极简：
 
@@ -183,7 +227,7 @@ POST /api/v1/traffic-metrics/batch
 **查询汇总数据（供官网展示实时 PV/UV）：**
 
 ```http
-GET /api/public/traffic/summary?projectId=your-project-id&from=2024-01-01&to=2024-12-31
+GET /api/public/traffic/summary?projectId=your-project-id&from=2026-01-01&to=2026-12-31
 ```
 - 自动过滤机器人数据。
 
@@ -194,8 +238,8 @@ GET /api/public/traffic/summary?projectId=your-project-id&from=2024-01-01&to=202
   "success": true,
   "data": {
     "projectId": "your-project-id",
-    "rangeStart": "2024-01-01",
-    "rangeEnd": "2024-12-31",
+    "rangeStart": "2026-01-01",
+    "rangeEnd": "2026-12-31",
     "pageViews": 12345,
     "visitors": 4567
   },
@@ -244,7 +288,7 @@ POST /api/public/traffic/batch
 }
 ```
 
-### 6. 运营累计统计（官网展示集成）
+### 7. 运营累计统计（官网展示集成）
 
 适用于“累计写信 10000 封”这类高性能运营展示。
 
@@ -287,16 +331,18 @@ POST /api/public/traffic/batch
 
 **i18n 逻辑**：服务端会根据 `Accept-Language` 自动从 `displayName` 和 `unit` 的 JSON 结构中摘取对应文字。如果未匹配到，则自动 Fallback 到中文。
 
-### 7. 工具与测试接口
+### 8. 工具与测试接口
 
 用于验证 API Key 签名实现是否正确。
 
 ```http
 GET /api/v1/protected/test
-X-Project-ID: ...
-X-API-Key: ...
-X-Signature: ...
-...
+X-Project-ID: your-project-id
+X-API-Key: ak_xxxxxxxxxxxxx
+X-Device-ID: 550e8400-e29b-41d4-a716-446655440000
+X-User-ID: 00112233445566778899aabbccddeeff
+X-Timestamp: 1673520000000
+X-Signature: hmac_signature_here
 ```
 
 **响应示例**：
@@ -311,7 +357,7 @@ X-Signature: ...
 }
 ```
 
-### 8. 隐私请求（App 端）
+### 9. 隐私请求（App 端）
 
 本模块用于用户发起数据导出或删除请求。采用 HMAC 签名鉴权，确保请求来源合法。
 

@@ -1,148 +1,97 @@
-# 🔒 AnalyticsHub 安全配置指南
+---
+title: AnalyticsHub 安全配置
+type: security-guide
+status: current
+audience: operator, backend, agent
+scope: 敏感信息边界、认证口径、生产检查和密钥轮换
+agent_notes: 涉及 token、2FA、邮件告警或密钥轮换时阅读
+---
 
-本文档指导如何安全地配置和管理 AnalyticsHub 项目的敏感信息。
+# AnalyticsHub 安全配置指南
 
-## 📋 敏感信息保护
+本文档只记录当前项目仍在使用的安全配置入口。生产部署请以 `ops/README.md` 和 `docs/运维/DEPLOYMENT_GUIDE.md` 为准。
 
-### 1. 环境变量文件
-项目使用环境变量来管理敏感信息，请勿将以下文件提交到版本控制：
+## 敏感信息边界
 
-- `.env` - 本地环境配置（包含真实密码）
-- `.env.dev` - 开发环境配置（可选）
-- `.env.prod` - 生产环境配置（可选）
-- `secrets.properties` - 密钥文件
+不要提交真实的：
 
-### 2. 提供的模板文件
-以下模板文件已添加到项目中：
+- 数据库密码
+- Admin Token
+- API Secret
+- TOTP / 2FA Secret
+- SMTP 密码
+- 生产域名、服务器 IP、个人路径
 
-- `.env.example` - 环境变量配置示例
-- `.env.dev.example` - 开发环境配置示例
-- `.gitignore` - 已配置忽略敏感文件
+本地开发可从 `.env.dev.example` 派生自己的 `.env.dev`。生产环境不要使用仓库根目录 `.env`，应使用 ops 脚本创建的 root-only 配置文件：
 
-## 🚀 快速开始
-
-### 本地开发环境设置
-
-1. **复制环境模板**：
-   ```bash
-   cp .env.dev.example .env
-   ```
-
-2. **修改配置**（如果需要）：
-   ```bash
-   # 编辑 .env 文件，修改数据库密码等敏感信息
-   vim .env
-   ```
-
-3. **启动应用**：
-   ```bash
-   # Spring Boot 默认不会自动读取 .env，需要先导入到当前 shell
-   set -a
-   source .env
-   set +a
-   
-   mvn spring-boot:run
-   ```
-
-### 生产环境部署
-
-1. **设置环境变量**：
-   ```bash
-   # 在服务器上设置环境变量
-   export DB_PASSWORD="your_secure_production_password"
-   export ADMIN_TOKEN="$(openssl rand -hex 32)"
-   export SPRING_PROFILES_ACTIVE=prod
-   ```
-
-2. **或者创建 .env 文件**：
-   ```bash
-   # 创建生产环境配置文件
-   cat > .env << EOF
-   DB_HOST=localhost
-   DB_PORT=5432
-   DB_NAME=analytics
-   DB_USER=analytic
-   DB_PASSWORD=generated_secure_password_123
-   ADMIN_TOKEN=$(openssl rand -hex 32)
-   SPRING_PROFILES_ACTIVE=prod
-   EOF
-   ```
-
-## 🔧 配置说明
-
-### 数据库配置
-应用现在支持通过环境变量配置数据库：
-
-```yaml
-spring:
-  datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:analytics}?currentSchema=${DB_SCHEMA:analytics},public
-    username: ${DB_USER:analytic}
-    password: ${DB_PASSWORD:root}
-  flyway:
-    default-schema: ${DB_SCHEMA:analytics}
-    schemas: ${DB_SCHEMA:analytics}
+```text
+/etc/analyticshub/analyticshub.env
 ```
 
-### 管理令牌配置
-管理端令牌通过环境变量配置：
+## 当前关键配置
 
-```yaml
-app:
-  security:
-    admin-token: ${ADMIN_TOKEN:}
-```
+后端从环境变量读取敏感配置：
 
-管理端 Token 用途：
-- 生产环境访问 `/actuator/**` 时需要携带 `X-Admin-Token` 或 `Authorization: Bearer <token>`
-- 访问管理端项目接口 `/api/admin/**` 需要携带 `X-Admin-Token` 或 `Authorization: Bearer <token>`
-- 校验接口：`POST /api/v1/auth/admin-token/verify`
-
-## 🛡️ 安全最佳实践
-
-### 1. 密码生成
-使用强密码生成命令：
 ```bash
-# 生成随机数据库密码（64 位）
-openssl rand -hex 32
-
-# 生成管理令牌（64 位）
-openssl rand -hex 32
+DB_HOST=127.0.0.1
+DB_PORT=5432
+DB_NAME=analytics
+DB_SCHEMA=analytics
+DB_USER=analytic
+DB_PASSWORD=replace-with-database-password
+ADMIN_TOKEN=replace-with-at-least-32-random-characters
 ```
 
-### 2. 文件权限
-确保敏感文件权限正确：
+可选安全能力：
+
 ```bash
-chmod 600 .env .env.*
-chown root:root .env .env.*
+MAIL_ENABLED=true
+MAIL_HOST=smtpdm.aliyun.com
+MAIL_PORT=465
+MAIL_USERNAME=notify@example.com
+MAIL_PASSWORD=replace-with-smtp-password
+ALERT_EMAIL=admin@example.com
+
+APP_SECURITY_2FA_ENABLED=true
+APP_SECURITY_2FA_SECRET=replace-with-totp-secret
 ```
 
-## 📝 检查清单
+相关 `application.yml` 路径：
 
-- [ ] 已创建 `.env` 文件并配置敏感信息
-- [ ] `.env` 文件已添加到 `.gitignore`
-- [ ] 生产环境使用强密码和令牌
-- [ ] 文件权限设置正确
-- [ ] 定期轮换密钥和密码
+- `spring.datasource.*`
+- `spring.flyway.*`
+- `spring.mail.*`
+- `app.security.admin-token`
+- `app.email.alert-recipient`
 
-## 🚨 紧急情况
+## 认证口径
 
-如果敏感信息意外提交：
+- `/api/health` 是公开健康检查接口。
+- `/api/admin/**` 需要 `X-Admin-Token` 或 `Authorization: Bearer <token>`。
+- `POST /api/v1/auth/admin-token/verify` 用于管理端 Token 有效性探测。
+- 采集端 `/api/v1/**` 按具体接口使用 API Key + HMAC。
+- 禁止通过 URL query 传递 Admin Token。
 
-1. 立即轮换所有密码和令牌
-2. 从 git 历史中清除敏感文件：
-   ```bash
-   git filter-branch --force --index-filter \
-     "git rm --cached --ignore-unmatch .env .env.*" \
-     --prune-empty --tag-name-filter cat -- --all
-   ```
+## 生产检查
 
-3. 强制推送到远程仓库：
-   ```bash
-   git push origin --force --all
-   git push origin --force --tags
-   ```
+```bash
+sudo bash ops/analyticshub check
+sudo -E env BASE_URL=https://analytics.example.com bash ops/analyticshub check-public
+```
 
-## 📞 支持
+## 密钥轮换
 
-如有安全问题，请立即联系项目维护者。
+优先使用仓库内维护的运维入口：
+
+```bash
+sudo bash ops/analyticshub rotate-secrets
+```
+
+可选：
+
+```bash
+sudo -E env ROTATE_2FA_SECRET=true bash ops/analyticshub rotate-secrets
+sudo -E env ROTATE_DB_PASSWORD=false bash ops/analyticshub rotate-secrets
+```
+
+如果真实敏感信息曾进入 Git 历史，先立即轮换所有相关密钥，再按仓库维护者确认的历史清理流程处理。

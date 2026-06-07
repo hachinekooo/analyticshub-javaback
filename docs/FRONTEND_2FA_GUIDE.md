@@ -1,22 +1,27 @@
+---
+title: 前端对接双因素认证
+type: integration-guide
+status: current
+audience: admin-frontend
+scope: 管理端 2FA 拦截、X-Admin-OTP 重试和前端处理方式
+agent_notes: 仅在处理管理端 2FA 前端对接时阅读
+---
+
 # 前端对接双因素认证 (2FA) 指南
 
-AnalyticsHub 后端已启用双因素认证 (TOTP) 安全机制。当检测到**新设备**或**异常 IP**登录管理端时，接口会返回 `403 Forbidden` 并要求输入动态验证码。
+AnalyticsHub 开启双因素认证 (TOTP) 后，当检测到**新设备**或**异常 IP**访问管理端时，接口会返回 `403 Forbidden` 并要求输入动态验证码。
 
-本文档指导前端如何优雅地拦截该错误并弹出验证码输入框。
-
----
+本文说明管理端前端如何识别 2FA 挑战、收集验证码并携带 `X-Admin-OTP` 重试原请求。
 
 ## 1. 核心流程
 
 1.  **正常请求**：前端发起 API 请求（带 `X-Admin-Token`）。
-2.  **触发拦截**：后端检测到异常环境，返回 HTTP `403`，其 Body 包含 `code: "REQUIRE_2FA"`。
+2.  **触发拦截**：后端检测到异常环境，返回 HTTP `403`，其 Body 包含 `error.code: "REQUIRE_2FA"`。
 3.  **前端处理**：
     *   拦截器捕获该错误。
     *   **弹出输入框**，提示用户输入 Authenticator App 上的 6 位数字。
 4.  **重试请求**：前端将用户输入的 6 位数字放入 Header `X-Admin-OTP`，**重试**原请求。
 5.  **成功**：后端验证通过，请求成功，且该 IP 在 24 小时内不再需要验证。
-
----
 
 ## 2. 接口契约
 
@@ -40,8 +45,6 @@ AnalyticsHub 后端已启用双因素认证 (TOTP) 安全机制。当检测到**
 在重试请求中，必须添加以下 Header：
 
 - `X-Admin-OTP`: `123456` (用户输入的 6 位数字)
-
----
 
 ## 3. 代码示例 (Axios)
 
@@ -107,8 +110,6 @@ service.interceptors.response.use(
 
 export default service;
 ```
-
----
 
 ## 4. 前端测试方法
 

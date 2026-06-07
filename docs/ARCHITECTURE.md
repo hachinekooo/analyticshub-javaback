@@ -1,6 +1,17 @@
-# Analytics Hub Java Backend - Architecture & Flows
+---
+title: AnalyticsHub 架构与认证链路
+type: architecture
+status: current
+audience: backend, agent
+scope: 服务端模块、认证链路、多项目数据源和关键时序
+agent_notes: 修改认证、路由或数据源逻辑时阅读；普通接口问题优先看 API 文档对应小节
+---
+
+# AnalyticsHub 架构与认证链路
 
 本文档提供该项目的整体模块架构设计、关键认证链路，以及服务端与客户端交互时序示例。
+
+建议先看“目标与边界”和“认证模块划分”，修改具体链路时再阅读对应时序小节。
 
 ## 目标与边界
 
@@ -42,7 +53,7 @@ flowchart TB
 
 ### 认证模块划分
 
-- 采集端（/api/v1/**）：API Key + HMAC 签名 + 时间戳
+- 采集端（/api/v1/**）：API Key + HMAC 签名 + 时间戳；设备注册和管理端 Token 校验接口除外
 - 管理端（/api/admin/**）：Admin Token（X-Admin-Token 或 Authorization: Bearer）
   - **安全防护**：
     - **双因素认证 (2FA)**：基于 TOTP (Google/Microsoft Authenticator)。在新环境/IP 访问时强制要求 `X-Admin-OTP` 校验。
@@ -136,10 +147,10 @@ sequenceDiagram
 签名串格式（服务端使用）：
 
 ```
-method|path|timestamp|deviceId|userId|
+method|path|timestamp|deviceId|userId|body
 ```
 
-说明：为避免读取并消耗请求体，服务端不参与 body 签名；客户端应按上述格式签名。
+说明：`body` 使用原始请求体字符串；没有请求体时为空字符串。客户端签名格式必须与 `CryptoUtils.buildSignatureData` 保持一致。
 
 示例请求：
 
@@ -217,10 +228,10 @@ Content-Type: application/json
   "projectName": "New Project",
   "dbHost": "localhost",
   "dbPort": 5432,
-  "dbName": "analytics",
+  "dbName": "new_project",
   "dbSchema": "analytics",
-  "dbUser": "root",
-  "dbPassword": "your_password",
+  "dbUser": "new_project_user",
+  "dbPassword": "replace-with-project-password",
   "tablePrefix": "analytics_"
 }
 ```

@@ -1,4 +1,4 @@
-# AnalyticsHub Ops Layout
+# AnalyticsHub 运维脚本
 
 这套运维脚本只维护 AnalyticsHub 自身部署口径。它不维护接入方业务项目的 systemd、数据库、Nginx 路由或密码轮换；接入方项目应在各自仓库或服务器本地 infra 目录中维护自己的运维脚本。
 

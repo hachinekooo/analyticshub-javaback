@@ -1,6 +1,6 @@
-# Analytics Hub - Java Backend
+# AnalyticsHub Java Backend
 
-多项目分析系统后端服务，采用 Spring Boot 4 + JDK 25 最佳实践构建。
+多项目分析系统后端服务，采用 Spring Boot 4 + JDK 25 构建。
 
 ## 技术栈
 
@@ -10,6 +10,7 @@
 - **Database**: PostgreSQL 15+
 - **Connection Pool**: HikariCP
 - **Database Migration**: Flyway
+- **Persistence**: MyBatis Plus
 - **Build Tool**: Maven
 
 ## 核心特性
@@ -33,13 +34,14 @@
 
 ### 3. 数据库管理
 - 使用 Flyway 进行版本化数据库迁移
-- 自动表创建和版本升级
-- 支持多数据源动态管理
+- 系统库迁移由 Flyway 管理
+- 接入项目的采集表通过管理端初始化接口创建或更新
+- 支持按项目配置独立数据库、schema 与连接池
 
 ### 4. 高性能设计
 - HikariCP 连接池管理
 - 连接池缓存和复用
-- 异步事件处理（可扩展）
+- 事件采集、会话上传、流量指标与计数器写入走独立业务服务
 
 ## 项目总览
 
@@ -53,6 +55,7 @@
 
 ## 文档入口
 
+- 完整索引：[docs/README.md](docs/README.md)
 - 本地启动：[QUICKSTART.md](QUICKSTART.md)
 - 生产部署：[docs/运维/DEPLOYMENT_GUIDE.md](docs/运维/DEPLOYMENT_GUIDE.md)
 - 运维脚本：[ops/README.md](ops/README.md)
@@ -66,6 +69,7 @@
 export DB_HOST=127.0.0.1
 export DB_PORT=5432
 export DB_NAME=analytics
+export DB_SCHEMA=analytics
 export DB_USER=analytic
 export DB_PASSWORD=replace-with-local-analytic-password
 export ADMIN_TOKEN=replace-with-local-admin-token

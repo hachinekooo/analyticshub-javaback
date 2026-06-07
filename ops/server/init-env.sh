@@ -32,7 +32,10 @@ install_packages() {
         "$manager" install -y nginx || true
       fi
       if ! command_exists java; then
-        "$manager" install -y java-latest-openjdk-devel || "$manager" install -y java-21-openjdk-devel || true
+        "$manager" install -y java-latest-openjdk-devel || true
+        if ! command_exists java && (( MIN_JAVA_MAJOR <= 21 )); then
+          "$manager" install -y java-21-openjdk-devel || true
+        fi
       fi
       ;;
     apt-get)
@@ -42,7 +45,10 @@ install_packages() {
         apt-get install -y nginx || true
       fi
       if ! command_exists java; then
-        apt-get install -y openjdk-21-jdk-headless || true
+        apt-get install -y "openjdk-${MIN_JAVA_MAJOR}-jdk-headless" || true
+        if ! command_exists java && (( MIN_JAVA_MAJOR <= 21 )); then
+          apt-get install -y openjdk-21-jdk-headless || true
+        fi
       fi
       ;;
     *)

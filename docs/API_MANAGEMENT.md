@@ -1,6 +1,15 @@
+---
+title: 管理端 API
+type: api-reference
+status: current
+audience: admin-frontend, backend
+scope: 项目管理、健康检查、数据查询、运营配置和安全管理接口
+agent_notes: 按路径或小节检索；不要作为默认上下文整篇读取
+---
+
 # 管理端 API 文档
 
-本部分主要涉及项目管理、健康检查、数据查询与分析以及运营配置等管理后台接口。
+本文是 AnalyticsHub 管理后台接口参考。
 
 ## 认证机制
 
@@ -74,7 +83,7 @@ GET    /api/admin/projects/{id}/health # 检查项目健康状态
     {
       "id": 1,
       "projectId": "your_project",
-      "projectName": "Demo App App",
+      "projectName": "Your Project",
       "dbName": "your_project",
       "dbSchema": "analytics",
       "createdAt": "2026-01-01T10:00:00Z"
