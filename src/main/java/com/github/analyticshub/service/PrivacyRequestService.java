@@ -1,6 +1,5 @@
 package com.github.analyticshub.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.analyticshub.config.MultiDataSourceManager;
 import com.github.analyticshub.dto.PrivacyProcessor;
@@ -26,6 +25,7 @@ import java.util.UUID;
 public class PrivacyRequestService {
 
     private static final System.Logger log = System.getLogger(PrivacyRequestService.class.getName());
+    private static final long DUPLICATE_REQUEST_WINDOW_SECONDS = 600;
 
     private final MultiDataSourceManager dataSourceManager;
     private final ObjectMapper objectMapper;
@@ -122,6 +122,22 @@ public class PrivacyRequestService {
 
         JdbcTemplate jdbcTemplate = new JdbcTemplate(context.getDataSource());
         String tableName = dataSourceManager.getTableName(context.getProjectId(), "privacy_requests");
+        StoredPrivacyRequest existing = findRecentSubmittedRequest(
+                jdbcTemplate,
+                tableName,
+                context,
+                device.getDeviceId().toString(),
+                type,
+                processor,
+                contactEmail,
+                now
+        );
+        if (existing != null) {
+            log.log(System.Logger.Level.INFO,
+                    "Reuse recent privacy request: projectId={0}, requestId={1}, type={2}, processor={3}",
+                    context.getProjectId(), existing.requestId(), type.name(), processor.name());
+            return toCreatedResponse(existing, "已有未处理的同类请求，后台将继续按原工单处理并通过邮件反馈结果");
+        }
 
         String sql = String.format(
                 "INSERT INTO %s (request_id, project_id, user_id, device_id, request_type, processor, source, status, " +
@@ -173,6 +189,38 @@ public class PrivacyRequestService {
                 now.toString(),
                 contactEmail,
                 "请求已创建，后台将人工处理并通过邮件反馈结果"
+        );
+    }
+
+    private StoredPrivacyRequest findRecentSubmittedRequest(JdbcTemplate jdbcTemplate,
+                                                            String tableName,
+                                                            RequestContext context,
+                                                            String deviceId,
+                                                            PrivacyRequestType type,
+                                                            PrivacyProcessor processor,
+                                                            String contactEmail,
+                                                            Instant now) {
+        return jdbcTemplate.query(
+                String.format(
+                        "SELECT request_id, project_id, user_id, device_id, request_type, processor, source, status, " +
+                                "contact_email, requester_note, operator, operator_note, result_payload::text AS result_payload_text, " +
+                                "metadata::text AS metadata_text, requested_at, processed_at, closed_at, updated_at " +
+                                "FROM %s WHERE project_id = ? AND user_id = ? AND device_id = ?::uuid AND request_type = ? " +
+                                "AND processor = ? AND contact_email = ? AND status = ? AND requested_at >= ? " +
+                                "ORDER BY requested_at DESC LIMIT 1",
+                        tableName
+                ),
+                ps -> {
+                    ps.setString(1, context.getProjectId());
+                    ps.setString(2, context.getUserId());
+                    ps.setString(3, deviceId);
+                    ps.setString(4, type.name());
+                    ps.setString(5, processor.name());
+                    ps.setString(6, contactEmail);
+                    ps.setString(7, PrivacyRequestStatus.SUBMITTED.name());
+                    ps.setTimestamp(8, Timestamp.from(now.minusSeconds(DUPLICATE_REQUEST_WINDOW_SECONDS)));
+                },
+                rs -> rs.next() ? mapStoredRow(rs) : null
         );
     }
 
@@ -236,12 +284,24 @@ public class PrivacyRequestService {
         );
     }
 
-    private JsonNode parseJson(String raw) {
+    private PrivacyRequestCreatedResponse toCreatedResponse(StoredPrivacyRequest row, String message) {
+        return new PrivacyRequestCreatedResponse(
+                row.requestId(),
+                row.requestType(),
+                row.processor(),
+                row.status(),
+                toIso(row.requestedAt()),
+                row.contactEmail(),
+                message
+        );
+    }
+
+    private Object parseJson(String raw) {
         if (raw == null || raw.isBlank()) {
             return null;
         }
         try {
-            return objectMapper.readTree(raw);
+            return objectMapper.readValue(raw, Object.class);
         } catch (Exception e) {
             log.log(System.Logger.Level.WARNING, "Failed to parse JSON field", e);
             return null;

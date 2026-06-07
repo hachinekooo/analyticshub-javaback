@@ -1,7 +1,5 @@
 package com.github.analyticshub.dto;
 
-import com.fasterxml.jackson.databind.JsonNode;
-
 public record PrivacyRequestDetailResponse(
         String requestId,
         String projectId,
@@ -15,8 +13,8 @@ public record PrivacyRequestDetailResponse(
         String requesterNote,
         String operator,
         String operatorNote,
-        JsonNode resultPayload,
-        JsonNode metadata,
+        Object resultPayload,
+        Object metadata,
         String requestedAt,
         String processedAt,
         String closedAt,

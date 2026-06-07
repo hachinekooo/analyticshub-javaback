@@ -1,6 +1,5 @@
 package com.github.analyticshub.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.analyticshub.config.MultiDataSourceManager;
 import com.github.analyticshub.dto.AdminPrivacyNotifyRequest;
@@ -325,12 +324,12 @@ public class AdminPrivacyRequestService {
         );
     }
 
-    private JsonNode parseJson(String raw) {
+    private Object parseJson(String raw) {
         if (raw == null || raw.isBlank()) {
             return null;
         }
         try {
-            return objectMapper.readTree(raw);
+            return objectMapper.readValue(raw, Object.class);
         } catch (Exception e) {
             log.log(System.Logger.Level.WARNING, "Failed to parse JSON field", e);
             return null;
