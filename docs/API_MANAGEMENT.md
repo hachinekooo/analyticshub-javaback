@@ -6,7 +6,8 @@
 
 - **管理端接口**：`X-Admin-Token` 或 `Authorization: Bearer <token>`
   - 不走 HMAC 签名验证。
-  - 适用于：`/api/admin/**` 及健康检查等敏感接口。
+  - 适用于：`/api/admin/**` 和 `/api/v1/auth/admin-token/verify`。
+  - `/api/health` 是公开健康检查接口，不需要 Admin Token。
 
 ## API 端点详情
 
@@ -44,7 +45,6 @@ X-Admin-Token: your_admin_token
   "data": {
     "valid": true
   },
-  "error": null,
   "timestamp": "2026-01-12T10:00:00.000Z"
 }
 ```
@@ -53,7 +53,7 @@ X-Admin-Token: your_admin_token
 
 系统数据库（`spring.datasource`）只承载项目管理信息。
 
-每个业务项目都应使用自己独立的目标数据库和 schema；管理端创建项目**不会自动创建数据库/用户**，只会保存连接信息。`dbSchema` 为空时默认使用 `analytics`，初始化项目时会创建该 schema 并创建采集表。为某个项目配置了 `dbName/dbSchema/dbUser/dbPassword` 后，需要你提前在 PostgreSQL 里创建对应的数据库与用户。详细参见 [Docker_PostgreSQL_Guild.md](Docker_PostgreSQL_Guild.md)。
+每个业务项目都应使用自己独立的目标数据库和 schema；管理端创建项目**不会自动创建数据库/用户**，只会保存连接信息。`dbSchema` 为空时默认使用 `analytics`，初始化项目时会创建该 schema 并创建采集表。为某个项目配置了 `dbName/dbSchema/dbUser/dbPassword` 后，需要你提前在 PostgreSQL 里创建对应的数据库与用户。
 
 ```http
 GET    /api/admin/projects
@@ -69,18 +69,17 @@ GET    /api/admin/projects/{id}/health # 检查项目健康状态
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": [
     {
       "id": 1,
-      "projectId": "demo_project",
+      "projectId": "your_project",
       "projectName": "Demo App App",
-      "dbName": "demo_project",
+      "dbName": "your_project",
       "dbSchema": "analytics",
       "createdAt": "2026-01-01T10:00:00Z"
     }
   ],
-  "error": null,
   "timestamp": "2026-02-12T10:00:00.000Z"
 }
 ```
@@ -88,7 +87,7 @@ GET    /api/admin/projects/{id}/health # 检查项目健康状态
 ### 4. 设备管理（查询）
 
 ```http
-GET /api/admin/devices?projectId=demo_project&page=1&pageSize=20
+GET /api/admin/devices?projectId=your_project&page=1&pageSize=20
 ```
 **参数**：
 - `page`, `pageSize`: 分页参数
@@ -101,9 +100,9 @@ GET /api/admin/devices?projectId=demo_project&page=1&pageSize=20
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": {
-    "projectId": "demo_project",
+    "projectId": "your_project",
     "rangeStart": null,
     "rangeEnd": null,
     "page": 1,
@@ -120,7 +119,6 @@ GET /api/admin/devices?projectId=demo_project&page=1&pageSize=20
       }
     ]
   },
-  "error": null,
   "timestamp": "2026-02-12T10:00:00.000Z"
 }
 ```
@@ -128,7 +126,7 @@ GET /api/admin/devices?projectId=demo_project&page=1&pageSize=20
 ### 5. 事件管理（查询）
 
 ```http
-GET /api/admin/events?projectId=demo_project
+GET /api/admin/events?projectId=your_project
 ```
 **参数**：
 - `page`, `pageSize`: 分页参数
@@ -141,7 +139,7 @@ GET /api/admin/events?projectId=demo_project
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": {
     "page": 1,
     "pageSize": 20,
@@ -166,7 +164,7 @@ GET /api/admin/events?projectId=demo_project
 ### 6. 会话管理（查询）
 
 ```http
-GET /api/admin/sessions?projectId=demo_project
+GET /api/admin/sessions?projectId=your_project
 ```
 **参数**：
 - `page`, `pageSize`: 分页参数
@@ -179,7 +177,7 @@ GET /api/admin/sessions?projectId=demo_project
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": {
     "page": 1,
     "pageSize": 20,
@@ -203,16 +201,16 @@ GET /api/admin/sessions?projectId=demo_project
 与流量指标不同，此部分关注 `track` 接口上报的自定义业务事件。
 
 ```http
-GET /api/admin/metrics/overview?projectId=demo_project&from=2026-01-01&to=2026-01-31
+GET /api/admin/metrics/overview?projectId=your_project&from=2026-01-01&to=2026-01-31
 ```
 
 **响应示例（概览）：**
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": {
-    "projectId": "demo_project",
+    "projectId": "your_project",
     "rangeStart": "2026-01-01",
     "rangeEnd": "2026-01-31",
     "devicesTotal": 5000,
@@ -227,16 +225,16 @@ GET /api/admin/metrics/overview?projectId=demo_project&from=2026-01-01&to=2026-0
 ```
 
 ```http
-GET /api/admin/metrics/trends?projectId=demo_project&granularity=day
+GET /api/admin/metrics/trends?projectId=your_project&granularity=day
 ```
 
 **响应示例（趋势）：**
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": {
-    "projectId": "demo_project",
+    "projectId": "your_project",
     "granularity": "day",
     "points": [
       {
@@ -255,14 +253,14 @@ GET /api/admin/metrics/trends?projectId=demo_project&granularity=day
 ```
 
 ```http
-GET /api/admin/metrics/top-events?projectId=demo_project&limit=10
+GET /api/admin/metrics/top-events?projectId=your_project&limit=10
 ```
 
 **响应示例（热门事件）：**
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": {
     "items": [
       { "eventType": "app_open", "count": 5000 },
@@ -292,7 +290,7 @@ GET /api/admin/traffic-metrics/top-referrers?projectId=your-project-id&limit=10
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": {
     "projectId": "your-project-id",
     "pageViews": 10500,
@@ -307,7 +305,7 @@ GET /api/admin/traffic-metrics/top-referrers?projectId=your-project-id&limit=10
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": {
     "granularity": "day",
     "points": [
@@ -322,7 +320,7 @@ GET /api/admin/traffic-metrics/top-referrers?projectId=your-project-id&limit=10
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": {
     "items": [
       { "key": "/home", "count": 500 },
@@ -371,7 +369,7 @@ DELETE /api/admin/counters/{key}?projectId=...     # 删除计数器配置
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": {
     "key": "total_letters",
     "value": 100,
@@ -397,7 +395,7 @@ GET /api/admin/security/2fa/setup  # 获取 2FA 绑定指引（Secret 和 QRCode
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": {
     "secret": "123456789",
     "otpAuthUrl": "otpauth://totp/AnalyticsHub:AnalyticsHub-Admin?secret=123456789&issuer=AnalyticsHub",
@@ -414,7 +412,7 @@ GET /api/admin/security/2fa/setup  # 获取 2FA 绑定指引（Secret 和 QRCode
 #### 1) 工单列表
 
 ```http
-GET /api/admin/privacy/requests?projectId=demo_project&page=1&pageSize=20&status=SUBMITTED&processor=POSTHOG
+GET /api/admin/privacy/requests?projectId=your_project&page=1&pageSize=20&status=SUBMITTED&processor=POSTHOG
 ```
 
 筛选参数（可选）：
@@ -427,13 +425,13 @@ GET /api/admin/privacy/requests?projectId=demo_project&page=1&pageSize=20&status
 #### 2) 工单详情
 
 ```http
-GET /api/admin/privacy/requests/{requestId}?projectId=demo_project
+GET /api/admin/privacy/requests/{requestId}?projectId=your_project
 ```
 
 #### 3) 更新工单状态（回填处理结果）
 
 ```http
-PATCH /api/admin/privacy/requests/{requestId}?projectId=demo_project
+PATCH /api/admin/privacy/requests/{requestId}?projectId=your_project
 Content-Type: application/json
 
 {
@@ -452,7 +450,7 @@ Content-Type: application/json
 #### 4) 手动发送通知邮件
 
 ```http
-POST /api/admin/privacy/requests/{requestId}/notify?projectId=demo_project
+POST /api/admin/privacy/requests/{requestId}/notify?projectId=your_project
 Content-Type: application/json
 
 {

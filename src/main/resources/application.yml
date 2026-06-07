@@ -39,23 +39,7 @@ spring:
     table: flyway_schema_history
     clean-disabled: true
     validate-on-migrate: true
-  
-  # MyBatis Plus Configuration
 
-# MyBatis Plus Settings
-mybatis-plus:
-  configuration:
-    map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
-  global-config:
-    db-config:
-      id-type: auto
-      logic-delete-field: deleted
-      logic-delete-value: 1
-      logic-not-delete-value: 0
-  mapper-locations: classpath*:/mapper/**/*.xml
-  type-aliases-package: com.github.analyticshub.entity
-  
   # Jackson Configuration
   jackson:
     time-zone: UTC
@@ -78,6 +62,20 @@ mybatis-plus:
             required: true
           ssl:
             enable: true
+
+# MyBatis Plus Settings
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+  mapper-locations: classpath*:/mapper/**/*.xml
+  type-aliases-package: com.github.analyticshub.entity
 
 # ============================================================
 # Server Configuration

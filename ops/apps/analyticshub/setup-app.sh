@@ -3,7 +3,7 @@ set -euo pipefail
 
 # AnalyticsHub 单实例初始化。
 # 用法：
-#   sudo bash ops/apps/analyticshub/setup-app.sh
+#   sudo bash ops/analyticshub deploy
 
 APP_NAME="${APP_NAME:-analyticshub}"
 APP_USER="${APP_USER:-$APP_NAME}"

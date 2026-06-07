@@ -6,7 +6,7 @@
 
 - **JDK**: 25
 - **Spring Boot**: 4.0.1
-- **Spring Security**: 6.x
+- **Spring Security**: 7.x（由 Spring Boot 4 管理）
 - **Database**: PostgreSQL 15+
 - **Connection Pool**: HikariCP
 - **Database Migration**: Flyway
@@ -44,143 +44,53 @@
 ## 项目总览
 
 - 采集端 API（`/api/v1/**`）：设备注册、事件上报、会话上传；使用 API Key + HMAC 签名认证
-- 管理端 API（`/api/admin/**`）：项目管理与健康检查；使用 Admin Token 认证
+- 管理端 API（`/api/admin/**`）：项目管理、数据查询与配置；使用 Admin Token 认证
 - 管理端 Token 校验（`/api/v1/auth/admin-token/verify`）：用于管理端登录态/Token 有效性探测
 - 多项目多数据源：每个项目独立数据库与连接池，按项目动态切换
 - 系统数据库（spring.datasource）仅保存项目管理元数据（analytics_projects），不承载业务采集表
 - 运行状态：`/api/health` 公开；`/actuator/**` 生产环境需要 Admin Token
 - 架构与时序文档：`docs/ARCHITECTURE.md`
 
-## 项目结构
+## 文档入口
 
-```
-src/main/java/com/github/analyticshub/
-├── common/
-│   └── dto/              # 通用数据传输对象
-│       └── ApiResponse.java
-├── config/               # 配置类
-│   ├── CorsConfig.java
-│   ├── SecurityConfig.java
-│   ├── DatabaseInitializer.java
-│   └── MultiDataSourceManager.java
-├── controller/           # REST API 控制器
-│   ├── AuthController.java
-│   ├── AdminCounterController.java
-│   ├── EventController.java
-│   ├── TrafficMetricController.java
-│   ├── SessionController.java
-│   ├── PublicCounterController.java
-│   ├── PublicTrafficController.java
-│   └── HealthController.java
-├── dto/                  # 请求/响应 DTO
-│   ├── DeviceRegisterRequest.java
-│   ├── DeviceRegisterResponse.java
-│   ├── CounterIncrementRequest.java
-│   ├── CounterRecord.java
-│   ├── CounterUpsertRequest.java
-│   ├── CountersResponse.java
-│   ├── EventTrackRequest.java
-│   ├── EventTrackResponse.java
-│   ├── SessionUploadRequest.java
-│   ├── TrafficMetricSummaryResponse.java
-│   ├── TrafficMetricTrackRequest.java
-│   └── TrafficMetricTrackResponse.java
-├── entity/               # JPA 实体类
-│   ├── AnalyticsProject.java
-│   ├── Device.java
-│   ├── Event.java
-│   └── Session.java
-├── exception/            # 异常处理
-│   ├── BusinessException.java
-│   └── GlobalExceptionHandler.java
-├── security/             # 安全组件
-│   ├── AdminAuthenticationFilter.java
-│   ├── AdminApiAuthenticationFilter.java
-│   ├── ApiAuthenticationFilter.java
-│   └── RequestContext.java
-├── service/              # 业务逻辑层
-│   ├── AuthService.java
-│   ├── CounterService.java
-│   ├── EventService.java
-│   ├── SessionService.java
-│   ├── TrafficMetricService.java
-│   └── TrafficMetricStatsService.java
-├── util/                 # 工具类
-│   └── CryptoUtils.java
-└── AnalyticshubJavabackApplication.java
-
-src/main/resources/
-├── application.yml       # 应用配置
-└── db/migration/         # Flyway 迁移脚本
-    └── V1__init_complete_schema.sql  # 系统库初始化（仅项目管理表）
-```
+- 本地启动：[QUICKSTART.md](QUICKSTART.md)
+- 生产部署：[docs/运维/DEPLOYMENT_GUIDE.md](docs/运维/DEPLOYMENT_GUIDE.md)
+- 运维脚本：[ops/README.md](ops/README.md)
+- 架构说明：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ## 快速开始
 
-### 1. 环境要求
-
-- JDK 25+
-- Maven 3.9+
-- PostgreSQL 15+
-
-### 2. 数据库配置
-
-创建数据库：
-
-```sql
-CREATE ROLE analytic LOGIN PASSWORD 'replace-with-local-analytic-password';
-CREATE DATABASE analytics;
-\c analytics
-ALTER DATABASE analytics OWNER TO analytic;
-CREATE SCHEMA IF NOT EXISTS analytics AUTHORIZATION analytic;
-```
-
-系统数据库（`spring.datasource`）只用于项目管理，默认使用 `analytics` schema 保存 `analytics_projects` 和 Flyway 历史。
-
-每个业务项目必须使用自己的目标数据库和 schema；管理端创建项目**不会自动创建数据库/用户**，初始化项目时会按 `dbSchema` 创建 schema 并创建采集表。为某个项目配置了 `dbName/dbSchema/dbUser/dbPassword` 后，需要你提前在 PostgreSQL 里创建对应的数据库与用户，并授予该用户创建/使用目标 schema 的权限：
-
-- Docker 安装的 PostgreSQL 操作示例见：[Docker_PostgreSQL_Guild.md 的 3.3 小节](docs/Docker_PostgreSQL_Guild.md#33-为项目创建数据库与用户管理端项目配置前置条件)
-
-更新配置文件 `application.yml`:
-
-```yaml
-spring:
-  datasource:
-    url: jdbc:postgresql://localhost:5432/analytics?currentSchema=analytics,public
-    username: analytic
-    password: your_password
-  flyway:
-    default-schema: analytics
-    schemas: analytics
-```
-
-### 3. 构建项目
+本地启动的完整步骤见 [QUICKSTART.md](QUICKSTART.md)。最短路径如下：
 
 ```bash
-mvn clean install
-```
+export DB_HOST=127.0.0.1
+export DB_PORT=5432
+export DB_NAME=analytics
+export DB_USER=analytic
+export DB_PASSWORD=replace-with-local-analytic-password
+export ADMIN_TOKEN=replace-with-local-admin-token
 
-### 4. 运行应用
-
-```bash
+mvn clean install -DskipTests
 mvn spring-boot:run
 ```
 
-或者：
+健康检查：
 
 ```bash
-java -jar target/analyticshub-0.0.1-SNAPSHOT.jar
+curl http://localhost:3001/api/health
 ```
 
-应用将在 `http://localhost:3001` 启动。
+系统数据库（`spring.datasource`）只保存项目管理元数据，不承载业务采集表。管理端创建项目不会自动创建数据库或用户，接入项目的目标数据库和账号需要提前准备：
 
-### IDEA DEV（环境变量）
+```sql
+CREATE ROLE your_project_user LOGIN PASSWORD 'replace-with-project-password';
+CREATE DATABASE your_project OWNER your_project_user;
+\c your_project
+CREATE SCHEMA IF NOT EXISTS analytics AUTHORIZATION your_project_user;
+GRANT USAGE, CREATE ON SCHEMA analytics TO your_project_user;
+```
 
-本项目支持用环境变量覆盖数据库连接与管理端 Token，适合在 IDEA Run Configuration 里做 DEV 开发（支持手动填写或从文件加载，二选一），并且需要理解 YAML 与环境变量的覆盖优先级：
-
-- 操作步骤与优先级说明见：[快速启动指南：在 IDEA 里用环境变量进行 DEV 开发](QUICKSTART.md#在-idea-里用环境变量进行-dev-开发)
-
-### 5. 环境变量配置
+## 环境变量配置
 
 **必需配置：**
 ```bash
@@ -188,19 +98,54 @@ export ADMIN_TOKEN=your_secure_admin_token_here
 export DB_PASSWORD=your_db_password
 ```
 
-# 阿里云邮件推送配置
+**邮件告警配置（可选）：**
+```bash
 export MAIL_ENABLED=true
 export MAIL_HOST=smtpdm.aliyun.com
 export MAIL_PORT=465
 export MAIL_USERNAME=notify@mail.yourdomain.com
 export MAIL_PASSWORD=your_smtp_password
 export ALERT_EMAIL=admin@yourdomain.com
+```
 
-## 双因素认证 (2FA) 配置
+**双因素认证 (2FA) 配置（可选）：**
+```bash
 export APP_SECURITY_2FA_ENABLED=true
 export APP_SECURITY_2FA_SECRET=your_totp_secret_key
+```
 
 详细配置指南见：[docs/EMAIL_SETUP.md](docs/EMAIL_SETUP.md)
+
+## 生产部署与运维
+
+本仓库提供 AnalyticsHub 自身的运维脚本闭环，入口是：
+
+```bash
+sudo bash ops/analyticshub <command>
+```
+
+常用命令：
+
+```bash
+# 初始化主机依赖、PostgreSQL、swap、journald 和 AnalyticsHub 数据库
+sudo bash ops/analyticshub bootstrap
+
+# 安装/检查证书并写入 /analyticshub/ Nginx 路由
+sudo -E env DOMAIN=analytics.example.com CERTBOT_EMAIL=admin@example.com ISSUE_CERT=true bash ops/analyticshub web
+
+# 创建 AnalyticsHub systemd、env、日志目录和运行用户
+sudo bash ops/analyticshub deploy
+
+# 本地检查和公网检查
+sudo bash ops/analyticshub check
+sudo -E env BASE_URL=https://analytics.example.com bash ops/analyticshub check-public
+
+# 定期维护
+sudo bash ops/analyticshub backup-db
+sudo bash ops/analyticshub rotate-secrets
+```
+
+完整说明见 [ops/README.md](ops/README.md) 和 [部署指南](docs/运维/DEPLOYMENT_GUIDE.md)。
 
 ## API 文档
 
@@ -243,21 +188,6 @@ mvn flyway:info
 mvn flyway:migrate
 ```
 
-## JDK 25 特性应用
-
-1. **Record 类**: 用于 DTO 和配置类，提供不可变数据结构
-2. **Pattern Matching**: 改进的类型检查和转换
-3. **增强的加密 API**: 更安全的密钥生成和签名验证
-4. **Virtual Threads**: 可用于高并发场景（预留）
-
-## Spring Boot 4 最佳实践
-
-1. **声明式 Security**: 使用新的 SecurityFilterChain 配置
-2. **ResponseEntity**: 统一的响应封装
-3. **Validation**: JSR-380 Bean Validation
-4. **Actuator**: 健康检查和监控端点
-5. **Profiles**: 环境配置隔离（dev/prod）
-
 ## 配置说明
 
 ### 应用配置
@@ -287,14 +217,13 @@ mvn flyway:migrate
 
 ### 添加新的项目
 
-通过管理界面或直接插入数据库：
+推荐通过管理端 API 或管理界面创建项目。接入项目的目标数据库和账号需要提前准备：
 
 ```sql
-INSERT INTO analytics_projects (
-  project_id, project_name, db_host, db_port, db_name, db_schema, db_user, table_prefix
-) VALUES (
-  'new-project', 'New Project', 'localhost', 5432, 'analytics_new_project', 'analytics', 'root', 'analytics_'
-);
+CREATE ROLE your_project_user LOGIN PASSWORD 'replace-with-project-password';
+CREATE DATABASE your_project OWNER your_project_user;
+\c your_project
+CREATE SCHEMA IF NOT EXISTS analytics AUTHORIZATION your_project_user;
 ```
 
 ## 许可证

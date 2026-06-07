@@ -6,6 +6,8 @@
 > **项目**: Analytics Hub Java Backend  
 > **技术栈**: JDK 25.0.1 + Spring Boot 4.0.1 + MyBatis Plus 3.5.9 + PostgreSQL 15  
 
+> 说明：本文是 JDK 25 + Spring Boot 4 升级过程中的迁移记录，主要用于解释技术选型和排障经验。生产部署、Nginx、证书、数据库初始化和运维脚本请以 `ops/README.md` 与 `docs/运维/DEPLOYMENT_GUIDE.md` 为准。
+
 ## 📋 目录
 
 1. [项目背景](#项目背景)
@@ -23,10 +25,10 @@
 ### 迁移目标
 
 采用最新的 Java 技术栈构建 Analytics Hub 后端服务：
-- **JDK 25.0.1** (2024年发布，最新稳定版本)
+- **JDK 25.0.1**
 - **Spring Boot 4.0.1** (基于 Spring Framework 7.0.2)
 - **MyBatis Plus 3.5.9** (增强的 MyBatis 框架)
-- **PostgreSQL 15** (Docker 部署)
+- **PostgreSQL 15**
 
 ### 为什么从 JDK 8 升级到 JDK 25？
 
@@ -1258,6 +1260,8 @@ Executor executor = Executors.newVirtualThreadPerTaskExecutor();
 **项目**: Analytics Hub Java Backend  
 **技术栈**: JDK 25.0.1 + Spring Boot 4.0.1 + PostgreSQL 15  
 **迁移日期**: 2026-01-12
+
+生产部署请以 `ops/README.md` 与 `docs/运维/DEPLOYMENT_GUIDE.md` 为准。
 
 ---
 

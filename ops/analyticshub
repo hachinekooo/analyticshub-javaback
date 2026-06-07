@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Unified AnalyticsHub ops entrypoint.
+# Use with bash if the executable bit is not preserved:
+#   sudo bash ops/analyticshub bootstrap
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  cat <<'EOF'
+AnalyticsHub ops entrypoint
+
+Usage:
+  sudo bash ops/analyticshub <command>
+
+Bootstrap:
+  bootstrap       Install host basics, PostgreSQL, swap, journald, and AnalyticsHub DB
+  web             Install/check certbot and write /analyticshub/ nginx routes
+  deploy          Create AnalyticsHub app user, dirs, env, systemd service
+
+Checks:
+  check           Run host and app checks
+  check-public    Check public /analyticshub/api/health
+
+Maintenance:
+  backup-db       Back up the AnalyticsHub PostgreSQL database
+  rotate-secrets  Rotate AnalyticsHub DB password and admin token
+
+All commands pass through environment variables to the underlying scripts.
+Examples:
+  sudo -E env DOMAIN=analytics.example.com CERTBOT_EMAIL=admin@example.com ISSUE_CERT=true bash ops/analyticshub web
+  sudo -E env BASE_URL=https://analytics.example.com bash ops/analyticshub check-public
+  sudo bash ops/analyticshub backup-db
+  sudo -E env ROTATE_2FA_SECRET=true bash ops/analyticshub rotate-secrets
+EOF
+}
+
+run() {
+  local script="$1"
+  shift || true
+  bash "$ROOT_DIR/$script" "$@"
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  bootstrap)
+    run server/init-env.sh
+    run server/setup-postgresql.sh
+    run server/setup-swap.sh
+    run server/setup-journald-limits.sh
+    run server/create-analytics-database.sh
+    run server/check-env.sh
+    ;;
+  web)
+    run server/setup-certbot.sh
+    run server/install-nginx-routes.sh
+    ;;
+  deploy)
+    run apps/analyticshub/setup-app.sh
+    ;;
+  check)
+    run server/check-env.sh
+    run apps/analyticshub/check-app.sh
+    ;;
+  check-public)
+    run server/check-public-routes.sh
+    ;;
+  backup-db)
+    run server/backup-analytics-database.sh
+    ;;
+  rotate-secrets)
+    run server/rotate-analytics-secrets.sh
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "Unknown command: $cmd" >&2
+    echo >&2
+    usage >&2
+    exit 2
+    ;;
+esac

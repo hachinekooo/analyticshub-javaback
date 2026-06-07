@@ -32,13 +32,12 @@ X-Project-ID: your-project-id
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": {
     "apiKey": "ak_a1b2c3d4e5f6g7h8",
     "secretKey": "sk_z9y8x7w6v5u4t3s2r1q0p",
     "isNew": true
   },
-  "error": null,
   "timestamp": "2026-02-12T10:00:00.000Z"
 }
 ```
@@ -74,11 +73,10 @@ X-Signature: hmac_signature_here
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": {
     "eventId": "evt_123456789"
   },
-  "error": null,
   "timestamp": "2026-02-12T10:00:00.000Z"
 }
 ```
@@ -111,9 +109,7 @@ X-Signature: hmac_signature_here
 
 ```json
 {
-  "code": 200,
-  "data": null,
-  "error": null,
+  "success": true,
   "timestamp": "2026-02-12T10:00:00.000Z"
 }
 ```
@@ -146,11 +142,10 @@ X-Signature: hmac_signature_here
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": {
     "metricId": "tm_12345new"
   },
-  "error": null,
   "timestamp": "2026-02-12T10:00:00.000Z"
 }
 ```
@@ -165,13 +160,12 @@ POST /api/v1/traffic-metrics/batch
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": {
     "received": 10,
     "accepted": 10,
     "rejected": 0
   },
-  "error": null,
   "timestamp": "2026-02-12T10:00:00.000Z"
 }
 ```
@@ -181,7 +175,7 @@ POST /api/v1/traffic-metrics/batch
 该入口专为“官网流量统计”设计，追求接入极简：
 
 - **认证**：无需 HMAC 签名。基于 Cookie (`ah_did`) 自动识别设备。
-- **项目识别**：支持通过请求头 `X-Project-ID` 或 URL 参数 `projectId` 传递（如 `?projectId=demo_project`）。
+- **项目识别**：支持通过请求头 `X-Project-ID` 或 URL 参数 `projectId` 传递（如 `?projectId=your_project`）。
 - **设备识别**：前端无需传递任何 ID。服务端通过 `ah_did` Cookie 自动识别访客（用于 UV 统计）。
 - **跨域支持**：请求请开启 `credentials: 'include'` 确保 Cookie 正常传递。
 - **元数据**：服务端会自动解析 `userAgent`、机器人标记 (`isBot`)，并自动补全 `referrer`（基于 Header Fallback）。
@@ -197,7 +191,7 @@ GET /api/public/traffic/summary?projectId=your-project-id&from=2024-01-01&to=202
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": {
     "projectId": "your-project-id",
     "rangeStart": "2024-01-01",
@@ -205,7 +199,6 @@ GET /api/public/traffic/summary?projectId=your-project-id&from=2024-01-01&to=202
     "pageViews": 12345,
     "visitors": 4567
   },
-  "error": null,
   "timestamp": "2026-02-12T10:00:00.000Z"
 }
 ```
@@ -223,11 +216,10 @@ X-Traffic-Token: your_traffic_token
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": {
     "metricId": "tm_public_123"
   },
-  "error": null,
   "timestamp": "2026-02-12T10:00:00.000Z"
 }
 ```
@@ -242,13 +234,12 @@ POST /api/public/traffic/batch
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": {
     "received": 5,
     "accepted": 5,
     "rejected": 0
   },
-  "error": null,
   "timestamp": "2026-02-12T10:00:00.000Z"
 }
 ```
@@ -268,7 +259,7 @@ POST /api/public/traffic/batch
 
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": [
     {
       "key": "total_letters",
@@ -285,7 +276,6 @@ POST /api/public/traffic/batch
       "updatedAt": "2026-02-12T09:00:00Z"
     }
   ],
-  "error": null,
   "timestamp": "2026-02-12T10:00:00.000Z"
 }
 ```
@@ -312,7 +302,7 @@ X-Signature: ...
 **响应示例**：
 ```json
 {
-  "code": 200,
+  "success": true,
   "data": {
     "message": "认证成功！",
     "deviceId": "...",
@@ -330,7 +320,7 @@ X-Signature: ...
 ```http
 POST /api/v1/privacy/export
 Content-Type: application/json
-X-Project-ID: demo_project
+X-Project-ID: your_project
 X-API-Key: ...
 X-Device-ID: ...
 X-User-ID: ...
@@ -368,4 +358,3 @@ GET /api/v1/privacy/requests/{requestId}
 ```http
 GET /api/v1/privacy/requests/latest
 ```
-

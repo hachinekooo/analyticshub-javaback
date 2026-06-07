@@ -96,13 +96,10 @@ check_command openssl
 check_command systemctl
 check_command nginx
 check_command psql
-check_command redis-cli
 check_service_optional nginx.service
 check_service_optional firewalld.service
 check_service_optional postgresql.service
 check_service_optional postgresql-15.service
-check_service_optional redis.service
-check_service_optional redis-server.service
 check_swap
 check_sysctl_value vm.swappiness 10
 check_sysctl_value vm.vfs_cache_pressure 50

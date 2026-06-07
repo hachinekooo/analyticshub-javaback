@@ -27,9 +27,12 @@ AnalyticsHub 后端已启用双因素认证 (TOTP) 安全机制。当检测到**
 - **Response Body**:
   ```json
   {
-    "code": "REQUIRE_2FA",
-    "message": "检测到异常/新环境登录，需要双因素认证。请提供 6 位动态验证码 (Header: X-Admin-OTP)。",
-    "data": null
+    "success": false,
+    "error": {
+      "code": "REQUIRE_2FA",
+      "message": "检测到异常/新环境登录，需要双因素认证。请提供 6 位动态验证码 (Header: X-Admin-OTP)。"
+    },
+    "timestamp": "2026-02-12T10:00:00.000Z"
   }
   ```
 
@@ -65,7 +68,7 @@ service.interceptors.response.use(
     // =========================================================
     // 核心逻辑：拦截 2FA 要求
     // =========================================================
-    if (response && response.status === 403 && response.data.code === 'REQUIRE_2FA') {
+    if (response && response.status === 403 && response.data?.error?.code === 'REQUIRE_2FA') {
       
       try {
         // 1. 弹出输入框 (Promise 风格)

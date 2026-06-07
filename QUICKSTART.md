@@ -1,238 +1,117 @@
 # 快速启动指南
 
-本指南帮助你在 5 分钟内启动 Analytics Hub 后端服务。
+本指南只覆盖本地启动的最短路径。生产部署、Nginx、证书、备份和密钥轮换请看 [ops/README.md](ops/README.md) 和 [部署指南](docs/运维/DEPLOYMENT_GUIDE.md)。
 
 ## 前提条件
 
-确保已安装：
 - JDK 25
 - Maven 3.9+
 - PostgreSQL 15+
 - Git
 
-## 步骤 1: 克隆项目
+## 1. 进入项目
 
 ```bash
 cd <project-dir>
 ```
 
-## 步骤 2: 配置数据库
+## 2. 准备数据库
 
-### 创建数据库
+使用 PostgreSQL 管理账号执行：
 
-```bash
-# 连接到 PostgreSQL 管理账号
-psql -U postgres
-
-# 创建系统库账号
+```sql
 CREATE ROLE analytic LOGIN PASSWORD 'replace-with-local-analytic-password';
-
-# 创建数据库
 CREATE DATABASE analytics OWNER analytic;
 \c analytics
 CREATE SCHEMA IF NOT EXISTS analytics AUTHORIZATION analytic;
-
-# 退出
-\q
 ```
 
-### 更新配置
+如果你要在管理端新增业务项目，需要提前为该项目准备独立数据库和用户。管理端只保存连接信息，不会自动建库。
 
-编辑 `src/main/resources/application.yml`:
-
-```yaml
-spring:
-  datasource:
-    url: jdbc:postgresql://localhost:5432/analytics
-    username: analytic
-    password: your_password  # 修改为你的密码
+```sql
+CREATE ROLE your_project_user LOGIN PASSWORD 'replace-with-project-password';
+CREATE DATABASE your_project OWNER your_project_user;
+\c your_project
+CREATE SCHEMA IF NOT EXISTS analytics AUTHORIZATION your_project_user;
+GRANT USAGE, CREATE ON SCHEMA analytics TO your_project_user;
 ```
 
-### 为项目创建数据库与用户（管理端项目配置前置条件）
+## 3. 配置本地环境
 
-管理端创建项目**不会自动创建数据库/用户**，只会保存连接信息。为某个项目配置了 `dbName/dbUser/dbPassword` 后，需要你提前在 PostgreSQL 里创建对应的数据库与用户。
+推荐用环境变量覆盖数据库和管理端 Token：
 
-- Docker 安装的 PostgreSQL 操作示例见：[Docker_PostgreSQL_Guild.md 的 3.3 小节](docs/Docker_PostgreSQL_Guild.md#33-为项目创建数据库与用户管理端项目配置前置条件)
+```bash
+export DB_HOST=127.0.0.1
+export DB_PORT=5432
+export DB_NAME=analytics
+export DB_USER=analytic
+export DB_PASSWORD=replace-with-local-analytic-password
+export ADMIN_TOKEN=replace-with-local-admin-token
+```
 
-## 步骤 3: 构建项目
+也可以直接编辑 `src/main/resources/application.yml`，但不要提交真实密码、Token 或生产配置。
+
+## 4. 构建并启动
 
 ```bash
 mvn clean install -DskipTests
-```
-
-## 步骤 4: 运行应用
-
-```bash
 mvn spring-boot:run
 ```
 
-或者：
+应用默认监听 `3001`。
 
-```bash
-java -jar target/analyticshub-0.0.1-SNAPSHOT.jar
-```
-
-### 在 IDEA 里用环境变量进行 DEV 开发
-
-推荐在 Run Configuration 里通过环境变量覆盖数据库与管理端 Token。
-
-Run → Edit Configurations… → 选择你的 Application：
-
-- Main class：`com.github.analyticshub.AnalyticshubJavabackApplication`
-- Program arguments（可选）：`--spring.profiles.active=dev`
-
-#### 方式 A：手动填写环境变量
-
-在 Run Configuration 的 Environment variables 中设置（示例）：
-
-- `DB_HOST=127.0.0.1`
-- `DB_PORT=5432`
-- `DB_NAME=analytics`
-- `DB_USER=analytic`
-- `DB_PASSWORD=<your_db_password>`
-- `ADMIN_TOKEN=<your_admin_token>`
-
-#### 方式 B：从文件加载环境变量
-
-在 Run Configuration 的“从文件加载环境变量”（或 EnvFile 插件）入口选择文件加载。
-
-文件内容通常是：
-
-```bash
-DB_HOST=127.0.0.1
-DB_PORT=5432
-DB_NAME=analytics
-DB_USER=analytic
-DB_PASSWORD=xxx
-ADMIN_TOKEN=xxx
-```
-
-注意：在 IDEA 里这两种方式通常不能同时用（加载文件时就不能再额外手动加自定义变量）。需要叠加变量时，建议把所有变量都放进同一个文件，或改用 Program arguments / JVM options 来覆盖。
-
-#### YAML 与环境变量优先级（Spring Boot）
-
-同一个配置项出现多份时，常用覆盖顺序（高 → 低）：
-
-- Program arguments（例如 `--spring.profiles.active=dev`、`--spring.datasource.url=...`）
-- JVM System Properties（例如 `-Dspring.profiles.active=dev`）
-- 环境变量（包括 IDEA 里手动填写、以及从文件加载的那份）
-- `application-<profile>.yml`（如启用 `dev` / `prod`）
-- `application.yml`
-
-本项目 `application.yml` 里 `spring.datasource.url` 使用了占位符 `${DB_HOST:localhost}` 这类写法：
-
-- 如果你设置了 `DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD`，会覆盖占位符默认值
-- 如果你直接设置 `SPRING_DATASOURCE_URL`（或用 `--spring.datasource.url=...`），会覆盖整个 `spring.datasource.url`
-
-## 步骤 5: 验证服务
-
-### 健康检查
+## 5. 验证服务
 
 ```bash
 curl http://localhost:3001/api/health
 ```
 
-预期响应：
+预期返回：
+
 ```json
 {
   "status": "UP",
   "service": "analyticshub-javaback",
-  "timestamp": "2026-01-12T10:00:00.000Z",
   "version": "1.0.0"
-}
-```
-
-### 注册测试设备
-
-```bash
-curl -X POST http://localhost:3001/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -H "X-Project-ID: analytics-system" \
-  -d '{
-    "deviceId": "550e8400-e29b-41d4-a716-446655440000",
-    "deviceModel": "iPhone15,2",
-    "osVersion": "iOS 26.0",
-    "appVersion": "1.0.0"
-  }'
-```
-
-预期响应：
-```json
-{
-  "success": true,
-  "data": {
-    "apiKey": "ak_xxxxxxxxxxxxx",
-    "secretKey": "sk_xxxxxxxxxxxxx",
-    "isNew": true
-  },
-  "error": null,
-  "timestamp": "2026-01-12T10:00:00.000Z"
 }
 ```
 
 ## 常见问题
 
-### 数据库连接失败
+数据库连接失败：
 
-**错误**: `Connection refused`
-
-**解决**:
 ```bash
-# 启动 PostgreSQL
-brew services start postgresql@15  # macOS
-sudo systemctl start postgresql    # Linux
+brew services start postgresql@15
+sudo systemctl start postgresql
 ```
 
-### 端口已被占用
+端口被占用时，可以临时指定端口：
 
-**错误**: `Port 3001 is already in use`
-
-**解决**: 修改 `application.yml` 中的端口：
-```yaml
-server:
-  port: 3002
+```bash
+mvn spring-boot:run -Dspring-boot.run.arguments=--server.port=3002
 ```
 
-### Flyway 迁移失败
+Flyway 本地迁移失败且可以重建本地库时：
 
-**错误**: `Flyway migration failed`
-
-**解决**:
 ```bash
-# 清理数据库
 psql -U postgres -d analytics -c "DROP SCHEMA analytics CASCADE; CREATE SCHEMA analytics AUTHORIZATION analytic;"
-
-# 重新运行
 mvn spring-boot:run
 ```
 
-## 开发模式
-
-使用开发模式启动（热重载）：
+## 生产部署入口
 
 ```bash
-mvn spring-boot:run -Dspring-boot.run.profiles=dev
+sudo bash ops/analyticshub bootstrap
+sudo -E env DOMAIN=analytics.example.com CERTBOT_EMAIL=admin@example.com ISSUE_CERT=true bash ops/analyticshub web
+sudo bash ops/analyticshub deploy
 ```
 
-
-## 生产部署
-
-### 构建生产包
+上传 JAR、编辑 `/etc/analyticshub/analyticshub.env` 后：
 
 ```bash
-mvn clean package -Pprod
+sudo systemctl restart analyticshub
+sudo bash ops/analyticshub check
+sudo -E env BASE_URL=https://analytics.example.com bash ops/analyticshub check-public
 ```
 
-### 运行生产模式
-
-```bash
-java -jar target/analyticshub-0.0.1-SNAPSHOT.jar --spring.profiles.active=prod
-```
-
-
-## 需要帮助？
-
-- 查看 Actuator: `curl http://localhost:3001/actuator/health`
-- 提交 Issue: GitHub Issues
-
-Happy Coding! 🚀
+详细说明见 [ops/README.md](ops/README.md)。

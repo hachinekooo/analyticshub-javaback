@@ -5,6 +5,7 @@ MIN_JAVA_MAJOR="${MIN_JAVA_MAJOR:-25}"
 INSTALL_NGINX="${INSTALL_NGINX:-true}"
 ENABLE_FIREWALLD="${ENABLE_FIREWALLD:-true}"
 OPEN_WEB_PORTS="${OPEN_WEB_PORTS:-true}"
+RUN_CHECK_ENV="${RUN_CHECK_ENV:-false}"
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
 
@@ -91,4 +92,6 @@ check_java
 enable_services
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-bash "$SCRIPT_DIR/check-env.sh"
+if [[ "$RUN_CHECK_ENV" == "true" ]]; then
+  bash "$SCRIPT_DIR/check-env.sh"
+fi
