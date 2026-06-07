@@ -1,3 +1,12 @@
+---
+title: AnalyticsHub 运维脚本
+type: operations-index
+status: current
+audience: operator, agent
+scope: ops 目录布局、统一入口、部署口径、健康检查和维护命令
+agent_notes: 只维护 AnalyticsHub 自身部署；不要加入接入方业务项目脚本
+---
+
 # AnalyticsHub 运维脚本
 
 这套运维脚本只维护 AnalyticsHub 自身部署口径。它不维护接入方业务项目的 systemd、数据库、Nginx 路由或密码轮换；接入方项目应在各自仓库或服务器本地 infra 目录中维护自己的运维脚本。

@@ -1,3 +1,12 @@
+---
+title: AnalyticsHub Agent 规约
+type: agent-instructions
+status: current
+audience: agent, contributor
+scope: 项目事实、上下文入口、开发规则、安全边界、运维边界和提交规范
+agent_notes: Agent 默认应先读取本文件；归档文档不作为默认上下文
+---
+
 # AGENTS.md
 
 ## Scope
@@ -112,6 +121,22 @@ Run the narrowest useful verification first, then broader checks when touching s
 ## Git
 
 - Use Chinese commit messages in this format: `【模块-专题】简短说明`.
+- Allowed `模块` values:
+  - `文档`: documentation, README, AGENTS, guides, examples.
+  - `工程`: build, dependency, repository hygiene, CI, tooling.
+  - `配置`: application config, env examples, profile settings.
+  - `运维`: ops scripts, deployment, Nginx, systemd, backup, rotation.
+  - `安全`: auth, Admin Token, 2FA, rate limit, secret handling.
+  - `数据库`: Flyway migrations, schema, SQL, persistence config.
+  - `接口`: API contract, DTOs, response shape.
+  - `采集`: device registration, events, sessions, traffic collection.
+  - `管理`: admin project/device/event/session/metrics/counter features.
+  - `隐私`: privacy request workflows.
+  - `测试`: tests and test fixtures.
+- Allowed `专题` values:
+  - `开源口径`, `文档编排`, `脚本闭环`, `权限隔离`, `环境示例`, `发布检查`, `认证链路`, `密钥轮换`, `路由配置`, `迁移整理`, `接口契约`, `测试修复`.
+- If none of the allowed values fit, ask before inventing a new module or topic.
+- Example: `【文档-文档编排】统一文档头与索引口径`.
 - Keep each commit focused on one coherent topic.
 - Do not stage unrelated local changes.
 - Do not run destructive git commands unless the user explicitly asks for them.

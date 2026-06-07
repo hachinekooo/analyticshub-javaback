@@ -1,3 +1,12 @@
+---
+title: AnalyticsHub Java Backend
+type: project-readme
+status: current
+audience: contributor, operator, backend
+scope: 项目总览、快速开始、核心特性、文档入口和基础开发说明
+agent_notes: 项目入口概览；具体 API、部署或安全任务应转到 docs/README.md 中对应文档
+---
+
 # AnalyticsHub Java Backend
 
 多项目分析系统后端服务，采用 Spring Boot 4 + JDK 25 构建。

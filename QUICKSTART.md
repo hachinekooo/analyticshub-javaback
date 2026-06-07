@@ -1,3 +1,12 @@
+---
+title: 快速启动指南
+type: quickstart
+status: current
+audience: contributor, backend
+scope: 本地启动最短路径、基础数据库准备和健康检查
+agent_notes: 只覆盖本地启动；生产部署、Nginx、证书、备份和轮换见运维文档
+---
+
 # 快速启动指南
 
 本指南只覆盖本地启动的最短路径。生产部署、Nginx、证书、备份和密钥轮换请看 [ops/README.md](ops/README.md) 和 [部署指南](docs/运维/DEPLOYMENT_GUIDE.md)。
