@@ -16,7 +16,7 @@ Usage:
 
 Bootstrap:
   bootstrap       Install host basics, PostgreSQL, swap, journald, and AnalyticsHub DB
-  web             Install/check certbot and write /analyticshub/ nginx routes
+  web             Install/check certbot and write /analyticshub/ nginx route fragment
   deploy          Create AnalyticsHub app user, dirs, env, systemd service
 
 Checks:

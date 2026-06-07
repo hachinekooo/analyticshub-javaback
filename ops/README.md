@@ -33,7 +33,7 @@ ops/apps/analyticshub/              # AnalyticsHub 单实例脚本
 # 主机基础环境、PostgreSQL、swap、journald、AnalyticsHub 数据库。
 sudo bash ops/analyticshub bootstrap
 
-# 证书和 /analyticshub/ Nginx 路由。
+# 证书和 /analyticshub/ Nginx 路由片段。
 sudo -E env DOMAIN=analytics.example.com CERTBOT_EMAIL=admin@example.com ISSUE_CERT=true bash ops/analyticshub web
 
 # AnalyticsHub app 运行层。
@@ -68,7 +68,7 @@ sudo bash ops/analyticshub backup-db
 # 1. 基础包、Nginx、firewalld 等主机依赖。
 sudo bash ops/analyticshub bootstrap
 
-# 2. 证书和 Nginx /analyticshub/ 页面/API 路由。
+# 2. 证书和 Nginx /analyticshub/ 页面/API 路由片段。
 sudo -E env DOMAIN=analytics.example.com CERTBOT_EMAIL=admin@example.com ISSUE_CERT=true bash ops/analyticshub web
 
 # 3. 创建 AnalyticsHub app 运行层。
@@ -85,11 +85,12 @@ sudo systemctl restart analyticshub
 - DNS：你的域名必须解析到当前服务器公网 IP。
 - HTTPS 证书：`setup-certbot.sh` 可安装 certbot；首次签发需要 DNS 已解析，并显式传 `ISSUE_CERT=true CERTBOT_EMAIL=...`。
 - PostgreSQL：`setup-postgresql.sh` 安装本机 PostgreSQL；`create-analytics-database.sh` 创建 `analytics` 数据库、`analytic` 用户和 `analytics` schema。
-- Nginx：`install-nginx-routes.sh` 把 `/analyticshub/` 页面请求指向前端 dist，并把前端短路径反代到后端真实 API：
-  - `/analyticshub/api/` -> `127.0.0.1:3001/api/`
-  - `/analyticshub/v1/` -> `127.0.0.1:3001/api/v1/`
-  - `/analyticshub/admin/` -> `127.0.0.1:3001/api/admin/`
-  - `/analyticshub/public/` -> `127.0.0.1:3001/api/public/`
+- Nginx：`install-nginx-routes.sh` 写入 `/etc/nginx/conf.d/analyticshub.conf`。该文件只包含 `location` 片段，不会创建完整站点；必须先由目标域名的 HTTPS `server` 块显式 include。不要在 `http` 级别保留 `include /etc/nginx/conf.d/*.conf;`。脚本会在写入前检查这两个条件，避免留下会破坏 `nginx -t` 的半配置。
+- Nginx 路由：`/analyticshub/` 页面请求指向前端 dist，所有 API 统一走 `/analyticshub/api/`：
+  - `/analyticshub/api/health` -> `127.0.0.1:3001/api/health`
+  - `/analyticshub/api/v1/` -> `127.0.0.1:3001/api/v1/`
+  - `/analyticshub/api/admin/` -> `127.0.0.1:3001/api/admin/`
+  - `/analyticshub/api/public/` -> `127.0.0.1:3001/api/public/`
 - 真实密钥：数据库密码、SMTP 密码、管理端 token、2FA secret 只写入服务器 root-only env，不提交到 Git。
 - 前端 dist：当前推荐路径为 `/usr/share/nginx/html/analyticshub-frontend/dist`，前端产物需要单独上传或部署。
 

@@ -143,7 +143,7 @@ sudo bash ops/analyticshub <command>
 # 初始化主机依赖、PostgreSQL、swap、journald 和 AnalyticsHub 数据库
 sudo bash ops/analyticshub bootstrap
 
-# 安装/检查证书并写入 /analyticshub/ Nginx 路由
+# 安装/检查证书并写入 /analyticshub/ Nginx 路由片段
 sudo -E env DOMAIN=analytics.example.com CERTBOT_EMAIL=admin@example.com ISSUE_CERT=true bash ops/analyticshub web
 
 # 创建 AnalyticsHub systemd、env、日志目录和运行用户

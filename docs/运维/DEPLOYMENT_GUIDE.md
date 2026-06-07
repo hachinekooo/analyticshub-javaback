@@ -42,20 +42,35 @@ sudo bash ops/analyticshub bootstrap
 
 这个命令会准备基础包、Java、Nginx、firewalld、PostgreSQL、swap、journald，以及 AnalyticsHub 的 `analytics` 数据库、`analytic` 用户和 `analytics` schema。
 
-### 3. 配置证书和 Nginx
+### 3. 配置证书和 Nginx 子路由
 
 ```bash
 sudo -E env DOMAIN=analytics.example.com CERTBOT_EMAIL=admin@example.com ISSUE_CERT=true bash ops/analyticshub web
 ```
 
-如果证书已经存在，可以不传 `ISSUE_CERT=true`。Nginx 会把：
+如果证书已经存在，可以不传 `ISSUE_CERT=true`。
+
+`ops/analyticshub web` 会写入 `/etc/nginx/conf.d/analyticshub.conf`。该文件只包含 `location` 片段，不会创建完整站点。运行该命令前，目标域名的 HTTPS `server` 块必须已经显式 include 这个文件：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name analytics.example.com;
+
+    include /etc/nginx/conf.d/analyticshub.conf;
+}
+```
+
+如果是新服务器，请先创建或整理父级站点配置，再运行 `ops/analyticshub web`。不要在 `http` 级别保留 `include /etc/nginx/conf.d/*.conf;`，否则 `location` 会出现在错误上下文。脚本会在写入前检查这两个条件，避免留下会破坏 `nginx -t` 的半配置。
+
+公网 API 统一放在 `/analyticshub/api/**` 下；`v1`、`admin`、`public` 是 API 内部分组，不单独暴露为 `/analyticshub/v1`、`/analyticshub/admin`、`/analyticshub/public`。Nginx 路由会把：
 
 ```text
-/analyticshub/         -> 前端 dist
-/analyticshub/api/     -> 127.0.0.1:3001/api/
-/analyticshub/v1/      -> 127.0.0.1:3001/api/v1/
-/analyticshub/admin/   -> 127.0.0.1:3001/api/admin/
-/analyticshub/public/  -> 127.0.0.1:3001/api/public/
+/analyticshub/              -> 前端 dist
+/analyticshub/api/health    -> 127.0.0.1:3001/api/health
+/analyticshub/api/v1/       -> 127.0.0.1:3001/api/v1/
+/analyticshub/api/admin/    -> 127.0.0.1:3001/api/admin/
+/analyticshub/api/public/   -> 127.0.0.1:3001/api/public/
 ```
 
 ### 4. 创建应用运行层
@@ -208,7 +223,7 @@ sudo journalctl -u analyticshub -f
 
 ```bash
 sudo nginx -t
-sudo systemctl reload nginx
+sudo nginx -s reload
 sudo tail -f /var/log/nginx/error.log
 ```
 

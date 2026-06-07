@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install AnalyticsHub nginx routes.
+# Install AnalyticsHub nginx route fragment.
+#
+# This script writes only location blocks. Include the generated file from the
+# active HTTPS server block for your domain:
+#
+#   include /etc/nginx/conf.d/analyticshub.conf;
+#
+# Do not include this file at nginx http level.
 
-DOMAIN="${DOMAIN:-analytics.example.com}"
-EXTRA_DOMAIN="${EXTRA_DOMAIN:-}"
 CONF_FILE="${CONF_FILE:-/etc/nginx/conf.d/analyticshub.conf}"
-SSL_CERTIFICATE="${SSL_CERTIFICATE:-/etc/letsencrypt/live/${DOMAIN}/fullchain.pem}"
-SSL_CERTIFICATE_KEY="${SSL_CERTIFICATE_KEY:-/etc/letsencrypt/live/${DOMAIN}/privkey.pem}"
-SSL_OPTIONS="${SSL_OPTIONS:-/etc/letsencrypt/options-ssl-nginx.conf}"
-SSL_DHPARAM="${SSL_DHPARAM:-/etc/letsencrypt/ssl-dhparams.pem}"
 ANALYTICSHUB_WEB_ROOT="${ANALYTICSHUB_WEB_ROOT:-/usr/share/nginx/html/analyticshub-frontend/dist}"
+CONF_DIR="$(dirname "$CONF_FILE")"
 
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
@@ -21,109 +23,97 @@ require_root() {
 
 require_root
 
-install -d -m 755 "$ANALYTICSHUB_WEB_ROOT"
-
-for ssl_file in "$SSL_CERTIFICATE" "$SSL_CERTIFICATE_KEY"; do
-  if [[ ! -f "$ssl_file" ]]; then
-    echo "Missing nginx SSL file: $ssl_file" >&2
-    echo "Run setup-certbot.sh first, or override SSL_CERTIFICATE/SSL_CERTIFICATE_KEY." >&2
-    exit 1
-  fi
-done
-
-SSL_OPTIONS_LINE=""
-if [[ -f "$SSL_OPTIONS" ]]; then
-  SSL_OPTIONS_LINE="    include ${SSL_OPTIONS};"
-fi
-
-SSL_DHPARAM_LINE=""
-if [[ -f "$SSL_DHPARAM" ]]; then
-  SSL_DHPARAM_LINE="    ssl_dhparam ${SSL_DHPARAM};"
-fi
-
-SERVER_NAMES="$DOMAIN"
-if [[ -n "$EXTRA_DOMAIN" ]]; then
-  SERVER_NAMES="$SERVER_NAMES $EXTRA_DOMAIN"
-fi
-
-cat >"$CONF_FILE" <<EOF
-server {
-    listen 80;
-    listen [::]:80;
-    server_name ${SERVER_NAMES};
-    return 301 https://\$host\$request_uri;
+regex_escape() {
+  printf "%s" "$1" | sed 's/[][\/.^$*+?{}()|]/\\&/g'
 }
 
-server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    server_name ${SERVER_NAMES};
+config_files_have_active_regex() {
+  local pattern="$1"
+  local file
+  while IFS= read -r -d '' file; do
+    [[ "$file" == "$CONF_FILE" ]] && continue
+    [[ "$file" == *.default || "$file" == *~ || "$file" == *.bak ]] && continue
+    [[ "$file" == /etc/nginx/dist/* || "$file" == /etc/nginx/__MACOSX/* ]] && continue
+    if grep -Ev '^[[:space:]]*#' "$file" | grep -Eq "$pattern"; then
+      return 0
+    fi
+  done < <(find /etc/nginx -type f -print0 2>/dev/null)
+  return 1
+}
 
-    ssl_certificate ${SSL_CERTIFICATE};
-    ssl_certificate_key ${SSL_CERTIFICATE_KEY};
-${SSL_OPTIONS_LINE}
-${SSL_DHPARAM_LINE}
+conf_file_regex="$(regex_escape "$CONF_FILE")"
 
-    charset utf-8;
+if config_files_have_active_regex '^[[:space:]]*include[[:space:]]+/etc/nginx/conf\.d/\*\.conf[[:space:]]*;'; then
+  cat >&2 <<EOF
+Refusing to write $CONF_FILE because nginx still includes /etc/nginx/conf.d/*.conf at http level.
+This file is a location fragment and must be included only inside the active HTTPS server block:
 
-    location = /analyticshub {
-        return 301 /analyticshub/;
-    }
+    include ${CONF_FILE};
 
-    location ^~ /analyticshub/api/ {
-        proxy_pass http://127.0.0.1:3001/api/;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 30s;
-    }
+Remove or narrow the http-level wildcard include first.
+EOF
+  exit 1
+fi
 
-    location ^~ /analyticshub/v1/ {
-        proxy_pass http://127.0.0.1:3001/api/v1/;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 30s;
-    }
+if ! config_files_have_active_regex "^[[:space:]]*include[[:space:]]+${conf_file_regex}[[:space:]]*;"; then
+  cat >&2 <<EOF
+Refusing to write $CONF_FILE because it is not explicitly included by nginx.
+Add this line inside the active HTTPS server block for your domain, then rerun this script:
 
-    location ^~ /analyticshub/admin/ {
-        proxy_pass http://127.0.0.1:3001/api/admin/;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 30s;
-    }
+    include ${CONF_FILE};
 
-    location ^~ /analyticshub/public/ {
-        proxy_pass http://127.0.0.1:3001/api/public/;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 30s;
-    }
+Do not include this location fragment at nginx http level.
+EOF
+  exit 1
+fi
 
-    location ^~ /analyticshub/assets/ {
-        alias ${ANALYTICSHUB_WEB_ROOT%/}/assets/;
-        expires 7d;
-        add_header Cache-Control "public, max-age=604800";
-    }
+install -d -m 755 "$ANALYTICSHUB_WEB_ROOT"
+install -d -m 755 "$CONF_DIR"
 
-    location ^~ /analyticshub/ {
-        alias ${ANALYTICSHUB_WEB_ROOT%/}/;
-        index index.html;
-        try_files \$uri \$uri/ /analyticshub/index.html;
-    }
+cat >"$CONF_FILE" <<EOF
+# AnalyticsHub is mounted at /analyticshub under the active HTTPS server.
+# Frontend pages are served from dist; API paths are proxied to the backend.
+location = /analyticshub {
+    return 301 /analyticshub/;
+}
+
+location ^~ /analyticshub/api/ {
+    proxy_pass http://127.0.0.1:3001/api/;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_read_timeout 30s;
+    proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
+}
+
+location ^~ /analyticshub/assets/ {
+    alias ${ANALYTICSHUB_WEB_ROOT%/}/assets/;
+    expires 7d;
+    add_header Cache-Control "public, max-age=604800";
+}
+
+location ^~ /analyticshub/ {
+    alias ${ANALYTICSHUB_WEB_ROOT%/}/;
+    index index.html;
+    try_files \$uri \$uri/ /analyticshub/index.html;
 }
 EOF
 
 nginx -t
-systemctl reload nginx
-echo "Nginx routes installed: $CONF_FILE"
+
+if ! nginx -T 2>&1 | grep -Fq "# configuration file ${CONF_FILE}:"; then
+  cat >&2 <<EOF
+Nginx config is valid, but $CONF_FILE is not loaded.
+Include it inside the active HTTPS server block for your domain:
+
+    include ${CONF_FILE};
+
+Do not include this location fragment at nginx http level.
+EOF
+  exit 1
+fi
+
+nginx -s reload
+echo "Nginx route fragment installed: $CONF_FILE"
