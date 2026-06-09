@@ -45,7 +45,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             long durationMs = (System.nanoTime() - startNs) / 1_000_000;
             int status = response.getStatus();
             String method = request.getMethod();
-            String clientIp = resolveClientIp(request);
+            String clientIp = maskIp(resolveClientIp(request));
             String projectId = request.getHeader("X-Project-ID");
 
             String message = String.format(
@@ -80,5 +80,36 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             return (comma > 0 ? forwarded.substring(0, comma) : forwarded).trim();
         }
         return request.getRemoteAddr();
+    }
+
+    static String maskIp(String ip) {
+        if (ip == null || ip.isBlank()) {
+            return "-";
+        }
+        if (ip.contains(":")) {
+            String[] visibleParts = ip.split(":");
+            String first = null;
+            String second = null;
+            for (String part : visibleParts) {
+                if (part == null || part.isBlank()) {
+                    continue;
+                }
+                if (first == null) {
+                    first = part;
+                    continue;
+                }
+                second = part;
+                break;
+            }
+            if (first == null || second == null) {
+                return "***";
+            }
+            return first + ":" + second + ":***";
+        }
+        String[] parts = ip.split("\\.");
+        if (parts.length != 4) {
+            return "***";
+        }
+        return parts[0] + "." + parts[1] + "." + parts[2] + ".***";
     }
 }
