@@ -18,7 +18,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import javax.sql.DataSource;
 import java.io.IOException;
 import java.util.UUID;
-import java.util.regex.Pattern;
 
 /**
  * API认证过滤器
@@ -31,8 +30,6 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
 
     private final MultiDataSourceManager dataSourceManager;
     private final ObjectMapper objectMapper;
-
-    private static final Pattern USER_ID_PATTERN = Pattern.compile("^[a-fA-F0-9]{32}$");
 
     private final long signatureValidityMs;
 
@@ -128,7 +125,7 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
                 return;
             }
 
-            if (!USER_ID_PATTERN.matcher(userId).matches()) {
+            if (!isValidUserId(userId)) {
                 sendErrorResponse(response, "INVALID_USER_ID", "无效的用户ID格式");
                 return;
             }
@@ -249,6 +246,10 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
             }
         }
         return false;
+    }
+
+    static boolean isValidUserId(String userId) {
+        return CryptoUtils.isValidUUID(userId);
     }
 
     /**

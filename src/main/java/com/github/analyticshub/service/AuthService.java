@@ -6,6 +6,7 @@ import com.github.analyticshub.dto.DeviceRegisterResponse;
 import com.github.analyticshub.entity.Device;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.util.CryptoUtils;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,7 +32,7 @@ public class AuthService {
 
     /**
      * 设备注册
-     * 如果设备已存在则返回现有密钥，否则创建新设备
+     * 如果设备已存在则重新发放签名凭证，否则创建新设备
      */
     @Transactional
     public DeviceRegisterResponse registerDevice(String projectId, DeviceRegisterRequest request) {
@@ -53,32 +54,48 @@ public class AuthService {
         JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSourceManager.getDataSource(projectId));
         String devicesTable = dataSourceManager.getTableName(projectId, "devices");
 
-        // 4. 检查设备是否已注册
+        // 4. 为本次注册发放完整签名凭证。
+        // 注册接口是凭证发放入口：客户端丢失本地 secret 时，重新注册会拿到新凭证并覆盖旧凭证。
+        String apiKey = CryptoUtils.generateApiKey();
+        String secretKey = CryptoUtils.generateSecretKey();
+
+        // 5. 检查设备是否已注册
         String checkSql = String.format(
-                "SELECT api_key FROM %s WHERE device_id = ?::uuid AND project_id = ?",
+                "SELECT id FROM %s WHERE device_id = ?::uuid AND project_id = ?",
                 devicesTable
         );
 
+        Device existingDevice = null;
         try {
-            Device existingDevice = jdbcTemplate.queryForObject(checkSql, (rs, rowNum) -> {
+            existingDevice = jdbcTemplate.queryForObject(checkSql, (rs, rowNum) -> {
                 Device device = new Device();
-                device.setApiKey(rs.getString("api_key"));
+                device.setId(rs.getLong("id"));
                 return device;
             }, request.deviceId(), projectId);
-
-            if (existingDevice != null) {
-                // Idempotent registration: return existing API key without rotating secrets.
-                log.log(System.Logger.Level.INFO, "设备已注册: {0}/{1}", projectId, request.deviceId());
-                return new DeviceRegisterResponse(existingDevice.getApiKey(), null, false);
-            }
-        } catch (Exception e) {
+        } catch (EmptyResultDataAccessException e) {
             // 设备不存在，继续注册流程
             log.log(System.Logger.Level.DEBUG, "设备不存在，开始注册: {0}", request.deviceId());
         }
 
-        // 5. 生成密钥
-        String apiKey = CryptoUtils.generateApiKey();
-        String secretKey = CryptoUtils.generateSecretKey();
+        if (existingDevice != null) {
+            String updateSql = String.format(
+                    "UPDATE %s SET api_key = ?, secret_key = ?, device_model = ?, os_version = ?, app_version = ?, last_active_at = ? " +
+                            "WHERE device_id = ?::uuid AND project_id = ?",
+                    devicesTable
+            );
+            jdbcTemplate.update(updateSql,
+                    apiKey,
+                    secretKey,
+                    request.deviceModel(),
+                    request.osVersion(),
+                    request.appVersion(),
+                    Timestamp.from(Instant.now()),
+                    request.deviceId(),
+                    projectId
+            );
+            log.log(System.Logger.Level.INFO, "设备凭证已重新发放: {0}/{1}", projectId, request.deviceId());
+            return new DeviceRegisterResponse(apiKey, secretKey, false);
+        }
 
         // 6. 插入新设备
         String insertSql = String.format(
