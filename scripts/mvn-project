@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# JDK 17+ 才能编译 Spring Boot 4.x + Java 25 target
-export JAVA_HOME="${JAVA_HOME:-/opt/homebrew/Cellar/openjdk@17/17.0.16/libexec/openjdk.jdk/Contents/Home}"
+# 项目 pom.xml 指定 java.version=25，必须 JDK 25
+export JAVA_HOME="${JAVA_HOME:-/opt/homebrew/Cellar/openjdk/25.0.1/libexec/openjdk.jdk/Contents/Home}"
 export PATH="$JAVA_HOME/bin:$PATH"
 
 MAVEN_HOME="${MAVEN_HOME:-$HOME/Code/tools/MAVEN/apache-maven-3.9.2}"
