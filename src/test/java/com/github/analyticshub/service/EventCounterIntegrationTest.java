@@ -77,7 +77,7 @@ class EventCounterIntegrationTest {
     @Test
     void testTrackEvent_TriggersCounter() {
         EventTrackRequest request = new EventTrackRequest(
-                "send_letter", System.currentTimeMillis(), Map.of("status", "success"), null
+                "send_letter", System.currentTimeMillis(), Map.of("status", "success"), null, null
         );
         
         when(dataSourceManager.getTableName(anyString(), eq("events"))).thenReturn("p_events");
@@ -91,8 +91,8 @@ class EventCounterIntegrationTest {
     @Test
     void testTrackEventsBatch_TriggersCounter() {
         EventTrackRequest[] batch = new EventTrackRequest[]{
-                new EventTrackRequest("send_letter", System.currentTimeMillis(), Map.of("status", "success"), null),
-                new EventTrackRequest("open_app", System.currentTimeMillis(), null, null)
+                new EventTrackRequest("send_letter", System.currentTimeMillis(), Map.of("status", "success"), null, null),
+                new EventTrackRequest("open_app", System.currentTimeMillis(), null, null, null)
         };
 
         when(dataSourceManager.getTableName(anyString(), eq("events"))).thenReturn("p_events");
