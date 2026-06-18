@@ -148,6 +148,20 @@ public class EventService {
             if (event.timestamp() == null) continue;
 
             String eventId = CryptoUtils.generateEventId();
+
+            // 幂等检查：已存在相同幂等键 → 跳过此事件
+            if (event.idempotencyKey() != null && !event.idempotencyKey().isBlank()) {
+                String keyHash = CryptoUtils.sha256Hex(event.idempotencyKey());
+                try {
+                    jdbcTemplate.update(
+                            "INSERT INTO analytics_idempotency_keys (project_id, key_hash, event_id) VALUES (?, ?, ?)",
+                            context.getProjectId(), keyHash, eventId
+                    );
+                } catch (Exception e) {
+                    log.log(System.Logger.Level.INFO, "批量事件幂等命中: {0}", event.eventType());
+                    continue;
+                }
+            }
             String propertiesJson;
             try {
                 propertiesJson = event.properties() != null ? objectMapper.writeValueAsString(event.properties()) : null;
