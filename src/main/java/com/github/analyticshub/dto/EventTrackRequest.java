@@ -9,5 +9,6 @@ public record EventTrackRequest(
         @NotBlank(message = "事件类型不能为空") String eventType,
         @NotNull(message = "时间戳不能为空") Long timestamp,
         Map<String, Object> properties,
-        UUID sessionId
+        UUID sessionId,
+        String idempotencyKey
 ) {}

@@ -59,7 +59,28 @@ public class EventService {
         // 3. 生成事件ID
         String eventId = CryptoUtils.generateEventId();
 
-        // 4. 存储到项目数据库
+        // 4. 幂等检查：客户端提供了幂等键 → 写入幂等表，冲突则返回已有事件
+        if (request.idempotencyKey() != null && !request.idempotencyKey().isBlank()) {
+            String keyHash = CryptoUtils.sha256Hex(request.idempotencyKey());
+            JdbcTemplate idempotencyJdbc = new JdbcTemplate(context.getDataSource());
+
+            try {
+                idempotencyJdbc.update(
+                        "INSERT INTO analytics_idempotency_keys (project_id, key_hash, event_id) VALUES (?, ?, ?)",
+                        context.getProjectId(), keyHash, eventId
+                );
+            } catch (Exception e) {
+                // 唯一约束冲突 → 幂等命中，返回已有事件ID，不重复写入
+                String existing = idempotencyJdbc.queryForObject(
+                        "SELECT event_id FROM analytics_idempotency_keys WHERE project_id = ? AND key_hash = ?",
+                        String.class, context.getProjectId(), keyHash
+                );
+                log.log(System.Logger.Level.INFO, "事件幂等命中: {0} keyHash={1}", request.eventType(), keyHash);
+                return new EventTrackResponse(existing != null ? existing : eventId);
+            }
+        }
+
+        // 5. 存储到项目数据库
         JdbcTemplate jdbcTemplate = new JdbcTemplate(context.getDataSource());
         String eventsTable = dataSourceManager.getTableName(context.getProjectId(), "events");
 
