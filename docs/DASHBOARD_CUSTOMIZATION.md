@@ -104,28 +104,30 @@ Host 会传入：
 - `refreshToken`：项目、筛选条件或手动刷新变化时递增，组件应监听它重新取数；
 - `update:config`：只有 layout editing（布局编辑）状态才会被 Host 接受，提交后仍会再次校验。
 
-然后在 `frontend/src/extensions/dashboard.ts` 静态 import 组件，并把默认空的 `dashboardWidgetExtensions` 替换为部署方注册表；该文件中的 `defineDashboardWidgetExtension()` 会提供类型检查：
+然后在前端工程的 `frontend/src/extensions/dashboardRegistry.ts` 静态 import 组件，并把部署方组件加入默认空注册表；通用 contract 与校验逻辑继续留在 `dashboard.ts`，避免每次私有接入都修改底座实现：
 
 ```ts
 import ExampleScoreWidget from '@/custom/ExampleScoreWidget.vue'
+import type { DashboardWidgetExtension } from '@/extensions/dashboard'
 
 type ScoreConfig = Readonly<{ threshold: number }>
 
-export const dashboardWidgetExtensions = Object.freeze([
-  defineDashboardWidgetExtension<ScoreConfig>({
-    type: 'custom.example.score',
-    displayName: { 'zh-CN': '示例评分', en: 'Example score' },
-    spaces: ['operations'],
-    component: ExampleScoreWidget,
-    defaultLayout: { w: 6, h: 8, minW: 4, minH: 4 },
-    defaultConfig: { threshold: 80 },
-    configRequired: true,
-    validateConfig: (config) => typeof config.threshold === 'number'
-      && Number.isInteger(config.threshold)
-      && config.threshold >= 0
-      && config.threshold <= 100,
-  }),
-])
+const exampleScoreWidget = {
+  type: 'custom.example.score',
+  displayName: { 'zh-CN': '示例评分', en: 'Example score' },
+  spaces: ['operations'],
+  component: ExampleScoreWidget,
+  defaultLayout: { w: 6, h: 8, minW: 4, minH: 4 },
+  defaultConfig: { threshold: 80 },
+  configRequired: true,
+  validateConfig: (config) => typeof config.threshold === 'number'
+    && Number.isInteger(config.threshold)
+    && config.threshold >= 0
+    && config.threshold <= 100,
+} satisfies DashboardWidgetExtension<ScoreConfig>
+
+export const dashboardWidgetExtensions: readonly DashboardWidgetExtension[] =
+  Object.freeze([exampleScoreWidget])
 ```
 
 `spaces` 是 base admin UI 的 placement scope（放置范围），当前支持 `operations` 和 `technical`。前端在 palette、载入、渲染和保存阶段都会校验该范围；后端仍对 type/config 做最终权威校验。Config 只能包含 JSON value，不能包含函数、`BigInt`、循环对象、`NaN`、class instance 或超过 256 KiB 的内容。
