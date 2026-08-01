@@ -171,6 +171,15 @@ public class AdminPrivacyRequestService {
             requireExpectedVersion(existing, request.version());
 
             PrivacyRequestStatus currentStatus = PrivacyRequestStatus.from(existing.status());
+            if (!currentStatus.isFinalStatus()
+                    && PrivacyProcessor.from(existing.processor()) == PrivacyProcessor.ANALYTICSHUB
+                    && targetStatus == PrivacyRequestStatus.COMPLETED) {
+                throw new BusinessException(
+                        "PRIVACY_DATA_EXECUTION_REQUIRED",
+                        "AnalyticsHub 数据工单必须执行导出或匿名化后才能完成",
+                        HttpStatus.CONFLICT
+                );
+            }
             TransitionDecision transition = validateTransition(currentStatus, targetStatus);
             if (transition == TransitionDecision.IDEMPOTENT) {
                 return toDetailResponse(existing);
@@ -310,7 +319,7 @@ public class AdminPrivacyRequestService {
                 String.format(
                         "SELECT activity_id, activity_type, from_status, to_status, actor, details::text AS details_text, created_at " +
                                 "FROM %s WHERE project_id = ? AND work_order_type = 'PRIVACY_REQUEST' AND work_order_id = ? " +
-                                "ORDER BY created_at ASC, id ASC",
+                                "ORDER BY id ASC",
                         activityTable
                 ),
                 (rs, rowNum) -> new WorkOrderActivityItem(

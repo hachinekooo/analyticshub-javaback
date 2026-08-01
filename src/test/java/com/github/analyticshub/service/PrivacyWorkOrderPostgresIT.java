@@ -5,6 +5,8 @@ import tools.jackson.databind.json.JsonMapper;
 import com.github.analyticshub.config.MultiDataSourceManager;
 import com.github.analyticshub.database.project.ProjectSchemaMigrator;
 import com.github.analyticshub.dto.AdminPrivacyNotifyRequest;
+import com.github.analyticshub.dto.AdminPrivacyExecutionRequest;
+import com.github.analyticshub.dto.AdminPrivacyExecutionResponse;
 import com.github.analyticshub.dto.AdminPrivacyRequestsResponse;
 import com.github.analyticshub.dto.AdminPrivacyRequestUpdateRequest;
 import com.github.analyticshub.dto.PrivacyRequestDetailResponse;
@@ -45,6 +47,9 @@ class PrivacyWorkOrderPostgresIT {
 
     private static final String PROJECT_ID = "privacy_work_order";
     private static final String PREFIX = "work_";
+    private static final String SUBJECT_USER_ID = "11111111-1111-4111-8111-111111111111";
+    private static final String SUBJECT_DEVICE_ID = "22222222-2222-4222-8222-222222222222";
+    private static final String SUBJECT_SESSION_ID = "33333333-3333-4333-8333-333333333333";
     private static final AtomicInteger SCHEMA_SEQUENCE = new AtomicInteger();
 
     @Container
@@ -58,6 +63,7 @@ class PrivacyWorkOrderPostgresIT {
     private MultiDataSourceManager dataSourceManager;
     private EmailService emailService;
     private AdminPrivacyRequestService adminService;
+    private PrivacyDataExecutionService executionService;
     private WorkOrderOutboxDeliveryService deliveryService;
 
     @BeforeEach
@@ -94,12 +100,23 @@ class PrivacyWorkOrderPostgresIT {
                 .thenReturn(quoted(PREFIX + "work_order_activities"));
         when(dataSourceManager.getTableName(PROJECT_ID, "work_order_outbox"))
                 .thenReturn(quoted(PREFIX + "work_order_outbox"));
+        when(dataSourceManager.getTableName(PROJECT_ID, "devices"))
+                .thenReturn(quoted(PREFIX + "devices"));
+        when(dataSourceManager.getTableName(PROJECT_ID, "events"))
+                .thenReturn(quoted(PREFIX + "events"));
+        when(dataSourceManager.getTableName(PROJECT_ID, "sessions"))
+                .thenReturn(quoted(PREFIX + "sessions"));
+        when(dataSourceManager.getTableName(PROJECT_ID, "traffic_metrics"))
+                .thenReturn(quoted(PREFIX + "traffic_metrics"));
+        when(dataSourceManager.getTableName(PROJECT_ID, "idempotency_keys"))
+                .thenReturn(quoted(PREFIX + "idempotency_keys"));
 
         ObjectMapper objectMapper = JsonMapper.builder().build();
         ProjectTransactionExecutor transactions = new ProjectTransactionExecutor();
         emailService = mock(EmailService.class);
         when(emailService.isDeliveryEnabled()).thenReturn(true);
         adminService = new AdminPrivacyRequestService(dataSourceManager, objectMapper, transactions);
+        executionService = new PrivacyDataExecutionService(dataSourceManager, objectMapper, transactions);
         deliveryService = new WorkOrderOutboxDeliveryService(
                 dataSourceManager,
                 transactions,
@@ -352,6 +369,134 @@ class PrivacyWorkOrderPostgresIT {
                 .containsExactlyInAnyOrder(oldOpenRequest, completedRequest);
     }
 
+    @Test
+    void adminCanGenerateExportWithoutLeakingDeviceCredentials() {
+        String requestId = insertSubmittedRequest("EXPORT", "ANALYTICSHUB");
+        insertSubjectData();
+
+        AdminPrivacyExecutionResponse response = executionService.execute(
+                PROJECT_ID,
+                requestId,
+                new AdminPrivacyExecutionRequest(0L, "customer-service", null)
+        );
+
+        assertThat(response.requestType()).isEqualTo("EXPORT");
+        assertThat(response.status()).isEqualTo("COMPLETED");
+        assertThat(response.version()).isEqualTo(1);
+        assertThat(response.downloadFileName()).startsWith("privacy-export-").endsWith(".json");
+        assertThat(response.exportData()).isNotNull();
+        assertThat(castRows(response.exportData().get("devices"))).singleElement().satisfies(device -> {
+            assertThat(device).containsKeys("device_id", "device_model", "created_at");
+            assertThat(device).doesNotContainKeys(
+                    "api_key",
+                    "secret_key",
+                    "previous_api_key",
+                    "previous_secret_key"
+            );
+        });
+        assertThat(castRows(response.exportData().get("events"))).hasSize(1);
+        assertThat(castRows(response.exportData().get("sessions"))).hasSize(1);
+        assertThat(castRows(response.exportData().get("trafficMetrics"))).hasSize(1);
+        assertThat(count(PREFIX + "events")).isEqualTo(1);
+        assertThat(adminService.getRequestDetail(PROJECT_ID, requestId).status()).isEqualTo("COMPLETED");
+        assertThat(activityTypes(requestId)).containsExactly("WORK_ORDER_CREATED", "DATA_EXPORT_GENERATED");
+    }
+
+    @Test
+    void analyticsHubTicketCannotBeCompletedByStatusOnly() {
+        String requestId = insertSubmittedRequest("EXPORT", "ANALYTICSHUB");
+
+        assertThatThrownBy(() -> adminService.updateRequest(
+                PROJECT_ID,
+                requestId,
+                update(0, "COMPLETED", false)
+        )).isInstanceOfSatisfying(BusinessException.class, exception ->
+                assertThat(exception.getCode()).isEqualTo("PRIVACY_DATA_EXECUTION_REQUIRED"));
+
+        assertThat(adminService.getRequestDetail(PROJECT_ID, requestId).status()).isEqualTo("SUBMITTED");
+        assertThat(activityTypes(requestId)).containsExactly("WORK_ORDER_CREATED");
+    }
+
+    @Test
+    void deleteRequestRequiresConfirmationAndAnonymizesWithoutDeletingFacts() {
+        String requestId = insertSubmittedRequest("DELETE", "ANALYTICSHUB");
+        insertSubjectData();
+
+        assertThatThrownBy(() -> executionService.execute(
+                PROJECT_ID,
+                requestId,
+                new AdminPrivacyExecutionRequest(0L, "customer-service", "wrong-request-id")
+        )).isInstanceOfSatisfying(BusinessException.class, exception ->
+                assertThat(exception.getCode()).isEqualTo("PRIVACY_DELETE_CONFIRMATION_REQUIRED"));
+        assertThat(originalEventCount()).isEqualTo(1);
+
+        AdminPrivacyExecutionResponse response = executionService.execute(
+                PROJECT_ID,
+                requestId,
+                new AdminPrivacyExecutionRequest(0L, "customer-service", requestId)
+        );
+
+        assertThat(response.summary()).containsEntry("operation", "ANONYMIZE");
+        assertThat(count(PREFIX + "devices")).isEqualTo(1);
+        assertThat(count(PREFIX + "events")).isEqualTo(1);
+        assertThat(count(PREFIX + "sessions")).isEqualTo(1);
+        assertThat(count(PREFIX + "traffic_metrics")).isEqualTo(1);
+        assertThat(count(PREFIX + "idempotency_keys")).isEqualTo(1);
+
+        Map<String, Object> event = jdbcTemplate.queryForMap(
+                "SELECT event_id, user_id, device_id::text AS device_id, session_id, properties::text AS properties " +
+                        "FROM " + quoted(PREFIX + "events")
+        );
+        assertThat(event.get("event_id")).asString().startsWith("anon_");
+        assertThat(event.get("user_id")).asString().startsWith("anon_");
+        assertThat(event.get("device_id")).isNotEqualTo(SUBJECT_DEVICE_ID);
+        assertThat(event.get("session_id")).isNull();
+        assertThat(event.get("properties")).isEqualTo("{}");
+
+        Map<String, Object> traffic = jdbcTemplate.queryForMap(
+                "SELECT metric_id, page_path, referrer, metadata::text AS metadata FROM "
+                        + quoted(PREFIX + "traffic_metrics")
+        );
+        assertThat(traffic.get("metric_id")).asString().startsWith("anon_");
+        assertThat(traffic.get("page_path")).isNull();
+        assertThat(traffic.get("referrer")).isNull();
+        assertThat(traffic.get("metadata")).isEqualTo("{}");
+
+        Map<String, Object> device = jdbcTemplate.queryForMap(
+                "SELECT device_id::text AS device_id, api_key, secret_key, is_banned, device_model, os_version " +
+                        "FROM " + quoted(PREFIX + "devices")
+        );
+        assertThat(device.get("device_id")).isNotEqualTo(SUBJECT_DEVICE_ID);
+        assertThat(device.get("api_key")).isNotEqualTo("subject-api-key");
+        assertThat(device.get("secret_key")).isNotEqualTo("subject-secret-key");
+        assertThat(device.get("is_banned")).isEqualTo(true);
+        assertThat(device.get("device_model")).isNull();
+        assertThat(device.get("os_version")).isNull();
+
+        assertThat(adminService.getRequestDetail(PROJECT_ID, requestId).userId()).isEqualTo(SUBJECT_USER_ID);
+        assertThat(activityTypes(requestId)).containsExactly("WORK_ORDER_CREATED", "DATA_ANONYMIZED");
+    }
+
+    @Test
+    void anonymizationAndWorkOrderAuditRollBackTogether() {
+        String requestId = insertSubmittedRequest("DELETE", "ANALYTICSHUB");
+        insertSubjectData();
+        jdbcTemplate.execute("DROP TABLE " + quoted(PREFIX + "work_order_activities"));
+
+        assertThatThrownBy(() -> executionService.execute(
+                PROJECT_ID,
+                requestId,
+                new AdminPrivacyExecutionRequest(0L, "customer-service", requestId)
+        )).isInstanceOf(DataAccessException.class);
+
+        assertThat(originalEventCount()).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM " + quoted(PREFIX + "devices") + " WHERE api_key = 'subject-api-key'",
+                Long.class
+        )).isEqualTo(1L);
+        assertThat(adminService.getRequestDetail(PROJECT_ID, requestId).status()).isEqualTo("SUBMITTED");
+    }
+
     private Object updateAfter(CountDownLatch ready,
                                CountDownLatch start,
                                String requestId,
@@ -366,18 +511,83 @@ class PrivacyWorkOrderPostgresIT {
     }
 
     private String insertSubmittedRequest() {
+        return insertSubmittedRequest("EXPORT", "POSTHOG");
+    }
+
+    private String insertSubmittedRequest(String requestType, String processor) {
         String requestId = UUID.randomUUID().toString();
         jdbcTemplate.update(
                 "INSERT INTO " + quoted(PREFIX + "privacy_requests") +
                         " (request_id, project_id, user_id, device_id, request_type, processor, source, status, contact_email)" +
-                        " VALUES (?, ?, ?, ?::uuid, 'EXPORT', 'ANALYTICSHUB', 'APP_SETTINGS', 'SUBMITTED', ?)",
+                        " VALUES (?, ?, ?, ?::uuid, ?, ?, 'APP_SETTINGS', 'SUBMITTED', ?)",
                 requestId,
                 PROJECT_ID,
-                "11111111-1111-4111-8111-111111111111",
-                "22222222-2222-4222-8222-222222222222",
+                SUBJECT_USER_ID,
+                SUBJECT_DEVICE_ID,
+                requestType,
+                processor,
                 "user@example.com"
         );
         return requestId;
+    }
+
+    private void insertSubjectData() {
+        jdbcTemplate.update(
+                "INSERT INTO " + quoted(PREFIX + "devices") +
+                        " (device_id, api_key, secret_key, device_model, os_version, app_version, project_id) " +
+                        "VALUES (?::uuid, 'subject-api-key', 'subject-secret-key', 'Phone', '1.0', '2.0', ?)",
+                SUBJECT_DEVICE_ID,
+                PROJECT_ID
+        );
+        jdbcTemplate.update(
+                "INSERT INTO " + quoted(PREFIX + "events") +
+                        " (event_id, device_id, user_id, session_id, event_type, event_timestamp, properties, project_id) " +
+                        "VALUES ('event-subject', ?::uuid, ?, ?::uuid, 'feature_used', 1000, '{\"email\":\"user@example.com\"}'::jsonb, ?)",
+                SUBJECT_DEVICE_ID,
+                SUBJECT_USER_ID,
+                SUBJECT_SESSION_ID,
+                PROJECT_ID
+        );
+        jdbcTemplate.update(
+                "INSERT INTO " + quoted(PREFIX + "sessions") +
+                        " (session_id, device_id, user_id, session_start_time, device_model, os_version, app_version, project_id) " +
+                        "VALUES (?::uuid, ?::uuid, ?, NOW(), 'Phone', '1.0', '2.0', ?)",
+                SUBJECT_SESSION_ID,
+                SUBJECT_DEVICE_ID,
+                SUBJECT_USER_ID,
+                PROJECT_ID
+        );
+        jdbcTemplate.update(
+                "INSERT INTO " + quoted(PREFIX + "traffic_metrics") +
+                        " (metric_id, device_id, user_id, session_id, metric_type, page_path, referrer, metric_timestamp, metadata, project_id) " +
+                        "VALUES ('metric-subject', ?::uuid, ?, ?::uuid, 'PAGE_VIEW', '/user@example.com', " +
+                        "'https://example.com/user', 1000, '{\"email\":\"user@example.com\"}'::jsonb, ?)",
+                SUBJECT_DEVICE_ID,
+                SUBJECT_USER_ID,
+                SUBJECT_SESSION_ID,
+                PROJECT_ID
+        );
+        jdbcTemplate.update(
+                "INSERT INTO " + quoted(PREFIX + "idempotency_keys") +
+                        " (project_id, key_hash, request_hash, event_id) VALUES (?, 'key-hash', 'request-hash', 'event-subject')",
+                PROJECT_ID
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> castRows(Object value) {
+        return (List<Map<String, Object>>) value;
+    }
+
+    private long originalEventCount() {
+        Long count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM " + quoted(PREFIX + "events") +
+                        " WHERE user_id = ? AND device_id = ?::uuid",
+                Long.class,
+                SUBJECT_USER_ID,
+                SUBJECT_DEVICE_ID
+        );
+        return count == null ? 0 : count;
     }
 
     private static AdminPrivacyRequestUpdateRequest update(long version,
@@ -406,7 +616,7 @@ class PrivacyWorkOrderPostgresIT {
     private List<String> activityTypes(String requestId) {
         return jdbcTemplate.queryForList(
                 "SELECT activity_type FROM " + quoted(PREFIX + "work_order_activities") +
-                        " WHERE work_order_id = ? ORDER BY created_at ASC, id ASC",
+                        " WHERE work_order_id = ? ORDER BY id ASC",
                 String.class,
                 requestId
         );

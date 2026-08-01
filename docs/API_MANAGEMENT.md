@@ -548,7 +548,29 @@ GET /api/admin/privacy/requests?projectId=your_project&page=1&pageSize=20&status
 GET /api/admin/privacy/requests/{requestId}?projectId=your_project
 ```
 
-#### 3) 更新工单状态（回填处理结果）
+#### 3) 客服执行项目数据处理
+
+App 只负责创建申请，不会自动导出或匿名化数据。客服确认用户、设备和请求类型后，通过管理端执行：
+
+```http
+POST /api/admin/privacy/requests/{requestId}/execute?projectId=your_project
+Content-Type: application/json
+
+{
+  "version": 3,
+  "operator": "customer-service",
+  "confirmation": "prv_example"
+}
+```
+
+- `EXPORT`：生成当前项目中匹配 `user_id / device_id` 的设备、事件、会话和流量 JSON 快照；设备 API Key、Secret 及历史凭据不会导出。`confirmation` 可省略。
+- `DELETE`：执行内置 anonymization policy（匿名化策略），不物理删除分析事实。必须在 `confirmation` 中输入完整工单号。
+- 两种操作都使用 `version` 做 optimistic concurrency（乐观并发控制），并在同一个项目数据库事务中更新工单和追加审计活动。
+- 成功后工单自动变为 `COMPLETED`。`ANALYTICSHUB` 工单不能只通过状态接口直接标记完成。
+
+匿名化策略会替换用户、设备、会话和记录 ID，清空自由 JSON 属性、页面路径和来源，降低时间精度，并撤销原设备凭据。Counter 等聚合统计、隐私工单和不可变活动记录保留。部署方仍需结合实际埋点内容、备份、日志、法定保存期限与适用地区法规评估匿名化效果；AnalyticsHub 的内置策略不构成法律意见，也不自动证明达到任一司法辖区的匿名化标准。
+
+#### 4) 更新工单状态（人工回填）
 
 ```http
 PATCH /api/admin/privacy/requests/{requestId}?projectId=your_project
@@ -558,7 +580,7 @@ Content-Type: application/json
   "version": 3,
   "status": "COMPLETED",
   "operator": "ops@yourcompany.com",
-  "operatorNote": "processed in PostHog console",
+  "operatorNote": "processed by customer service",
   "resultPayload": {
     "ticketNo": "PH-20260213-001",
     "completedAt": "2026-02-13T10:00:00Z"
@@ -570,7 +592,9 @@ Content-Type: application/json
 
 `version` 必填。服务端使用 optimistic concurrency（乐观并发控制）；版本过期返回 `PRIVACY_REQUEST_VERSION_CONFLICT` / 409。状态仅允许向前流转，终态不可改成另一状态。
 
-#### 4) 手动发送通知邮件
+状态接口用于进入处理中、拒绝、取消，以及兼容由其他处理器完成的工单。AnalyticsHub 自有数据的 `COMPLETED` 必须由上述执行接口产生。
+
+#### 5) 手动发送通知邮件
 
 ```http
 POST /api/admin/privacy/requests/{requestId}/notify?projectId=your_project
@@ -593,13 +617,13 @@ Content-Type: application/json
 }
 ```
 
-#### 5) 查询不可变处理记录
+#### 6) 查询不可变处理记录
 
 ```http
 GET /api/admin/privacy/requests/{requestId}/activities?projectId=your_project
 ```
 
-#### 6) 运维补偿投递
+#### 7) 运维补偿投递
 
 ```http
 POST /api/admin/privacy/requests/outbox/deliver?projectId=your_project&batchSize=20
@@ -621,10 +645,11 @@ POST /api/admin/privacy/requests/outbox/deliver?projectId=your_project&batchSize
 ### 13. 隐私处理推荐流程
 
 1. **发起**：App 侧通过 [采集端 API](API_COLLECTION.md) 发起导出/删除请求。
-2. **建单**：后端落库工单，并触发内部通知（如邮件告警）。
-3. **人工处理**：运营人员根据工单信息，在对应系统（AnalyticsHub/PostHog）执行实际操作。
-4. **回填**：运营人员通过 Admin 接口调用 `PATCH` 回填处理结果。
-5. **通知**：回填成功后，后端自动（或手动）发送结果通知邮件给用户。
+2. **建单**：后端只落库工单并触发内部通知，不在 App 请求中自动处理数据。
+3. **客服核验**：客服在管理后台核对项目、用户、设备、请求类型和备注。
+4. **手动执行**：导出请求生成并下载 JSON；删除请求经工单号二次确认后执行匿名化和凭据撤销。
+5. **审计闭环**：处理摘要写入工单，不可变活动流记录操作人、状态和影响数量。
+6. **通知用户**：客服通过通知接口发送处理结果；部署企业按自己的 retention policy（留存策略）管理工单、邮件 outbox、日志和备份。
 
 ### 14. 项目语义字典
 

@@ -1,6 +1,8 @@
 package com.github.analyticshub.controller;
 
 import com.github.analyticshub.common.dto.ApiResponse;
+import com.github.analyticshub.dto.AdminPrivacyExecutionRequest;
+import com.github.analyticshub.dto.AdminPrivacyExecutionResponse;
 import com.github.analyticshub.dto.AdminPrivacyNotifyRequest;
 import com.github.analyticshub.dto.AdminPrivacyRequestUpdateRequest;
 import com.github.analyticshub.dto.AdminPrivacyRequestsResponse;
@@ -9,6 +11,7 @@ import com.github.analyticshub.dto.WorkOrderActivityItem;
 import com.github.analyticshub.dto.WorkOrderNotificationQueuedResponse;
 import com.github.analyticshub.dto.WorkOrderOutboxDeliveryResult;
 import com.github.analyticshub.service.AdminPrivacyRequestService;
+import com.github.analyticshub.service.PrivacyDataExecutionService;
 import com.github.analyticshub.service.WorkOrderOutboxDeliveryService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -27,11 +30,14 @@ import java.util.List;
 public class AdminPrivacyRequestController {
 
     private final AdminPrivacyRequestService adminPrivacyRequestService;
+    private final PrivacyDataExecutionService privacyDataExecutionService;
     private final WorkOrderOutboxDeliveryService outboxDeliveryService;
 
     public AdminPrivacyRequestController(AdminPrivacyRequestService adminPrivacyRequestService,
+                                         PrivacyDataExecutionService privacyDataExecutionService,
                                          WorkOrderOutboxDeliveryService outboxDeliveryService) {
         this.adminPrivacyRequestService = adminPrivacyRequestService;
+        this.privacyDataExecutionService = privacyDataExecutionService;
         this.outboxDeliveryService = outboxDeliveryService;
     }
 
@@ -91,6 +97,14 @@ public class AdminPrivacyRequestController {
             @PathVariable("requestId") String requestId,
             @Valid @RequestBody AdminPrivacyNotifyRequest request) {
         return ApiResponse.success(adminPrivacyRequestService.notifyUser(projectId, requestId, request));
+    }
+
+    @PostMapping("/{requestId}/execute")
+    public ApiResponse<AdminPrivacyExecutionResponse> execute(
+            @RequestParam("projectId") String projectId,
+            @PathVariable("requestId") String requestId,
+            @Valid @RequestBody AdminPrivacyExecutionRequest request) {
+        return ApiResponse.success(privacyDataExecutionService.execute(projectId, requestId, request));
     }
 
     @PostMapping("/outbox/deliver")
