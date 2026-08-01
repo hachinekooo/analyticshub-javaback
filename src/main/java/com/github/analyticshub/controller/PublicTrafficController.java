@@ -5,6 +5,7 @@ import com.github.analyticshub.dto.TrafficMetricTrackRequest;
 import com.github.analyticshub.dto.TrafficMetricTrackResponse;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.service.TrafficMetricService;
+import com.github.analyticshub.security.ClientIpResolver;
 import com.github.analyticshub.util.CryptoUtils;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
@@ -21,6 +22,9 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import com.github.analyticshub.dto.TrafficMetricSummaryResponse;
 import com.github.analyticshub.service.TrafficMetricStatsService;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.JsonNodeFactory;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.util.Map;
 import java.util.UUID;
@@ -31,13 +35,16 @@ public class PublicTrafficController {
 
     private final TrafficMetricService trafficMetricService;
     private final TrafficMetricStatsService trafficMetricStatsService;
+    private final ClientIpResolver clientIpResolver;
     private final String publicToken;
 
     public PublicTrafficController(TrafficMetricService trafficMetricService,
                                    TrafficMetricStatsService trafficMetricStatsService,
+                                   ClientIpResolver clientIpResolver,
                                    @Value("${app.traffic.public-token:}") String publicToken) {
         this.trafficMetricService = trafficMetricService;
         this.trafficMetricStatsService = trafficMetricStatsService;
+        this.clientIpResolver = clientIpResolver;
         this.publicToken = publicToken == null ? "" : publicToken;
     }
 
@@ -69,7 +76,7 @@ public class PublicTrafficController {
         }
         UUID resolvedDeviceId = resolveOrAssignDeviceId(httpServletRequest, httpServletResponse);
 
-        String clientIp = resolveClientIp(httpServletRequest);
+        String clientIp = clientIpResolver.resolve(httpServletRequest);
         String userAgent = httpServletRequest.getHeader("User-Agent");
         String referrer = resolveReferer(request, httpServletRequest);
         boolean bot = isBot(userAgent);
@@ -77,9 +84,7 @@ public class PublicTrafficController {
         // 如果是机器人，可以在 metadata 中记录
         TrafficMetricTrackRequest enrichedRequest = request;
         if (bot || (referrer != null && !referrer.equals(request.referrer()))) {
-            com.fasterxml.jackson.databind.node.ObjectNode metadata = (request.metadata() != null && request.metadata().isObject())
-                    ? (com.fasterxml.jackson.databind.node.ObjectNode) request.metadata().deepCopy()
-                    : new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
+            ObjectNode metadata = mutableMetadata(request.metadata());
             if (bot) metadata.put("isBot", true);
             if (referrer != null) metadata.put("resolvedReferrer", referrer);
             
@@ -116,7 +121,7 @@ public class PublicTrafficController {
         }
         UUID resolvedDeviceId = resolveOrAssignDeviceId(httpServletRequest, httpServletResponse);
 
-        String clientIp = resolveClientIp(httpServletRequest);
+        String clientIp = clientIpResolver.resolve(httpServletRequest);
         String userAgent = httpServletRequest.getHeader("User-Agent");
         boolean bot = isBot(userAgent);
 
@@ -128,11 +133,13 @@ public class PublicTrafficController {
         TrafficMetricTrackRequest[] processedItems = new TrafficMetricTrackRequest[items.length];
         for (int i = 0; i < items.length; i++) {
             TrafficMetricTrackRequest item = items[i];
+            if (item == null) {
+                processedItems[i] = null;
+                continue;
+            }
             String referrer = resolveReferer(item, httpServletRequest);
             if (bot || (referrer != null && !referrer.equals(item.referrer()))) {
-                com.fasterxml.jackson.databind.node.ObjectNode metadata = (item.metadata() != null && item.metadata().isObject())
-                        ? (com.fasterxml.jackson.databind.node.ObjectNode) item.metadata().deepCopy()
-                        : new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
+                ObjectNode metadata = mutableMetadata(item.metadata());
                 if (bot) metadata.put("isBot", true);
                 if (referrer != null) metadata.put("resolvedReferrer", referrer);
                 
@@ -197,13 +204,10 @@ public class PublicTrafficController {
         return result == 0;
     }
 
-    private static String resolveClientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            int comma = forwarded.indexOf(',');
-            return (comma > 0 ? forwarded.substring(0, comma) : forwarded).trim();
-        }
-        return request.getRemoteAddr();
+    private static ObjectNode mutableMetadata(JsonNode metadata) {
+        return metadata != null && metadata.isObject()
+                ? (ObjectNode) metadata.deepCopy()
+                : JsonNodeFactory.instance.objectNode();
     }
 
     private static String resolveReferer(TrafficMetricTrackRequest request, HttpServletRequest httpServletRequest) {
@@ -228,7 +232,24 @@ public class PublicTrafficController {
     }
 
     private static UUID resolveOrAssignDeviceId(HttpServletRequest request, HttpServletResponse response) {
-        // 完全依赖 Cookie 进行设备识别
+        String headerDeviceId = request.getHeader("X-Device-ID");
+        if (headerDeviceId != null) {
+            try {
+                UUID parsed = UUID.fromString(headerDeviceId);
+                if (parsed.toString().equals(headerDeviceId)) {
+                    return parsed;
+                }
+            } catch (IllegalArgumentException ignored) {
+                // Converted to the stable public API error below.
+            }
+            throw new BusinessException(
+                    "INVALID_DEVICE_ID",
+                    "X-Device-ID 必须是 canonical UUID（小写、带连字符）",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
+
+        // Same-origin callers can use the first-party cookie without SDK state.
         UUID cookieDeviceId = readDeviceIdCookie(request);
         if (cookieDeviceId != null) {
             return cookieDeviceId;

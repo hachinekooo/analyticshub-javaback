@@ -1,6 +1,6 @@
 package com.github.analyticshub.security;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.github.analyticshub.common.dto.ApiResponse;
 import com.github.analyticshub.config.MultiDataSourceManager;
 import com.github.analyticshub.entity.Device;
@@ -10,9 +10,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.lang.NonNull;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import javax.sql.DataSource;
@@ -32,10 +30,10 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
     private final ObjectMapper objectMapper;
 
     private final long signatureValidityMs;
+    private final int maxRequestBodyBytes;
 
-    // 不需要 HMAC 认证的路径
-    // 注意：该过滤器是 @Component，可能会被 Servlet 容器全局注册。
-    // 因此这里必须显式排除管理端接口（/api/admin/**），避免误拦截仅携带 Admin Token 的请求。
+    // 不需要 HMAC 认证的路径。管理端与 Actuator 由
+    // AdminApiAuthenticationFilter 统一执行 Admin Token 策略。
     private static final String[] PUBLIC_PATHS = {
             "/api/health",
             "/actuator",
@@ -47,19 +45,28 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
 
     public ApiAuthenticationFilter(MultiDataSourceManager dataSourceManager, 
                                    ObjectMapper objectMapper,
-                                   long signatureValidityMs) {
+                                   long signatureValidityMs,
+                                   int maxRequestBodyBytes) {
         this.dataSourceManager = dataSourceManager;
         this.objectMapper = objectMapper;
         this.signatureValidityMs = signatureValidityMs;
+        if (maxRequestBodyBytes <= 0) {
+            throw new IllegalArgumentException("maxRequestBodyBytes must be positive");
+        }
+        this.maxRequestBodyBytes = maxRequestBodyBytes;
     }
 
     @Override
     protected void doFilterInternal(
-            @NonNull HttpServletRequest request,
-            @NonNull HttpServletResponse response,
-            @NonNull FilterChain filterChain) throws ServletException, IOException {
+            HttpServletRequest request,
+            HttpServletResponse response,
+            FilterChain filterChain) throws ServletException, IOException {
 
-        String path = request.getRequestURI();
+        RequestPathSecurityPolicy.Inspection requestPath = RequestPathSecurityPolicy.inspect(request);
+        if (RequestPathSecurityPolicy.rejectIfUnsafe(requestPath, response, objectMapper)) {
+            return;
+        }
+        String path = requestPath.applicationPath();
         
         // 跳过公开路径
         if (isPublicPath(path)) {
@@ -70,10 +77,14 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
         // 包装请求以支持多次读取 Body（用于签名验证）
         CachingHttpServletRequestWrapper wrappedRequest;
         try {
-            wrappedRequest = new CachingHttpServletRequestWrapper(request);
+            wrappedRequest = new CachingHttpServletRequestWrapper(request, maxRequestBodyBytes);
+        } catch (CachingHttpServletRequestWrapper.RequestBodyTooLargeException e) {
+            sendErrorResponse(response, HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE,
+                    "REQUEST_BODY_TOO_LARGE", "请求体超过允许的大小");
+            return;
         } catch (Exception e) {
             log.log(System.Logger.Level.ERROR, "无法读取请求体", e);
-            sendErrorResponse(response, "READ_ERROR", "无法读取请求数据");
+            sendErrorResponse(response, HttpServletResponse.SC_BAD_REQUEST, "READ_ERROR", "无法读取请求数据");
             return;
         }
 
@@ -81,7 +92,8 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
             // 1. 提取项目ID（必须）
             String projectId = wrappedRequest.getHeader("X-Project-ID");
             if (projectId == null || projectId.isBlank()) {
-                sendErrorResponse(response, "MISSING_PROJECT_ID", "缺少项目ID，请在请求头 X-Project-ID 传递");
+                sendErrorResponse(response, HttpServletResponse.SC_BAD_REQUEST,
+                        "MISSING_PROJECT_ID", "缺少项目ID，请在请求头 X-Project-ID 传递");
                 return;
             }
 
@@ -90,10 +102,12 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
             try {
                 projectConfig = dataSourceManager.getProjectConfig(projectId);
             } catch (IllegalArgumentException e) {
-                sendErrorResponse(response, "INVALID_PROJECT", "项目ID格式无效");
+                sendErrorResponse(response, HttpServletResponse.SC_BAD_REQUEST,
+                        "INVALID_PROJECT", "项目ID格式无效");
                 return;
             } catch (Exception e) {
-                sendErrorResponse(response, "INVALID_PROJECT", "项目配置加载失败");
+                sendErrorResponse(response, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+                        "PROJECT_CONFIG_UNAVAILABLE", "项目配置加载失败");
                 return;
             }
 
@@ -102,7 +116,8 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
                 return;
             }
             if (!projectConfig.isActive()) {
-                sendErrorResponse(response, "PROJECT_INACTIVE", "项目未激活");
+                sendErrorResponse(response, HttpServletResponse.SC_FORBIDDEN,
+                        "PROJECT_INACTIVE", "项目未激活");
                 return;
             }
 
@@ -121,12 +136,14 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
             }
 
             if (!CryptoUtils.isValidUUID(deviceId)) {
-                sendErrorResponse(response, "INVALID_DEVICE_ID", "无效的设备ID格式");
+                sendErrorResponse(response, HttpServletResponse.SC_BAD_REQUEST,
+                        "INVALID_DEVICE_ID", "无效的设备ID格式");
                 return;
             }
 
             if (!isValidUserId(userId)) {
-                sendErrorResponse(response, "INVALID_USER_ID", "无效的用户ID格式");
+                sendErrorResponse(response, HttpServletResponse.SC_BAD_REQUEST,
+                        "INVALID_USER_ID", "无效的用户ID格式");
                 return;
             }
 
@@ -138,11 +155,13 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
                 
                 // 允许5分钟的时间差
                 if (timeDiff > signatureValidityMs) {
-                    sendErrorResponse(response, "TIMESTAMP_EXPIRED", "请求时间戳已过期");
+                    sendErrorResponse(response, HttpServletResponse.SC_BAD_REQUEST,
+                            "TIMESTAMP_EXPIRED", "请求时间戳已过期");
                     return;
                 }
             } catch (NumberFormatException e) {
-                sendErrorResponse(response, "INVALID_TIMESTAMP", "无效的时间戳格式");
+                sendErrorResponse(response, HttpServletResponse.SC_BAD_REQUEST,
+                        "INVALID_TIMESTAMP", "无效的时间戳格式");
                 return;
             }
 
@@ -154,15 +173,16 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
             Device device = queryDevice(jdbcTemplate, devicesTable, apiKey, deviceId, projectId);
 
             if (device == null) {
-                log.log(System.Logger.Level.WARNING, "认证失败: 无效的API Key或设备ID - {0}/{1}", projectId, deviceId);
+                log.log(System.Logger.Level.WARNING, "认证失败: 无效的 API Key 或设备凭据, projectId={0}", projectId);
                 sendErrorResponse(response, "INVALID_CREDENTIALS", "无效的API Key或设备ID");
                 return;
             }
 
             // 7. 检查设备是否被封禁
             if (Boolean.TRUE.equals(device.getIsBanned())) {
-                log.log(System.Logger.Level.WARNING, "认证失败: 设备已被封禁 - {0}", deviceId);
-                sendErrorResponse(response, "DEVICE_BANNED", "设备已被封禁");
+                log.log(System.Logger.Level.WARNING, "认证失败: 设备已被封禁, projectId={0}", projectId);
+                sendErrorResponse(response, HttpServletResponse.SC_FORBIDDEN,
+                        "DEVICE_BANNED", "设备已被封禁");
                 return;
             }
 
@@ -177,7 +197,7 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
             );
 
             if (!CryptoUtils.verifySignature(signatureData, signature, device.getSecretKey())) {
-                log.log(System.Logger.Level.WARNING, "认证失败: 签名验证失败 - {0}", deviceId);
+                log.log(System.Logger.Level.WARNING, "认证失败: 签名验证失败, projectId={0}", projectId);
                 sendErrorResponse(response, "INVALID_SIGNATURE", "签名验证失败");
                 return;
             }
@@ -196,7 +216,8 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
 
         } catch (Exception e) {
             log.log(System.Logger.Level.ERROR, "认证过滤器异常", e);
-            sendErrorResponse(response, "AUTH_ERROR", "认证失败");
+            sendErrorResponse(response, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+                    "AUTH_SERVICE_UNAVAILABLE", "认证服务暂时不可用");
         } finally {
             // 清理上下文
             RequestContext.clear();
@@ -210,7 +231,9 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
                               String apiKey, String deviceId, String projectId) {
         try {
             String sql = String.format(
-                    "SELECT * FROM %s WHERE api_key = ? AND device_id = ?::uuid AND project_id = ?",
+                    "SELECT * FROM %s WHERE device_id = ?::uuid AND project_id = ? " +
+                            "AND (api_key = ? OR (previous_api_key = ? " +
+                            "AND previous_credentials_expires_at > NOW()))",
                     tableName
             );
 
@@ -218,8 +241,12 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
                 Device device = new Device();
                 device.setId(rs.getLong("id"));
                 device.setDeviceId(UUID.fromString(rs.getString("device_id")));
-                device.setApiKey(rs.getString("api_key"));
-                device.setSecretKey(rs.getString("secret_key"));
+                String currentApiKey = rs.getString("api_key");
+                boolean currentCredential = apiKey.equals(currentApiKey);
+                device.setApiKey(currentCredential ? currentApiKey : rs.getString("previous_api_key"));
+                device.setSecretKey(currentCredential
+                        ? rs.getString("secret_key")
+                        : rs.getString("previous_secret_key"));
                 device.setDeviceModel(rs.getString("device_model"));
                 device.setOsVersion(rs.getString("os_version"));
                 device.setAppVersion(rs.getString("app_version"));
@@ -229,9 +256,9 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
                 device.setCreatedAt(rs.getTimestamp("created_at").toInstant());
                 device.setLastActiveAt(rs.getTimestamp("last_active_at").toInstant());
                 return device;
-            }, apiKey, deviceId, projectId);
-        } catch (Exception e) {
-            log.log(System.Logger.Level.DEBUG, "Device not found: {0}", deviceId);
+            }, deviceId, projectId, apiKey, apiKey);
+        } catch (EmptyResultDataAccessException exception) {
+            log.log(System.Logger.Level.DEBUG, "Device credential lookup returned no match");
             return null;
         }
     }
@@ -239,13 +266,17 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
     /**
      * 判断是否为公开路径
      */
-    private boolean isPublicPath(String path) {
+    static boolean isPublicPath(String path) {
         for (String publicPath : PUBLIC_PATHS) {
-            if (path.startsWith(publicPath)) {
+            if (isPathOrDescendant(path, publicPath)) {
                 return true;
             }
         }
         return false;
+    }
+
+    private static boolean isPathOrDescendant(String path, String basePath) {
+        return path != null && (path.equals(basePath) || path.startsWith(basePath + "/"));
     }
 
     static boolean isValidUserId(String userId) {
@@ -257,7 +288,16 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
      */
     private void sendErrorResponse(HttpServletResponse response, String code, String message)
             throws IOException {
-        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        sendErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, code, message);
+    }
+
+    private void sendErrorResponse(
+            HttpServletResponse response,
+            int status,
+            String code,
+            String message
+    ) throws IOException {
+        response.setStatus(status);
         response.setContentType("application/json;charset=UTF-8");
         
         ApiResponse<Void> apiResponse = ApiResponse.error(code, message);

@@ -1,6 +1,7 @@
 package com.github.analyticshub.exception;
 
 import com.github.analyticshub.common.dto.ApiResponse;
+import com.github.analyticshub.logging.LogValueSanitizer;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -28,7 +29,8 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ApiResponse<Void>> handleBusinessException(
             BusinessException ex, WebRequest request) {
-        log.log(System.Logger.Level.WARNING, "Business exception: {0} - {1}", ex.getCode(), ex.getMessage());
+        log.log(System.Logger.Level.WARNING, "Business exception: code={0}, status={1}",
+                LogValueSanitizer.errorCode(ex.getCode()), ex.getHttpStatus().value());
         return ResponseEntity
                 .status(ex.getHttpStatus())
                 .body(ApiResponse.error(ex.getCode(), ex.getMessage()));
@@ -47,7 +49,7 @@ public class GlobalExceptionHandler {
             errors.put(fieldName, errorMessage);
         });
 
-        log.log(System.Logger.Level.WARNING, "Validation failed: {0}", errors);
+        log.log(System.Logger.Level.WARNING, "Validation failed: fieldCount={0}", errors.size());
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.error("VALIDATION_ERROR", "参数验证失败", errors));
@@ -59,10 +61,10 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiResponse<Void>> handleIllegalArgumentException(
             IllegalArgumentException ex) {
-        log.log(System.Logger.Level.WARNING, "Illegal argument: {0}", ex.getMessage());
+        log.log(System.Logger.Level.WARNING, "Illegal argument rejected");
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
-                .body(ApiResponse.error("INVALID_ARGUMENT", ex.getMessage()));
+                .body(ApiResponse.error("INVALID_ARGUMENT", "参数无效"));
     }
 
     /**
@@ -71,16 +73,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiResponse<Void>> handleHttpMessageNotReadableException(
             HttpMessageNotReadableException ex) {
-        log.log(System.Logger.Level.WARNING, "数据解析失败: {0}", ex.getMessage());
-        
-        String message = "数据解析失败，请检查参数格式";
-        if (ex.getMessage() != null && ex.getMessage().contains("UUID")) {
-            message = "会话ID或设备ID格式无效，必须是有效的UUID";
-        }
-        
+        log.log(System.Logger.Level.WARNING, "Request body parsing failed");
+
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
-                .body(ApiResponse.error("VALIDATION_ERROR", message));
+                .body(ApiResponse.error("VALIDATION_ERROR", "数据解析失败，请检查参数格式"));
     }
 
     /**

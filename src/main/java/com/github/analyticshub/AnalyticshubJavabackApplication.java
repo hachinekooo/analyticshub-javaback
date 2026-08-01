@@ -4,13 +4,15 @@ import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.env.Environment;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import com.github.analyticshub.logging.StartupEnvironmentLogger;
 
 /**
  * Analytics Hub - 多项目分析系统后端服务
- * Spring Boot 4.0.1 + JDK 25 + MyBatis Plus
+ * Spring Boot 4.0.7 + JDK 25 + MyBatis Plus
  * 
  * 特性:
  * - 多项目支持，每个项目可配置独立数据库
@@ -20,8 +22,9 @@ import com.github.analyticshub.logging.StartupEnvironmentLogger;
  * - 使用 HikariCP 进行高性能连接池管理
  * - 完全的 RESTful API 设计
  */
-@SpringBootApplication
+@SpringBootApplication(exclude = UserDetailsServiceAutoConfiguration.class)
 @MapperScan("com.github.analyticshub.mapper")
+@EnableScheduling
 public class AnalyticshubJavabackApplication {
 
     private static final System.Logger log = System.getLogger(AnalyticshubJavabackApplication.class.getName());
@@ -62,7 +65,7 @@ public class AnalyticshubJavabackApplication {
         }
         log.log(System.Logger.Level.INFO, "  环境: {0}", profile.isEmpty() ? "default" : profile);
         log.log(System.Logger.Level.INFO, "  健康检查: http://localhost:{0}/api/health", port);
-        log.log(System.Logger.Level.INFO, "  API 文档: http://localhost:{0}/actuator", port);
+        log.log(System.Logger.Level.INFO, "  Actuator: http://localhost:{0}/actuator", port);
         log.log(System.Logger.Level.INFO, "==================================================");
         log.log(System.Logger.Level.INFO, "");
     }

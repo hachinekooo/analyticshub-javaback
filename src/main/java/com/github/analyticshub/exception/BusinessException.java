@@ -38,6 +38,10 @@ public class BusinessException extends RuntimeException {
         return new BusinessException("PROJECT_INACTIVE", "项目未激活", HttpStatus.FORBIDDEN);
     }
 
+    public static BusinessException projectNotFound() {
+        return new BusinessException("PROJECT_NOT_FOUND", "项目不存在", HttpStatus.NOT_FOUND);
+    }
+
     public static BusinessException projectDbUnavailable(String projectId) {
         return new BusinessException(
                 "PROJECT_DB_UNAVAILABLE",
@@ -54,6 +58,18 @@ public class BusinessException extends RuntimeException {
         return new BusinessException("INVALID_DEVICE_ID", "设备ID格式无效，必须是有效的UUID");
     }
 
+    public static BusinessException deviceAlreadyRegistered() {
+        return new BusinessException(
+                "DEVICE_ALREADY_REGISTERED",
+                "设备已注册；凭证轮换必须通过受认证的恢复流程",
+                HttpStatus.CONFLICT
+        );
+    }
+
+    public static BusinessException deviceNotFound() {
+        return new BusinessException("DEVICE_NOT_FOUND", "设备不存在", HttpStatus.NOT_FOUND);
+    }
+
     public static BusinessException missingEventType() {
         return new BusinessException("MISSING_EVENT_TYPE", "缺少事件类型");
     }
@@ -64,5 +80,9 @@ public class BusinessException extends RuntimeException {
 
     public static BusinessException invalidSessionId() {
         return new BusinessException("VALIDATION_ERROR", "会话ID格式无效");
+    }
+
+    public static BusinessException invalidEventProperties() {
+        return new BusinessException("INVALID_EVENT_PROPERTIES", "事件属性无法序列化");
     }
 }

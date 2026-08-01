@@ -1,7 +1,7 @@
 package com.github.analyticshub.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.github.analyticshub.config.MultiDataSourceManager;
 import com.github.analyticshub.dto.AdminFunnelGroupResult;
 import com.github.analyticshub.dto.AdminFunnelResponse;
@@ -16,6 +16,7 @@ import javax.sql.DataSource;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -57,6 +58,9 @@ public class AdminProductAnalyticsService {
         String normalizedProjectId = normalizeProjectId(projectId);
         AdminQueryUtils.Range range = AdminQueryUtils.resolveRange(from, to);
         List<String> stepEvents = parseEventList(steps, MAX_FUNNEL_STEPS, "steps");
+        if (stepEvents.size() < 2) {
+            throw new IllegalArgumentException("steps 至少需要 2 个不同事件");
+        }
         String normalizedGroupBy = normalizePropertyKey(groupBy);
 
         JdbcTemplate jdbcTemplate = new JdbcTemplate(requireProject(normalizedProjectId).dataSource());
@@ -249,7 +253,12 @@ public class AdminProductAnalyticsService {
     ) {
         long retained = 0;
         for (Map.Entry<String, Instant> entry : cohortTimes.entrySet()) {
-            Instant start = entry.getValue().plus(Duration.ofDays(day));
+            Instant start = entry.getValue()
+                    .atZone(ZoneOffset.UTC)
+                    .toLocalDate()
+                    .plusDays(day)
+                    .atStartOfDay(ZoneOffset.UTC)
+                    .toInstant();
             Instant end = start.plus(Duration.ofDays(1));
             List<Instant> actorReturnTimes = returnTimes.getOrDefault(entry.getKey(), List.of());
             boolean matched = actorReturnTimes.stream()
@@ -273,7 +282,7 @@ public class AdminProductAnalyticsService {
         String sql = String.format(
                 "SELECT event_type, created_at, user_id, device_id, properties FROM %s " +
                         "WHERE project_id = ? AND created_at >= ? AND created_at < ? " +
-                        "AND event_type IN (%s) ORDER BY created_at ASC",
+                        "AND event_type IN (%s) ORDER BY created_at ASC, id ASC",
                 eventsTable,
                 placeholders
         );
@@ -401,7 +410,7 @@ public class AdminProductAnalyticsService {
         if (value == null || value.isNull()) {
             return "(none)";
         }
-        String text = value.isTextual() ? value.asText() : value.toString();
+        String text = value.isString() ? value.asString() : value.toString();
         return text == null || text.isBlank() ? "(empty)" : text;
     }
 

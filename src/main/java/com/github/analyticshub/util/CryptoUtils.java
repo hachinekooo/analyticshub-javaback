@@ -76,8 +76,8 @@ public final class CryptoUtils {
             return false;
         }
         try {
-            UUID.fromString(uuid);
-            return true;
+            UUID parsed = UUID.fromString(uuid);
+            return parsed.toString().equalsIgnoreCase(uuid);
         } catch (IllegalArgumentException e) {
             return false;
         }
@@ -152,34 +152,6 @@ public final class CryptoUtils {
             result |= xb ^ yb;
         }
         return result == 0;
-    }
-
-    /**
-     * 简单的加密方法（用于存储数据库密码）
-     * 注意：这是一个简化的实现，生产环境应使用更强的加密
-     */
-    public static String encrypt(String data) {
-        if (data == null || data.isBlank()) {
-            return null;
-        }
-        // 简单的Base64编码（实际应使用AES等加密算法）
-        return Base64.getEncoder().encodeToString(data.getBytes(StandardCharsets.UTF_8));
-    }
-
-    /**
-     * 简单的解密方法
-     */
-    public static String decrypt(String encryptedData) {
-        if (encryptedData == null || encryptedData.isBlank()) {
-            return null;
-        }
-        try {
-            byte[] decodedBytes = Base64.getDecoder().decode(encryptedData);
-            return new String(decodedBytes, StandardCharsets.UTF_8);
-        } catch (IllegalArgumentException e) {
-            log.log(System.Logger.Level.WARNING, "Failed to decrypt data", e);
-            return null;
-        }
     }
 
     /**

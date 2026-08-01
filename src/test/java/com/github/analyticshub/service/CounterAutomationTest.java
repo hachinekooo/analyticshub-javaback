@@ -1,8 +1,10 @@
 package com.github.analyticshub.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.github.analyticshub.config.MultiDataSourceManager;
+import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,43 +23,156 @@ class CounterAutomationTest {
     @Mock
     private MultiDataSourceManager dataSourceManager;
 
-    private ObjectMapper objectMapper = new ObjectMapper();
+    private ObjectMapper objectMapper = JsonMapper.builder().build();
 
     @BeforeEach
     void setUp() {
-        counterService = new CounterService(dataSourceManager, objectMapper);
+        counterService = new CounterService(dataSourceManager, objectMapper, new ProjectTransactionExecutor());
     }
 
     @Test
     void testIsMatch_Basic() throws Exception {
-        JsonNode trigger = objectMapper.readTree("{\"event_type\": \"send_letter\"}");
+        JsonNode trigger = objectMapper.readTree("{\"event_type\": \"task_completed\"}");
         
-        assertTrue(counterService.isMatch(trigger, "send_letter", null));
+        assertTrue(counterService.isMatch(trigger, "task_completed", null));
         assertFalse(counterService.isMatch(trigger, "other_event", null));
     }
 
     @Test
+    void multipleHistoricalEventKeysCanFeedOneCounter() throws Exception {
+        JsonNode trigger = objectMapper.readTree(
+                "{\"event_types\":[\"task_completed\",\"task_done_v2\"]}"
+        );
+
+        assertTrue(counterService.isMatch(trigger, "task_completed", null));
+        assertTrue(counterService.isMatch(trigger, "task_done_v2", null));
+        assertFalse(counterService.isMatch(trigger, "task_created", null));
+    }
+
+    @Test
+    void anyOfAppliesConditionsToEachEventAliasIndependently() throws Exception {
+        JsonNode trigger = objectMapper.readTree("""
+                {
+                  "any_of": [
+                    {"event_type": "task_completed"},
+                    {
+                      "event_type": "task_done_v2",
+                      "conditions": {"status": "success"}
+                    }
+                  ]
+                }
+                """);
+
+        assertTrue(counterService.isMatch(trigger, "task_completed", null));
+        assertTrue(counterService.isMatch(
+                trigger,
+                "task_done_v2",
+                Map.of("status", "success")
+        ));
+        assertFalse(counterService.isMatch(
+                trigger,
+                "task_done_v2",
+                Map.of("status", "failed")
+        ));
+        assertFalse(counterService.isMatch(trigger, "task_created", Map.of()));
+    }
+
+    @Test
+    void anyOfUsesOrSemanticsWhenTheSameEventHasMultipleConditionBranches() throws Exception {
+        JsonNode trigger = objectMapper.readTree("""
+                {
+                  "any_of": [
+                    {"event_type": "task_completed", "conditions": {"source": "api"}},
+                    {"event_type": "task_completed", "conditions": {"source": "import"}}
+                  ]
+                }
+                """);
+
+        assertTrue(counterService.isMatch(
+                trigger,
+                "task_completed",
+                Map.of("source", "import")
+        ));
+        assertFalse(counterService.isMatch(
+                trigger,
+                "task_completed",
+                Map.of("source", "editor")
+        ));
+    }
+
+    @Test
     void testIsMatch_WithConditions() throws Exception {
-        JsonNode trigger = objectMapper.readTree("{\"event_type\": \"send_letter\", \"conditions\": {\"status\": \"success\"}}");
+        JsonNode trigger = objectMapper.readTree("{\"event_type\": \"task_completed\", \"conditions\": {\"status\": \"success\"}}");
         
         // Match: status is success
-        assertTrue(counterService.isMatch(trigger, "send_letter", Map.of("status", "success")));
+        assertTrue(counterService.isMatch(trigger, "task_completed", Map.of("status", "success")));
         
         // No match: status is failed
-        assertFalse(counterService.isMatch(trigger, "send_letter", Map.of("status", "failed")));
+        assertFalse(counterService.isMatch(trigger, "task_completed", Map.of("status", "failed")));
         
         // No match: status missing
-        assertFalse(counterService.isMatch(trigger, "send_letter", Map.of("other", "val")));
+        assertFalse(counterService.isMatch(trigger, "task_completed", Map.of("other", "val")));
         
         // No match: properties null
-        assertFalse(counterService.isMatch(trigger, "send_letter", null));
+        assertFalse(counterService.isMatch(trigger, "task_completed", null));
     }
 
     @Test
     void testIsMatch_MultipleConditions() throws Exception {
-        JsonNode trigger = objectMapper.readTree("{\"event_type\": \"send_letter\", \"conditions\": {\"status\": \"success\", \"type\": \"quick\"}}");
+        JsonNode trigger = objectMapper.readTree("{\"event_type\": \"task_completed\", \"conditions\": {\"status\": \"success\", \"type\": \"quick\"}}");
         
-        assertTrue(counterService.isMatch(trigger, "send_letter", Map.of("status", "success", "type", "quick")));
-        assertFalse(counterService.isMatch(trigger, "send_letter", Map.of("status", "success", "type", "slow")));
+        assertTrue(counterService.isMatch(trigger, "task_completed", Map.of("status", "success", "type", "quick")));
+        assertFalse(counterService.isMatch(trigger, "task_completed", Map.of("status", "success", "type", "slow")));
+    }
+
+    @Test
+    void emptyConditionsBehaveLikeNoFilter() throws Exception {
+        JsonNode trigger = objectMapper.readTree(
+                "{\"event_type\":\"task_completed\",\"conditions\":{}}"
+        );
+
+        assertTrue(counterService.isMatch(trigger, "task_completed", null));
+    }
+
+    @Test
+    void nestedConditionsUseJsonContainmentSemantics() throws Exception {
+        JsonNode trigger = objectMapper.readTree("""
+                {
+                  "event_type": "task_completed",
+                  "conditions": {
+                    "score": 1.0,
+                    "context": {"channel": "api"},
+                    "tags": ["stable"]
+                  }
+                }
+                """);
+
+        assertTrue(counterService.isMatch(
+                trigger,
+                "task_completed",
+                Map.of(
+                        "score", 1,
+                        "context", Map.of("channel", "api", "version", 2),
+                        "tags", java.util.List.of("paid", "stable")
+                )
+        ));
+    }
+
+    @Test
+    void malformedRuleIsIgnoredWithoutBreakingEventCollection() throws Exception {
+        JsonNode trigger = objectMapper.readTree(
+                "{\"event_type\":\"task_completed\",\"unsupported\":true}"
+        );
+
+        assertFalse(counterService.isMatch(trigger, "task_completed", Map.of()));
+        assertFalse(counterService.isMatch(null, "task_completed", Map.of()));
+    }
+
+    @Test
+    void counterKeysAreSafeStablePathIdentifiers() {
+        assertThrows(IllegalArgumentException.class,
+                () -> counterService.get("project", "bad/key", false));
+        assertThrows(IllegalArgumentException.class,
+                () -> counterService.get("project", "counter key", false));
     }
 }

@@ -22,8 +22,6 @@ import java.util.Map;
 @RequestMapping("/api/v1/auth")
 public class AuthController {
 
-    private static final System.Logger log = System.getLogger(AuthController.class.getName());
-
     private final AuthService authService;
 
     @Value("${app.security.admin-token:}")
@@ -42,10 +40,16 @@ public class AuthController {
             @RequestHeader(value = "X-Project-ID") String projectId,
             @Valid @RequestBody DeviceRegisterRequest request) {
         
-        log.log(System.Logger.Level.INFO, "设备注册请求: projectId={0}, deviceId={1}", projectId, request.deviceId());
-        
         DeviceRegisterResponse response = authService.registerDevice(projectId, request);
         return ApiResponse.success(response);
+    }
+
+    /**
+     * 受 HMAC 保护的设备凭证轮换接口。
+     */
+    @PostMapping("/credentials/rotate")
+    public ApiResponse<DeviceRegisterResponse> rotateCredentials() {
+        return ApiResponse.success(authService.rotateCredentials());
     }
 
     @PostMapping("/admin-token/verify")

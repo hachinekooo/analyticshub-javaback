@@ -1,15 +1,12 @@
 package com.github.analyticshub.security;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.github.analyticshub.common.dto.ApiResponse;
 import com.github.analyticshub.service.EmailService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.lang.NonNull;
-import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -25,6 +22,7 @@ public class AdminApiAuthenticationFilter extends OncePerRequestFilter {
     private final RateLimitService rateLimitService;
     private final EmailService emailService;
     private final TwoFactorAuthService twoFactorAuthService;
+    private final ClientIpResolver clientIpResolver;
 
     private final String adminToken;
 
@@ -32,26 +30,33 @@ public class AdminApiAuthenticationFilter extends OncePerRequestFilter {
                                        RateLimitService rateLimitService,
                                        EmailService emailService,
                                        TwoFactorAuthService twoFactorAuthService,
+                                       ClientIpResolver clientIpResolver,
                                        String adminToken) {
         this.objectMapper = objectMapper;
         this.rateLimitService = rateLimitService;
         this.emailService = emailService;
         this.twoFactorAuthService = twoFactorAuthService;
+        this.clientIpResolver = clientIpResolver;
         this.adminToken = adminToken;
     }
 
     @Override
     protected void doFilterInternal(
-            @NonNull HttpServletRequest request,
-            @NonNull HttpServletResponse response,
-            @NonNull FilterChain filterChain) throws ServletException, IOException {
+            HttpServletRequest request,
+            HttpServletResponse response,
+            FilterChain filterChain) throws ServletException, IOException {
 
-        if (!isAdminApiPath(request.getRequestURI())) {
+        RequestPathSecurityPolicy.Inspection requestPath = RequestPathSecurityPolicy.inspect(request);
+        if (RequestPathSecurityPolicy.rejectIfUnsafe(requestPath, response, objectMapper)) {
+            return;
+        }
+
+        if (!requiresAdminAuthentication(requestPath.applicationPath())) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        String clientIp = getClientIp(request);
+        String clientIp = clientIpResolver.resolve(request);
 
         // 1. 检查 IP 是否被封禁
         if (rateLimitService.isBanned(clientIp)) {
@@ -96,9 +101,6 @@ public class AdminApiAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        // 认证成功，重置失败记录
-        rateLimitService.resetFailures(clientIp);
-
         // 2FA 双因素认证检查
         if (twoFactorAuthService.isEnabled()) {
             // 1. 检查是否在信任列表
@@ -112,15 +114,18 @@ public class AdminApiAuthenticationFilter extends OncePerRequestFilter {
                         if (twoFactorAuthService.verifyCode(code)) {
                             // 验证成功，加入信任列表
                             twoFactorAuthService.trustDevice(clientIp);
+                            rateLimitService.resetFailures(clientIp);
                             filterChain.doFilter(request, response);
                             return;
                         } else {
                             // OTP 错误
+                            recordAuthenticationFailure(clientIp);
                             sendErrorResponse(response, HttpServletResponse.SC_FORBIDDEN, "INVALID_OTP", 
                                     "动态验证码错误，请检查 Authenticator App");
                             return;
                         }
                     } catch (NumberFormatException e) {
+                        recordAuthenticationFailure(clientIp);
                         sendErrorResponse(response, HttpServletResponse.SC_BAD_REQUEST, "INVALID_OTP_FORMAT", 
                                 "动态验证码格式错误");
                         return;
@@ -134,26 +139,33 @@ public class AdminApiAuthenticationFilter extends OncePerRequestFilter {
             }
         }
 
+        rateLimitService.resetFailures(clientIp);
         filterChain.doFilter(request, response);
     }
 
-    private static String getClientIp(HttpServletRequest request) {
-        String ip = request.getHeader("X-Forwarded-For");
-        if (ip == null || ip.isBlank() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getHeader("X-Real-IP");
+    private void recordAuthenticationFailure(String clientIp) {
+        rateLimitService.recordFailure(clientIp);
+        int failureCount = rateLimitService.getFailureCount(clientIp);
+        if (failureCount == 5) {
+            emailService.sendBruteForceAlert(clientIp, failureCount);
         }
-        if (ip == null || ip.isBlank() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getRemoteAddr();
-        }
-        // 取第一个 IP（如果有多个代理）
-        if (ip != null && ip.contains(",")) {
-            ip = ip.split(",")[0].trim();
-        }
-        return ip;
     }
 
-    private static boolean isAdminApiPath(String path) {
-        return path != null && path.startsWith("/api/admin");
+    /**
+     * The liveness endpoint stays anonymous for load balancers and container
+     * probes. Every other Actuator endpoint shares the same Admin Token, rate
+     * limiting and optional 2FA policy as the management API.
+     */
+    static boolean requiresAdminAuthentication(String path) {
+        if (path == null || "/actuator/health".equals(path)) {
+            return false;
+        }
+        return isPathOrDescendant(path, "/api/admin")
+                || isPathOrDescendant(path, "/actuator");
+    }
+
+    private static boolean isPathOrDescendant(String path, String basePath) {
+        return path.equals(basePath) || path.startsWith(basePath + "/");
     }
 
     private static boolean hasQueryToken(HttpServletRequest request) {

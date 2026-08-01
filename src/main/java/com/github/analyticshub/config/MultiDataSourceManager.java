@@ -3,10 +3,11 @@ package com.github.analyticshub.config;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.github.analyticshub.entity.AnalyticsProject;
 import com.github.analyticshub.mapper.AnalyticsProjectMapper;
-import com.github.analyticshub.util.CryptoUtils;
+import com.github.analyticshub.security.ProjectCredentialCipher;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import jakarta.annotation.PreDestroy;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import javax.sql.DataSource;
@@ -34,6 +35,9 @@ public class MultiDataSourceManager {
     private static final Pattern PROJECT_ID_PATTERN = Pattern.compile("^[a-z0-9_-]+$");
 
     private final AnalyticsProjectMapper projectMapper;
+    private final ProjectCredentialCipher credentialCipher;
+    private final int maximumPoolSize;
+    private final int minimumIdle;
     
 
     // 数据库连接池缓存
@@ -42,8 +46,16 @@ public class MultiDataSourceManager {
     // 项目配置缓存
     private final Map<String, ProjectConfig> projectConfigs = new ConcurrentHashMap<>();
 
-    public MultiDataSourceManager(AnalyticsProjectMapper projectMapper) {
+    public MultiDataSourceManager(
+            AnalyticsProjectMapper projectMapper,
+            ProjectCredentialCipher credentialCipher,
+            @Value("${app.project-datasource.maximum-pool-size:5}") int maximumPoolSize,
+            @Value("${app.project-datasource.minimum-idle:0}") int minimumIdle
+    ) {
         this.projectMapper = projectMapper;
+        this.credentialCipher = credentialCipher;
+        this.maximumPoolSize = Math.max(1, maximumPoolSize);
+        this.minimumIdle = Math.max(0, Math.min(minimumIdle, this.maximumPoolSize));
     }
 
     /**
@@ -107,8 +119,8 @@ public class MultiDataSourceManager {
         hikariConfig.setDriverClassName("org.postgresql.Driver");
         
         // HikariCP 优化配置
-        hikariConfig.setMaximumPoolSize(20);
-        hikariConfig.setMinimumIdle(5);
+        hikariConfig.setMaximumPoolSize(maximumPoolSize);
+        hikariConfig.setMinimumIdle(minimumIdle);
         hikariConfig.setIdleTimeout(30000);
         hikariConfig.setConnectionTimeout(2000);
         hikariConfig.setMaxLifetime(1800000);
@@ -152,7 +164,7 @@ public class MultiDataSourceManager {
         String password = null;
         String encrypted = project.getDbPasswordEncrypted();
         if (encrypted != null && !encrypted.isBlank()) {
-            password = CryptoUtils.decrypt(encrypted);
+            password = credentialCipher.decrypt(project.getProjectId(), encrypted);
         }
 
         try {
@@ -213,8 +225,11 @@ public class MultiDataSourceManager {
         if (tablePrefix == null) {
             throw new IllegalArgumentException("Invalid table prefix");
         }
-        if (tablePrefix.isBlank()) {
+        if (tablePrefix.isEmpty()) {
             return;
+        }
+        if (tablePrefix.isBlank()) {
+            throw new IllegalArgumentException("Invalid table prefix");
         }
         if (tablePrefix.length() > MAX_TABLE_PREFIX_LENGTH) {
             throw new IllegalArgumentException("Invalid table prefix");

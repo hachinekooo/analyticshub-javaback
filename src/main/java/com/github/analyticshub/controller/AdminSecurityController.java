@@ -25,7 +25,14 @@ public class AdminSecurityController {
      */
     @GetMapping("/setup")
     public ApiResponse<Map<String, String>> setup2FA() {
-        String secret = twoFactorAuthService.getOrGenerateSecret();
+        if (twoFactorAuthService.isEnabled()) {
+            return ApiResponse.success(Map.of(
+                    "status", "enabled",
+                    "instruction", "2FA 已启用；出于安全原因不会通过 API 返回当前 TOTP secret。"
+            ));
+        }
+
+        String secret = twoFactorAuthService.generateProvisioningSecret();
         String accountName = "AnalyticsHub-Admin";
         String issuer = "AnalyticsHub";
         
@@ -36,7 +43,7 @@ public class AdminSecurityController {
         Map<String, String> result = new HashMap<>();
         result.put("secret", secret);
         result.put("otpAuthUrl", otpAuthUrl);
-        result.put("status", twoFactorAuthService.isEnabled() ? "enabled" : "disabled");
+        result.put("status", "disabled");
         result.put("instruction", "请将 secret 添加到 Authenticator App，或者将 otpAuthUrl 生成二维码扫码。配置完成后，设置环境变量 APP_SECURITY_2FA_SECRET=<secret> 并重启服务。");
 
         return ApiResponse.success(result);

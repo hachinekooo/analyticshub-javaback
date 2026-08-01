@@ -45,7 +45,10 @@ public class AdminMetricsController {
             @RequestParam("projectId") String projectId,
             @RequestParam(value = "from", required = false) String from,
             @RequestParam(value = "to", required = false) String to,
-            @RequestParam(value = "limit", required = false) Integer limit) {
-        return ApiResponse.success(adminMetricsService.getTopEvents(projectId, from, to, limit));
+            @RequestParam(value = "limit", required = false) Integer limit,
+            @RequestParam(value = "aggregation", required = false) String aggregation) {
+        return ApiResponse.success(
+                adminMetricsService.getTopEvents(projectId, from, to, limit, aggregation)
+        );
     }
 }

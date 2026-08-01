@@ -11,6 +11,7 @@ public record AdminPrivacyRequestItem(
         String requestedAt,
         String processedAt,
         String closedAt,
-        String operator
+        String operator,
+        long version
 ) {
 }

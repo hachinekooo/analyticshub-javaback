@@ -3,6 +3,7 @@ package com.github.analyticshub.security;
 import com.warrenstrange.googleauth.GoogleAuthenticator;
 import com.warrenstrange.googleauth.GoogleAuthenticatorKey;
 import com.warrenstrange.googleauth.GoogleAuthenticatorConfig;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,10 +13,14 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 
 @Service
 public class TwoFactorAuthService {
     private static final Logger log = LoggerFactory.getLogger(TwoFactorAuthService.class);
+    private static final int MIN_SECRET_LENGTH = 16;
+    private static final int MAX_SECRET_LENGTH = 128;
+    private static final Pattern BASE32_SECRET_PATTERN = Pattern.compile("[A-Za-z2-7]+");
     
     // 使用字段注入，因为 GoogleAuthenticator 不依赖 Spring
     @Value("${app.security.2fa.secret:}")
@@ -41,6 +46,39 @@ public class TwoFactorAuthService {
         this.gAuth = new GoogleAuthenticator(config);
     }
 
+    @PostConstruct
+    void validateConfiguration() {
+        if (!enabled) {
+            return;
+        }
+        if (secretKey == null || secretKey.isBlank()) {
+            throw new IllegalStateException(
+                    "2FA is enabled but APP_SECURITY_2FA_SECRET is blank"
+            );
+        }
+        if (!isValidTotpSecret(secretKey)) {
+            throw new IllegalStateException(
+                    "APP_SECURITY_2FA_SECRET must be a valid unpadded Base32 TOTP secret"
+            );
+        }
+    }
+
+    static boolean isValidTotpSecret(String secret) {
+        if (secret == null
+                || secret.length() < MIN_SECRET_LENGTH
+                || secret.length() > MAX_SECRET_LENGTH
+                || !BASE32_SECRET_PATTERN.matcher(secret).matches()) {
+            return false;
+        }
+
+        // googleauth normalizes Base32 secrets to upper case before decoding.
+        // Unpadded RFC 4648 Base32 can only have these final-block lengths.
+        return switch (secret.length() % 8) {
+            case 0, 2, 4, 5, 7 -> true;
+            default -> false;
+        };
+    }
+
     /**
      * 判断是否启用 2FA 且密钥已配置
      */
@@ -58,7 +96,8 @@ public class TwoFactorAuthService {
         try {
             return gAuth.authorize(secretKey, code);
         } catch (Exception e) {
-            log.warn("TOTP 验证异常: {}", e.getMessage());
+            log.warn("TOTP verification failed: failureType={}",
+                    e.getClass().getSimpleName());
             return false;
         }
     }
@@ -91,17 +130,15 @@ public class TwoFactorAuthService {
      */
     public void trustDevice(String clientIp) {
         trustedDevices.put(clientIp, LocalDateTime.now().plus(TRUST_DURATION));
-        log.info("IP [{}] 已通过 2FA 验证，加入信任列表，有效期至 {}", clientIp, LocalDateTime.now().plus(TRUST_DURATION));
+        log.info("管理端环境已通过 2FA 验证并进入临时信任列表");
     }
     
     /**
      * 获取用于绑定的密钥（如果未配置则生成一个新的，方便第一次设置）
      */
-    public String getOrGenerateSecret() {
-        if (secretKey != null && !secretKey.isBlank()) {
-            return secretKey;
-        }
-        // 如果没有配置，临时生成一个（仅用于展示，重启失效）
+    public String generateProvisioningSecret() {
+        // Always generate a fresh candidate. Never expose the configured TOTP
+        // secret through an API response.
         final GoogleAuthenticatorKey key = gAuth.createCredentials();
         return key.getKey();
     }

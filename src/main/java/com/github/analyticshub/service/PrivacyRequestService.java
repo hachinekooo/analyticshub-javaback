@@ -1,15 +1,16 @@
 package com.github.analyticshub.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.github.analyticshub.config.MultiDataSourceManager;
 import com.github.analyticshub.dto.PrivacyProcessor;
 import com.github.analyticshub.dto.PrivacyRequestCreatedResponse;
-import com.github.analyticshub.dto.PrivacyRequestDetailResponse;
+import com.github.analyticshub.dto.PrivacyRequestStatusResponse;
 import com.github.analyticshub.dto.PrivacyRequestStatus;
 import com.github.analyticshub.dto.PrivacyRequestSubmitRequest;
 import com.github.analyticshub.dto.PrivacyRequestType;
 import com.github.analyticshub.entity.Device;
 import com.github.analyticshub.exception.BusinessException;
+import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
 import com.github.analyticshub.security.RequestContext;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -30,13 +31,16 @@ public class PrivacyRequestService {
     private final MultiDataSourceManager dataSourceManager;
     private final ObjectMapper objectMapper;
     private final EmailService emailService;
+    private final ProjectTransactionExecutor projectTransactions;
 
     public PrivacyRequestService(MultiDataSourceManager dataSourceManager,
                                  ObjectMapper objectMapper,
-                                 EmailService emailService) {
+                                 EmailService emailService,
+                                 ProjectTransactionExecutor projectTransactions) {
         this.dataSourceManager = dataSourceManager;
         this.objectMapper = objectMapper;
         this.emailService = emailService;
+        this.projectTransactions = projectTransactions;
     }
 
     public PrivacyRequestCreatedResponse submitExportRequest(PrivacyRequestSubmitRequest request) {
@@ -47,9 +51,10 @@ public class PrivacyRequestService {
         return submitRequest(PrivacyRequestType.DELETE, request);
     }
 
-    public PrivacyRequestDetailResponse getRequest(String requestId) {
+    public PrivacyRequestStatusResponse getRequest(String requestId) {
         String normalizedRequestId = normalizeRequired(requestId, 64, "requestId");
         RequestContext context = requireAuthenticatedContext();
+        Device device = requireAuthenticatedDevice(context);
         JdbcTemplate jdbcTemplate = new JdbcTemplate(context.getDataSource());
         String tableName = dataSourceManager.getTableName(context.getProjectId(), "privacy_requests");
 
@@ -58,13 +63,15 @@ public class PrivacyRequestService {
                         "SELECT request_id, project_id, user_id, device_id, request_type, processor, source, status, " +
                                 "contact_email, requester_note, operator, operator_note, result_payload::text AS result_payload_text, " +
                                 "metadata::text AS metadata_text, requested_at, processed_at, closed_at, updated_at " +
-                                "FROM %s WHERE project_id = ? AND user_id = ? AND request_id = ? LIMIT 1",
+                                "FROM %s WHERE project_id = ? AND user_id = ? AND device_id = ?::uuid " +
+                                "AND request_id = ? LIMIT 1",
                         tableName
                 ),
                 ps -> {
                     ps.setString(1, context.getProjectId());
                     ps.setString(2, context.getUserId());
-                    ps.setString(3, normalizedRequestId);
+                    ps.setString(3, device.getDeviceId().toString());
+                    ps.setString(4, normalizedRequestId);
                 },
                 rs -> rs.next() ? mapStoredRow(rs) : null
         );
@@ -73,11 +80,12 @@ public class PrivacyRequestService {
             throw new BusinessException("PRIVACY_REQUEST_NOT_FOUND", "未找到隐私请求", HttpStatus.NOT_FOUND);
         }
 
-        return toDetailResponse(row);
+        return toStatusResponse(row);
     }
 
-    public PrivacyRequestDetailResponse getLatestRequest() {
+    public PrivacyRequestStatusResponse getLatestRequest() {
         RequestContext context = requireAuthenticatedContext();
+        Device device = requireAuthenticatedDevice(context);
         JdbcTemplate jdbcTemplate = new JdbcTemplate(context.getDataSource());
         String tableName = dataSourceManager.getTableName(context.getProjectId(), "privacy_requests");
 
@@ -86,12 +94,14 @@ public class PrivacyRequestService {
                         "SELECT request_id, project_id, user_id, device_id, request_type, processor, source, status, " +
                                 "contact_email, requester_note, operator, operator_note, result_payload::text AS result_payload_text, " +
                                 "metadata::text AS metadata_text, requested_at, processed_at, closed_at, updated_at " +
-                                "FROM %s WHERE project_id = ? AND user_id = ? ORDER BY requested_at DESC LIMIT 1",
+                                "FROM %s WHERE project_id = ? AND user_id = ? AND device_id = ?::uuid " +
+                                "ORDER BY requested_at DESC LIMIT 1",
                         tableName
                 ),
                 ps -> {
                     ps.setString(1, context.getProjectId());
                     ps.setString(2, context.getUserId());
+                    ps.setString(3, device.getDeviceId().toString());
                 },
                 rs -> rs.next() ? mapStoredRow(rs) : null
         );
@@ -100,33 +110,76 @@ public class PrivacyRequestService {
             throw new BusinessException("PRIVACY_REQUEST_NOT_FOUND", "当前用户暂无隐私请求记录", HttpStatus.NOT_FOUND);
         }
 
-        return toDetailResponse(row);
+        return toStatusResponse(row);
     }
 
     private PrivacyRequestCreatedResponse submitRequest(PrivacyRequestType type, PrivacyRequestSubmitRequest request) {
         RequestContext context = requireAuthenticatedContext();
-        Device device = context.getDevice();
-        if (device == null || device.getDeviceId() == null) {
-            throw new BusinessException("MISSING_DEVICE_ID", "请求上下文缺少 deviceId", HttpStatus.UNAUTHORIZED);
-        }
+        Device device = requireAuthenticatedDevice(context);
 
-        String requestId = generateRequestId();
         PrivacyProcessor processor = PrivacyProcessor.from(request.processor());
         String contactEmail = normalizeRequired(request.contactEmail(), 255, "contactEmail");
         String source = normalizeSource(request.source());
         String requesterNote = normalizeOptional(request.requesterNote(), 4000);
         String metadataJson = toJson(request.metadata());
+        String tableName = dataSourceManager.getTableName(context.getProjectId(), "privacy_requests");
+        String deviceId = device.getDeviceId().toString();
+
+        SubmissionOutcome outcome = projectTransactions.execute(
+                context.getDataSource(),
+                jdbcTemplate -> submitRequestInTransaction(
+                        jdbcTemplate,
+                        tableName,
+                        context.getProjectId(),
+                        context.getUserId(),
+                        deviceId,
+                        type,
+                        processor,
+                        contactEmail,
+                        source,
+                        requesterNote,
+                        metadataJson
+                )
+        );
+
+        if (outcome.notification() != null) {
+            SubmissionNotification notification = outcome.notification();
+            emailService.sendPrivacyRequestSubmittedAlert(
+                    notification.requestId(),
+                    notification.projectId(),
+                    notification.userId(),
+                    notification.requestType(),
+                    notification.processor(),
+                    notification.contactEmail(),
+                    notification.requestedAt()
+            );
+        }
+        return outcome.response();
+    }
+
+    private SubmissionOutcome submitRequestInTransaction(JdbcTemplate jdbcTemplate,
+                                                         String tableName,
+                                                         String projectId,
+                                                         String userId,
+                                                         String deviceId,
+                                                         PrivacyRequestType type,
+                                                         PrivacyProcessor processor,
+                                                         String contactEmail,
+                                                         String source,
+                                                         String requesterNote,
+                                                         String metadataJson) {
+        acquireDuplicateRequestLock(
+                jdbcTemplate,
+                duplicateLockIdentity(projectId, userId, deviceId, type, processor, contactEmail)
+        );
 
         Instant now = Instant.now();
-        Timestamp timestamp = Timestamp.from(now);
-
-        JdbcTemplate jdbcTemplate = new JdbcTemplate(context.getDataSource());
-        String tableName = dataSourceManager.getTableName(context.getProjectId(), "privacy_requests");
         StoredPrivacyRequest existing = findRecentSubmittedRequest(
                 jdbcTemplate,
                 tableName,
-                context,
-                device.getDeviceId().toString(),
+                projectId,
+                userId,
+                deviceId,
                 type,
                 processor,
                 contactEmail,
@@ -135,10 +188,15 @@ public class PrivacyRequestService {
         if (existing != null) {
             log.log(System.Logger.Level.INFO,
                     "Reuse recent privacy request: projectId={0}, requestId={1}, type={2}, processor={3}",
-                    context.getProjectId(), existing.requestId(), type.name(), processor.name());
-            return toCreatedResponse(existing, "已有未处理的同类请求，后台将继续按原工单处理并通过邮件反馈结果");
+                    projectId, existing.requestId(), type.name(), processor.name());
+            return new SubmissionOutcome(
+                    toCreatedResponse(existing, "已有未处理的同类请求，后台将继续按原工单处理并通过邮件反馈结果"),
+                    null
+            );
         }
 
+        String requestId = generateRequestId();
+        Timestamp timestamp = Timestamp.from(now);
         String sql = String.format(
                 "INSERT INTO %s (request_id, project_id, user_id, device_id, request_type, processor, source, status, " +
                         "contact_email, requester_note, metadata, requested_at, created_at, updated_at) " +
@@ -148,9 +206,9 @@ public class PrivacyRequestService {
 
         int affected = jdbcTemplate.update(sql,
                 requestId,
-                context.getProjectId(),
-                context.getUserId(),
-                device.getDeviceId().toString(),
+                projectId,
+                userId,
+                deviceId,
                 type.name(),
                 processor.name(),
                 source,
@@ -167,21 +225,11 @@ public class PrivacyRequestService {
             throw new BusinessException("PRIVACY_REQUEST_CREATE_FAILED", "隐私请求创建失败", HttpStatus.INTERNAL_SERVER_ERROR);
         }
 
-        emailService.sendPrivacyRequestSubmittedAlert(
-                requestId,
-                context.getProjectId(),
-                context.getUserId(),
-                type.name(),
-                processor.name(),
-                contactEmail,
-                now
-        );
-
         log.log(System.Logger.Level.INFO,
                 "Privacy request submitted: projectId={0}, requestId={1}, type={2}, processor={3}",
-                context.getProjectId(), requestId, type.name(), processor.name());
+                projectId, requestId, type.name(), processor.name());
 
-        return new PrivacyRequestCreatedResponse(
+        PrivacyRequestCreatedResponse response = new PrivacyRequestCreatedResponse(
                 requestId,
                 type.name(),
                 processor.name(),
@@ -190,11 +238,52 @@ public class PrivacyRequestService {
                 contactEmail,
                 "请求已创建，后台将人工处理并通过邮件反馈结果"
         );
+        SubmissionNotification notification = new SubmissionNotification(
+                requestId,
+                projectId,
+                userId,
+                type.name(),
+                processor.name(),
+                contactEmail,
+                now
+        );
+        return new SubmissionOutcome(response, notification);
+    }
+
+    private static void acquireDuplicateRequestLock(JdbcTemplate jdbcTemplate, String lockIdentity) {
+        jdbcTemplate.query(
+                "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                ps -> ps.setString(1, lockIdentity),
+                rs -> {
+                    rs.next();
+                    return null;
+                }
+        );
+    }
+
+    static String duplicateLockIdentity(String projectId,
+                                        String userId,
+                                        String deviceId,
+                                        PrivacyRequestType type,
+                                        PrivacyProcessor processor,
+                                        String contactEmail) {
+        return "analyticshub:privacy-request-dedupe:v1:"
+                + lengthPrefixed(projectId)
+                + lengthPrefixed(userId)
+                + lengthPrefixed(deviceId)
+                + lengthPrefixed(type.name())
+                + lengthPrefixed(processor.name())
+                + lengthPrefixed(contactEmail);
+    }
+
+    private static String lengthPrefixed(String value) {
+        return value.length() + ":" + value;
     }
 
     private StoredPrivacyRequest findRecentSubmittedRequest(JdbcTemplate jdbcTemplate,
                                                             String tableName,
-                                                            RequestContext context,
+                                                            String projectId,
+                                                            String userId,
                                                             String deviceId,
                                                             PrivacyRequestType type,
                                                             PrivacyProcessor processor,
@@ -211,8 +300,8 @@ public class PrivacyRequestService {
                         tableName
                 ),
                 ps -> {
-                    ps.setString(1, context.getProjectId());
-                    ps.setString(2, context.getUserId());
+                    ps.setString(1, projectId);
+                    ps.setString(2, userId);
                     ps.setString(3, deviceId);
                     ps.setString(4, type.name());
                     ps.setString(5, processor.name());
@@ -261,27 +350,30 @@ public class PrivacyRequestService {
         );
     }
 
-    private PrivacyRequestDetailResponse toDetailResponse(StoredPrivacyRequest row) {
-        return new PrivacyRequestDetailResponse(
+    private PrivacyRequestStatusResponse toStatusResponse(StoredPrivacyRequest row) {
+        return new PrivacyRequestStatusResponse(
                 row.requestId(),
-                row.projectId(),
-                row.userId(),
-                row.deviceId(),
                 row.requestType(),
                 row.processor(),
-                row.source(),
                 row.status(),
                 row.contactEmail(),
-                row.requesterNote(),
-                row.operator(),
-                row.operatorNote(),
-                parseJson(row.resultPayloadText()),
-                parseJson(row.metadataText()),
                 toIso(row.requestedAt()),
                 toIso(row.processedAt()),
                 toIso(row.closedAt()),
                 toIso(row.updatedAt())
         );
+    }
+
+    private static Device requireAuthenticatedDevice(RequestContext context) {
+        Device device = context.getDevice();
+        if (device == null || device.getDeviceId() == null) {
+            throw new BusinessException(
+                    "MISSING_DEVICE_ID",
+                    "请求上下文缺少 deviceId",
+                    HttpStatus.UNAUTHORIZED
+            );
+        }
+        return device;
     }
 
     private PrivacyRequestCreatedResponse toCreatedResponse(StoredPrivacyRequest row, String message) {
@@ -294,18 +386,6 @@ public class PrivacyRequestService {
                 row.contactEmail(),
                 message
         );
-    }
-
-    private Object parseJson(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return null;
-        }
-        try {
-            return objectMapper.readValue(raw, Object.class);
-        } catch (Exception e) {
-            log.log(System.Logger.Level.WARNING, "Failed to parse JSON field", e);
-            return null;
-        }
     }
 
     private String toJson(Map<String, Object> payload) {
@@ -382,6 +462,23 @@ public class PrivacyRequestService {
             Instant processedAt,
             Instant closedAt,
             Instant updatedAt
+    ) {
+    }
+
+    private record SubmissionOutcome(
+            PrivacyRequestCreatedResponse response,
+            SubmissionNotification notification
+    ) {
+    }
+
+    private record SubmissionNotification(
+            String requestId,
+            String projectId,
+            String userId,
+            String requestType,
+            String processor,
+            String contactEmail,
+            Instant requestedAt
     ) {
     }
 }

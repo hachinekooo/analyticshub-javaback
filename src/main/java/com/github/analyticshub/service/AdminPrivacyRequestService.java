@@ -1,6 +1,6 @@
 package com.github.analyticshub.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.github.analyticshub.config.MultiDataSourceManager;
 import com.github.analyticshub.dto.AdminPrivacyNotifyRequest;
 import com.github.analyticshub.dto.AdminPrivacyRequestItem;
@@ -10,7 +10,10 @@ import com.github.analyticshub.dto.PrivacyProcessor;
 import com.github.analyticshub.dto.PrivacyRequestDetailResponse;
 import com.github.analyticshub.dto.PrivacyRequestStatus;
 import com.github.analyticshub.dto.PrivacyRequestType;
+import com.github.analyticshub.dto.WorkOrderActivityItem;
+import com.github.analyticshub.dto.WorkOrderNotificationQueuedResponse;
 import com.github.analyticshub.exception.BusinessException;
+import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -20,8 +23,10 @@ import java.sql.ResultSet;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @Service
 public class AdminPrivacyRequestService {
@@ -30,14 +35,14 @@ public class AdminPrivacyRequestService {
 
     private final MultiDataSourceManager dataSourceManager;
     private final ObjectMapper objectMapper;
-    private final EmailService emailService;
+    private final ProjectTransactionExecutor projectTransactions;
 
     public AdminPrivacyRequestService(MultiDataSourceManager dataSourceManager,
                                       ObjectMapper objectMapper,
-                                      EmailService emailService) {
+                                      ProjectTransactionExecutor projectTransactions) {
         this.dataSourceManager = dataSourceManager;
         this.objectMapper = objectMapper;
-        this.emailService = emailService;
+        this.projectTransactions = projectTransactions;
     }
 
     public AdminPrivacyRequestsResponse listRequests(String projectId,
@@ -48,9 +53,11 @@ public class AdminPrivacyRequestService {
                                                      String status,
                                                      String requestType,
                                                      String processor,
-                                                     String userId) {
+                                                     String userId,
+                                                     Boolean openOnly) {
         String normalizedProjectId = normalizeProjectId(projectId);
-        AdminQueryUtils.Range range = AdminQueryUtils.resolveRange(from, to);
+        boolean hasDateFilter = hasText(from) || hasText(to);
+        AdminQueryUtils.Range range = hasDateFilter ? AdminQueryUtils.resolveRange(from, to) : null;
         AdminQueryUtils.Paging paging = AdminQueryUtils.resolvePaging(page, pageSize);
         ProjectContext context = requireProject(normalizedProjectId);
         JdbcTemplate jdbcTemplate = new JdbcTemplate(context.dataSource());
@@ -61,15 +68,20 @@ public class AdminPrivacyRequestService {
         PrivacyRequestType typeFilter = parseTypeNullable(requestType);
         PrivacyProcessor processorFilter = parseProcessorNullable(processor);
 
-        StringBuilder where = new StringBuilder(" WHERE project_id = ? AND requested_at >= ? AND requested_at < ? ");
+        StringBuilder where = new StringBuilder(" WHERE project_id = ? ");
         List<Object> args = new ArrayList<>();
         args.add(normalizedProjectId);
-        args.add(Timestamp.from(range.start()));
-        args.add(Timestamp.from(range.end()));
+        if (range != null) {
+            where.append(" AND requested_at >= ? AND requested_at < ? ");
+            args.add(Timestamp.from(range.start()));
+            args.add(Timestamp.from(range.end()));
+        }
 
         if (statusFilter != null) {
             where.append(" AND status = ? ");
             args.add(statusFilter.name());
+        } else if (openOnly == null ? !hasDateFilter : openOnly) {
+            where.append(" AND status IN ('SUBMITTED', 'IN_PROGRESS') ");
         }
         if (typeFilter != null) {
             where.append(" AND request_type = ? ");
@@ -89,7 +101,7 @@ public class AdminPrivacyRequestService {
         long totalValue = total == null ? 0L : total;
 
         String listSql = String.format(
-                "SELECT request_id, user_id, device_id, request_type, processor, status, contact_email, requested_at, processed_at, closed_at, operator " +
+                "SELECT request_id, user_id, device_id, request_type, processor, status, contact_email, requested_at, processed_at, closed_at, operator, version " +
                         "FROM %s %s ORDER BY requested_at DESC LIMIT ? OFFSET ?",
                 tableName,
                 where
@@ -111,20 +123,25 @@ public class AdminPrivacyRequestService {
                         toIso(rs.getTimestamp("requested_at")),
                         toIso(rs.getTimestamp("processed_at")),
                         toIso(rs.getTimestamp("closed_at")),
-                        rs.getString("operator")
+                        rs.getString("operator"),
+                        rs.getLong("version")
                 ),
                 listArgs.toArray()
         );
 
         return new AdminPrivacyRequestsResponse(
                 normalizedProjectId,
-                range.start().toString(),
-                range.end().toString(),
+                range == null ? null : range.start().toString(),
+                range == null ? null : range.end().toString(),
                 paging.page(),
                 paging.pageSize(),
                 totalValue,
                 items
         );
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     public PrivacyRequestDetailResponse getRequestDetail(String projectId, String requestId) {
@@ -138,111 +155,175 @@ public class AdminPrivacyRequestService {
         String normalizedProjectId = normalizeProjectId(projectId);
         String normalizedRequestId = normalizeRequired(requestId, 64, "requestId");
         ProjectContext context = requireProject(normalizedProjectId);
-        JdbcTemplate jdbcTemplate = new JdbcTemplate(context.dataSource());
-        String tableName = dataSourceManager.getTableName(normalizedProjectId, "privacy_requests");
-
-        StoredPrivacyRequest existing = requireRequest(normalizedProjectId, normalizedRequestId);
-
+        String requestTable = dataSourceManager.getTableName(normalizedProjectId, "privacy_requests");
+        String activityTable = dataSourceManager.getTableName(normalizedProjectId, "work_order_activities");
+        String outboxTable = dataSourceManager.getTableName(normalizedProjectId, "work_order_outbox");
         PrivacyRequestStatus targetStatus = PrivacyRequestStatus.from(request.status());
 
-        String nextOperator = mergeText(existing.operator(), request.operator(), 64);
-        String nextOperatorNote = mergeText(existing.operatorNote(), request.operatorNote(), 4000);
-
-        String resultPayloadJson = existing.resultPayloadText();
-        if (request.resultPayload() != null) {
-            resultPayloadJson = toJson(request.resultPayload(), "resultPayload");
-        }
-
-        Instant now = Instant.now();
-        Instant nextProcessedAt = existing.processedAt();
-        if (nextProcessedAt == null && targetStatus != PrivacyRequestStatus.SUBMITTED) {
-            nextProcessedAt = now;
-        }
-
-        Instant nextClosedAt = targetStatus.isFinalStatus() ? now : null;
-
-        String updateSql = String.format(
-                "UPDATE %s SET status = ?, operator = ?, operator_note = ?, result_payload = ?::jsonb, " +
-                        "processed_at = ?, closed_at = ?, updated_at = ? WHERE project_id = ? AND request_id = ?",
-                tableName
-        );
-
-        int affected = jdbcTemplate.update(updateSql,
-                targetStatus.name(),
-                nextOperator,
-                nextOperatorNote,
-                resultPayloadJson,
-                toTimestamp(nextProcessedAt),
-                toTimestamp(nextClosedAt),
-                Timestamp.from(now),
-                normalizedProjectId,
-                normalizedRequestId
-        );
-
-        if (affected != 1) {
-            throw new BusinessException("PRIVACY_REQUEST_UPDATE_FAILED", "隐私请求更新失败", HttpStatus.INTERNAL_SERVER_ERROR);
-        }
-
-        if (Boolean.TRUE.equals(request.notifyUser())) {
-            String contactEmail = normalizeRequired(existing.contactEmail(), 255, "contactEmail");
-            String message = request.notificationMessage();
-            if (message == null || message.isBlank()) {
-                message = defaultNotificationMessage(normalizedRequestId, targetStatus);
-            }
-            emailService.sendPrivacyUserNotification(
-                    contactEmail,
-                    "[Analytics Hub] Privacy Request " + normalizedRequestId + " " + targetStatus.name(),
-                    message.trim()
+        PrivacyRequestDetailResponse result = projectTransactions.execute(context.dataSource(), jdbcTemplate -> {
+            StoredPrivacyRequest existing = requireRequest(
+                    jdbcTemplate,
+                    requestTable,
+                    normalizedProjectId,
+                    normalizedRequestId,
+                    true
             );
-        }
+            requireExpectedVersion(existing, request.version());
+
+            PrivacyRequestStatus currentStatus = PrivacyRequestStatus.from(existing.status());
+            TransitionDecision transition = validateTransition(currentStatus, targetStatus);
+            if (transition == TransitionDecision.IDEMPOTENT) {
+                return toDetailResponse(existing);
+            }
+
+            String nextOperator = mergeText(existing.operator(), request.operator(), 64);
+            String nextOperatorNote = mergeText(existing.operatorNote(), request.operatorNote(), 4000);
+            String resultPayloadJson = existing.resultPayloadText();
+            if (request.resultPayload() != null) {
+                resultPayloadJson = toJson(request.resultPayload(), "resultPayload");
+            }
+
+            Instant now = Instant.now();
+            Instant nextProcessedAt = existing.processedAt() == null ? now : existing.processedAt();
+            Instant nextClosedAt = targetStatus.isFinalStatus() ? now : null;
+
+            int affected = jdbcTemplate.update(
+                    String.format(
+                            "UPDATE %s SET status = ?, operator = ?, operator_note = ?, result_payload = ?::jsonb, " +
+                                    "processed_at = ?, closed_at = ?, updated_at = ?, version = version + 1 " +
+                                    "WHERE project_id = ? AND request_id = ? AND version = ?",
+                            requestTable
+                    ),
+                    targetStatus.name(),
+                    nextOperator,
+                    nextOperatorNote,
+                    resultPayloadJson,
+                    toTimestamp(nextProcessedAt),
+                    toTimestamp(nextClosedAt),
+                    Timestamp.from(now),
+                    normalizedProjectId,
+                    normalizedRequestId,
+                    existing.version()
+            );
+            if (affected != 1) {
+                throw versionConflict(existing.version());
+            }
+
+            Map<String, Object> transitionDetails = new LinkedHashMap<>();
+            transitionDetails.put("versionBefore", existing.version());
+            transitionDetails.put("versionAfter", existing.version() + 1);
+            transitionDetails.put("operatorNoteChanged", request.operatorNote() != null && !request.operatorNote().isBlank());
+            transitionDetails.put("resultPayloadChanged", request.resultPayload() != null);
+            appendActivity(
+                    jdbcTemplate,
+                    activityTable,
+                    normalizedProjectId,
+                    normalizedRequestId,
+                    "STATUS_CHANGED",
+                    currentStatus.name(),
+                    targetStatus.name(),
+                    nextOperator,
+                    transitionDetails
+            );
+
+            if (Boolean.TRUE.equals(request.notifyUser())) {
+                String contactEmail = normalizeRequired(existing.contactEmail(), 255, "contactEmail");
+                String message = request.notificationMessage();
+                if (message == null || message.isBlank()) {
+                    message = defaultNotificationMessage(normalizedRequestId, targetStatus);
+                }
+                enqueueNotification(
+                        jdbcTemplate,
+                        outboxTable,
+                        activityTable,
+                        normalizedProjectId,
+                        normalizedRequestId,
+                        contactEmail,
+                        "[Analytics Hub] Privacy Request " + normalizedRequestId + " " + targetStatus.name(),
+                        message.trim(),
+                        nextOperator
+                );
+            }
+
+            return toDetailResponse(requireRequest(
+                    jdbcTemplate,
+                    requestTable,
+                    normalizedProjectId,
+                    normalizedRequestId,
+                    false
+            ));
+        });
 
         log.log(System.Logger.Level.INFO,
-                "Privacy request updated: projectId={0}, requestId={1}, status={2}",
+                "Privacy work order updated: projectId={0}, requestId={1}, status={2}",
                 normalizedProjectId, normalizedRequestId, targetStatus.name());
-
-        return getRequestDetail(normalizedProjectId, normalizedRequestId);
+        return result;
     }
 
-    public Map<String, String> notifyUser(String projectId,
-                                          String requestId,
-                                          AdminPrivacyNotifyRequest request) {
+    public WorkOrderNotificationQueuedResponse notifyUser(String projectId,
+                                                          String requestId,
+                                                          AdminPrivacyNotifyRequest request) {
+        String normalizedProjectId = normalizeProjectId(projectId);
+        String normalizedRequestId = normalizeRequired(requestId, 64, "requestId");
+        ProjectContext context = requireProject(normalizedProjectId);
+        String requestTable = dataSourceManager.getTableName(normalizedProjectId, "privacy_requests");
+        String activityTable = dataSourceManager.getTableName(normalizedProjectId, "work_order_activities");
+        String outboxTable = dataSourceManager.getTableName(normalizedProjectId, "work_order_outbox");
+        String subject = normalizeRequired(request.subject(), 120, "subject");
+        String message = normalizeRequired(request.message(), 4000, "message");
+
+        String notificationId = projectTransactions.execute(context.dataSource(), jdbcTemplate -> {
+            StoredPrivacyRequest existing = requireRequest(
+                    jdbcTemplate,
+                    requestTable,
+                    normalizedProjectId,
+                    normalizedRequestId,
+                    true
+            );
+            String contactEmail = normalizeRequired(existing.contactEmail(), 255, "contactEmail");
+            String operator = mergeText(existing.operator(), request.operator(), 64);
+            return enqueueNotification(
+                    jdbcTemplate,
+                    outboxTable,
+                    activityTable,
+                    normalizedProjectId,
+                    normalizedRequestId,
+                    contactEmail,
+                    subject,
+                    message,
+                    operator
+            );
+        });
+
+        return new WorkOrderNotificationQueuedResponse(normalizedRequestId, notificationId, "QUEUED");
+    }
+
+    public List<WorkOrderActivityItem> listActivities(String projectId, String requestId) {
         String normalizedProjectId = normalizeProjectId(projectId);
         String normalizedRequestId = normalizeRequired(requestId, 64, "requestId");
         ProjectContext context = requireProject(normalizedProjectId);
         JdbcTemplate jdbcTemplate = new JdbcTemplate(context.dataSource());
-        String tableName = dataSourceManager.getTableName(normalizedProjectId, "privacy_requests");
-
-        StoredPrivacyRequest existing = requireRequest(normalizedProjectId, normalizedRequestId);
-
-        String contactEmail = normalizeRequired(existing.contactEmail(), 255, "contactEmail");
-        String subject = normalizeRequired(request.subject(), 120, "subject");
-        String message = normalizeRequired(request.message(), 4000, "message");
-
-        emailService.sendPrivacyUserNotification(contactEmail, subject, message);
-
-        String operator = mergeText(existing.operator(), request.operator(), 64);
-        String operatorNote = mergeText(
-                existing.operatorNote(),
-                "[manual-notify] " + Instant.now() + " " + subject,
-                4000
-        );
-
-        int affected = jdbcTemplate.update(
-                String.format("UPDATE %s SET operator = ?, operator_note = ?, updated_at = ? WHERE project_id = ? AND request_id = ?", tableName),
-                operator,
-                operatorNote,
-                Timestamp.from(Instant.now()),
+        String requestTable = dataSourceManager.getTableName(normalizedProjectId, "privacy_requests");
+        String activityTable = dataSourceManager.getTableName(normalizedProjectId, "work_order_activities");
+        requireRequest(jdbcTemplate, requestTable, normalizedProjectId, normalizedRequestId, false);
+        return jdbcTemplate.query(
+                String.format(
+                        "SELECT activity_id, activity_type, from_status, to_status, actor, details::text AS details_text, created_at " +
+                                "FROM %s WHERE project_id = ? AND work_order_type = 'PRIVACY_REQUEST' AND work_order_id = ? " +
+                                "ORDER BY created_at ASC, id ASC",
+                        activityTable
+                ),
+                (rs, rowNum) -> new WorkOrderActivityItem(
+                        rs.getString("activity_id"),
+                        rs.getString("activity_type"),
+                        rs.getString("from_status"),
+                        rs.getString("to_status"),
+                        rs.getString("actor"),
+                        parseJson(rs.getString("details_text")),
+                        toIso(rs.getTimestamp("created_at"))
+                ),
                 normalizedProjectId,
                 normalizedRequestId
-        );
-
-        if (affected != 1) {
-            throw new BusinessException("PRIVACY_NOTIFY_UPDATE_FAILED", "通知记录写入失败", HttpStatus.INTERNAL_SERVER_ERROR);
-        }
-
-        return Map.of(
-                "requestId", normalizedRequestId,
-                "status", "NOTIFIED"
         );
     }
 
@@ -250,14 +331,22 @@ public class AdminPrivacyRequestService {
         ProjectContext context = requireProject(projectId);
         JdbcTemplate jdbcTemplate = new JdbcTemplate(context.dataSource());
         String tableName = dataSourceManager.getTableName(projectId, "privacy_requests");
+        return requireRequest(jdbcTemplate, tableName, projectId, requestId, false);
+    }
 
+    private StoredPrivacyRequest requireRequest(JdbcTemplate jdbcTemplate,
+                                                String tableName,
+                                                String projectId,
+                                                String requestId,
+                                                boolean forUpdate) {
         StoredPrivacyRequest row = jdbcTemplate.query(
                 String.format(
                         "SELECT request_id, project_id, user_id, device_id, request_type, processor, source, status, " +
                                 "contact_email, requester_note, operator, operator_note, result_payload::text AS result_payload_text, " +
-                                "metadata::text AS metadata_text, requested_at, processed_at, closed_at, updated_at " +
-                                "FROM %s WHERE project_id = ? AND request_id = ? LIMIT 1",
-                        tableName
+                                "metadata::text AS metadata_text, requested_at, processed_at, closed_at, updated_at, version " +
+                                "FROM %s WHERE project_id = ? AND request_id = ? LIMIT 1%s",
+                        tableName,
+                        forUpdate ? " FOR UPDATE" : ""
                 ),
                 ps -> {
                     ps.setString(1, projectId);
@@ -297,7 +386,8 @@ public class AdminPrivacyRequestService {
                 requestedAt == null ? null : requestedAt.toInstant(),
                 processedAt == null ? null : processedAt.toInstant(),
                 closedAt == null ? null : closedAt.toInstant(),
-                updatedAt == null ? null : updatedAt.toInstant()
+                updatedAt == null ? null : updatedAt.toInstant(),
+                rs.getLong("version")
         );
     }
 
@@ -320,8 +410,122 @@ public class AdminPrivacyRequestService {
                 toIso(row.requestedAt()),
                 toIso(row.processedAt()),
                 toIso(row.closedAt()),
-                toIso(row.updatedAt())
+                toIso(row.updatedAt()),
+                row.version()
         );
+    }
+
+    private void requireExpectedVersion(StoredPrivacyRequest existing, Long expectedVersion) {
+        if (expectedVersion == null || expectedVersion != existing.version()) {
+            throw versionConflict(existing.version());
+        }
+    }
+
+    private static BusinessException versionConflict(long currentVersion) {
+        return new BusinessException(
+                "PRIVACY_REQUEST_VERSION_CONFLICT",
+                "工单版本冲突，请刷新后重试（当前版本 " + currentVersion + "）",
+                HttpStatus.CONFLICT
+        );
+    }
+
+    private static TransitionDecision validateTransition(PrivacyRequestStatus current,
+                                                         PrivacyRequestStatus target) {
+        if (current.isFinalStatus()) {
+            if (current == target) {
+                return TransitionDecision.IDEMPOTENT;
+            }
+            throw invalidTransition(current, target);
+        }
+        boolean allowed = switch (current) {
+            case SUBMITTED -> target == PrivacyRequestStatus.IN_PROGRESS || target.isFinalStatus();
+            case IN_PROGRESS -> target.isFinalStatus();
+            default -> false;
+        };
+        if (!allowed) {
+            throw invalidTransition(current, target);
+        }
+        return TransitionDecision.APPLY;
+    }
+
+    private static BusinessException invalidTransition(PrivacyRequestStatus current,
+                                                       PrivacyRequestStatus target) {
+        return new BusinessException(
+                "PRIVACY_REQUEST_INVALID_TRANSITION",
+                "不允许将工单状态从 " + current.name() + " 变更为 " + target.name(),
+                HttpStatus.CONFLICT
+        );
+    }
+
+    private String enqueueNotification(JdbcTemplate jdbcTemplate,
+                                       String outboxTable,
+                                       String activityTable,
+                                       String projectId,
+                                       String requestId,
+                                       String recipient,
+                                       String subject,
+                                       String content,
+                                       String actor) {
+        String notificationId = UUID.randomUUID().toString();
+        jdbcTemplate.update(
+                String.format(
+                        "INSERT INTO %s (notification_id, project_id, work_order_type, work_order_id, channel, " +
+                                "recipient, subject, content, status, next_attempt_at, created_at, updated_at) " +
+                                "VALUES (?, ?, 'PRIVACY_REQUEST', ?, 'EMAIL', ?, ?, ?, 'PENDING', NOW(), NOW(), NOW())",
+                        outboxTable
+                ),
+                notificationId,
+                projectId,
+                requestId,
+                recipient,
+                subject,
+                content
+        );
+
+        appendActivity(
+                jdbcTemplate,
+                activityTable,
+                projectId,
+                requestId,
+                "NOTIFICATION_QUEUED",
+                null,
+                null,
+                actor,
+                Map.of("notificationId", notificationId, "channel", "EMAIL")
+        );
+        return notificationId;
+    }
+
+    private void appendActivity(JdbcTemplate jdbcTemplate,
+                                String activityTable,
+                                String projectId,
+                                String requestId,
+                                String activityType,
+                                String fromStatus,
+                                String toStatus,
+                                String actor,
+                                Map<String, Object> details) {
+        jdbcTemplate.update(
+                String.format(
+                        "INSERT INTO %s (activity_id, project_id, work_order_type, work_order_id, activity_type, " +
+                                "from_status, to_status, actor, details, created_at) " +
+                                "VALUES (?, ?, 'PRIVACY_REQUEST', ?, ?, ?, ?, ?, ?::jsonb, ?)",
+                        activityTable
+                ),
+                UUID.randomUUID().toString(),
+                projectId,
+                requestId,
+                activityType,
+                fromStatus,
+                toStatus,
+                normalizeActor(actor),
+                toJson(details, "activityDetails"),
+                Timestamp.from(Instant.now())
+        );
+    }
+
+    private static String normalizeActor(String actor) {
+        return actor == null || actor.isBlank() ? "admin" : actor.trim();
     }
 
     private Object parseJson(String raw) {
@@ -473,7 +677,13 @@ public class AdminPrivacyRequestService {
             Instant requestedAt,
             Instant processedAt,
             Instant closedAt,
-            Instant updatedAt
+            Instant updatedAt,
+            long version
     ) {
+    }
+
+    private enum TransitionDecision {
+        APPLY,
+        IDEMPOTENT
     }
 }

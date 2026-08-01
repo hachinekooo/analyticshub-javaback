@@ -1,19 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 项目 pom.xml 指定 java.version=25，必须 JDK 25
-export JAVA_HOME="${JAVA_HOME:-/opt/homebrew/Cellar/openjdk/25.0.1/libexec/openjdk.jdk/Contents/Home}"
-export PATH="$JAVA_HOME/bin:$PATH"
-
-MAVEN_HOME="${MAVEN_HOME:-$HOME/Code/tools/MAVEN/apache-maven-3.9.2}"
-MAVEN_SETTINGS="${MAVEN_SETTINGS:-$MAVEN_HOME/conf/settings.xml}"
-MAVEN_REPO_LOCAL="${MAVEN_REPO_LOCAL:-$HOME/Code/tools/MAVEN/repository}"
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
 
-exec "$MAVEN_HOME/bin/mvn" \
-  -s "$MAVEN_SETTINGS" \
-  -Dmaven.repo.local="$MAVEN_REPO_LOCAL" \
-  "$@"
+# 兼容维护者现有命令，同时保持仓库可移植：
+# - jenv 存在时读取项目 .java-version；
+# - 其他环境直接使用调用者配置的 JAVA_HOME / PATH；
+# - Maven 版本和下载逻辑统一由官方 Wrapper 管理。
+if command -v jenv >/dev/null 2>&1; then
+  exec jenv exec ./mvnw "$@"
+fi
+
+exec ./mvnw "$@"

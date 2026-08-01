@@ -16,8 +16,6 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/v1/events")
 public class EventController {
 
-    private static final System.Logger log = System.getLogger(EventController.class.getName());
-
     private final EventService eventService;
 
     public EventController(EventService eventService) {
@@ -33,8 +31,6 @@ public class EventController {
     public ApiResponse<EventTrackResponse> trackEvent(
             @Valid @RequestBody EventTrackRequest request) {
         
-        log.log(System.Logger.Level.DEBUG, "事件追踪请求: eventType={0}", request.eventType());
-        
         EventTrackResponse response = eventService.trackEvent(request);
         return ApiResponse.success(response);
     }
@@ -47,8 +43,6 @@ public class EventController {
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<Void> trackEventsBatch(
             @Valid @RequestBody EventTrackRequest[] events) {
-        
-        log.log(System.Logger.Level.DEBUG, "批量事件追踪请求: count={0}", events.length);
         
         eventService.trackEventsBatch(events);
         return ApiResponse.success(null);

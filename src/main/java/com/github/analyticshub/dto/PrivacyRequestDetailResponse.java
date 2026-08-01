@@ -18,6 +18,7 @@ public record PrivacyRequestDetailResponse(
         String requestedAt,
         String processedAt,
         String closedAt,
-        String updatedAt
+        String updatedAt,
+        long version
 ) {
 }

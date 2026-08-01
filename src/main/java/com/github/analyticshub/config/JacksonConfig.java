@@ -1,11 +1,17 @@
 package com.github.analyticshub.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.config.ConfigurableBeanFactory;
+import org.springframework.boot.jackson.autoconfigure.JsonMapperBuilderCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Primary;
+import org.springframework.context.annotation.Scope;
+import tools.jackson.core.StreamReadConstraints;
+import tools.jackson.core.json.JsonFactory;
+import tools.jackson.databind.json.JsonMapper;
+
+import java.util.stream.Stream;
 
 /**
  * Jackson 配置
@@ -13,14 +19,52 @@ import org.springframework.context.annotation.Primary;
 @Configuration
 public class JacksonConfig {
 
+    private final int maxNestingDepth;
+    private final int maxStringLength;
+    private final int maxNumberLength;
+
+    public JacksonConfig(
+            @Value("${app.json.max-nesting-depth:64}") int maxNestingDepth,
+            @Value("${app.json.max-string-length:262144}") int maxStringLength,
+            @Value("${app.json.max-number-length:128}") int maxNumberLength
+    ) {
+        this.maxNestingDepth = requirePositive(maxNestingDepth, "maxNestingDepth");
+        this.maxStringLength = requirePositive(maxStringLength, "maxStringLength");
+        this.maxNumberLength = requirePositive(maxNumberLength, "maxNumberLength");
+    }
+
+    /**
+     * Replaces Boot's prototype builder only to install immutable stream
+     * constraints on the underlying JsonFactory. Every Boot customizer is
+     * still applied in ordered form before Boot builds its single primary
+     * JsonMapper, which is also used by Spring MVC.
+     */
     @Bean
-    @Primary
-    public ObjectMapper objectMapper() {
-        ObjectMapper objectMapper = new ObjectMapper();
-        // 注册 JSR310 模块以支持 Java 8 时间类型
-        objectMapper.registerModule(new JavaTimeModule());
-        // 禁用将日期序列化为时间戳
-        objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-        return objectMapper;
+    @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
+    public JsonMapper.Builder jsonMapperBuilder(
+            ObjectProvider<JsonMapperBuilderCustomizer> customizers
+    ) {
+        return createBuilder(customizers.orderedStream());
+    }
+
+    JsonMapper.Builder createBuilder(Stream<JsonMapperBuilderCustomizer> customizers) {
+        StreamReadConstraints constraints = StreamReadConstraints.builder()
+                .maxNestingDepth(maxNestingDepth)
+                .maxStringLength(maxStringLength)
+                .maxNumberLength(maxNumberLength)
+                .build();
+        JsonFactory jsonFactory = JsonFactory.builder()
+                .streamReadConstraints(constraints)
+                .build();
+        JsonMapper.Builder builder = JsonMapper.builder(jsonFactory);
+        customizers.forEach(customizer -> customizer.customize(builder));
+        return builder;
+    }
+
+    private static int requirePositive(int value, String property) {
+        if (value <= 0) {
+            throw new IllegalArgumentException(property + " must be positive");
+        }
+        return value;
     }
 }

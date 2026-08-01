@@ -66,4 +66,10 @@ public class AdminCounterController {
         long delta = request == null || request.delta() == null ? 1L : request.delta();
         return ApiResponse.success(counterService.increment(projectId, key, delta));
     }
+
+    @PostMapping("/{key}/rebuild")
+    public ApiResponse<CounterRecord> rebuild(@RequestParam("projectId") String projectId,
+                                              @PathVariable("key") String key) {
+        return ApiResponse.success(counterService.rebuild(projectId, key));
+    }
 }

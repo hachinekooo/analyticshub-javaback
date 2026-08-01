@@ -5,4 +5,11 @@ import java.util.List;
 /**
  * 项目数据库初始化结果
  */
-public record ProjectInitResult(String message, List<String> tables) {}
+public record ProjectInitResult(
+        String message,
+        List<String> tables,
+        String schemaVersion,
+        int migrationsExecuted,
+        String historyTable,
+        boolean legacyBaselineApplied
+) {}

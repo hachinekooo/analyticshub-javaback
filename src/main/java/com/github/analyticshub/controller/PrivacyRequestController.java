@@ -2,7 +2,7 @@ package com.github.analyticshub.controller;
 
 import com.github.analyticshub.common.dto.ApiResponse;
 import com.github.analyticshub.dto.PrivacyRequestCreatedResponse;
-import com.github.analyticshub.dto.PrivacyRequestDetailResponse;
+import com.github.analyticshub.dto.PrivacyRequestStatusResponse;
 import com.github.analyticshub.dto.PrivacyRequestSubmitRequest;
 import com.github.analyticshub.service.PrivacyRequestService;
 import jakarta.validation.Valid;
@@ -40,13 +40,13 @@ public class PrivacyRequestController {
     }
 
     @GetMapping("/requests/{requestId}")
-    public ApiResponse<PrivacyRequestDetailResponse> getRequest(
+    public ApiResponse<PrivacyRequestStatusResponse> getRequest(
             @PathVariable("requestId") String requestId) {
         return ApiResponse.success(privacyRequestService.getRequest(requestId));
     }
 
     @GetMapping("/requests/latest")
-    public ApiResponse<PrivacyRequestDetailResponse> getLatestRequest() {
+    public ApiResponse<PrivacyRequestStatusResponse> getLatestRequest() {
         return ApiResponse.success(privacyRequestService.getLatestRequest());
     }
 }

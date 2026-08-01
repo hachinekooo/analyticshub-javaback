@@ -5,6 +5,7 @@ import com.github.analyticshub.dto.TrafficMetricTrackRequest;
 import com.github.analyticshub.dto.TrafficMetricTrackResponse;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.service.TrafficMetricService;
+import com.github.analyticshub.security.ClientIpResolver;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -21,9 +22,14 @@ import java.util.Map;
 public class TrafficMetricController {
 
     private final TrafficMetricService trafficMetricService;
+    private final ClientIpResolver clientIpResolver;
 
-    public TrafficMetricController(TrafficMetricService trafficMetricService) {
+    public TrafficMetricController(
+            TrafficMetricService trafficMetricService,
+            ClientIpResolver clientIpResolver
+    ) {
         this.trafficMetricService = trafficMetricService;
+        this.clientIpResolver = clientIpResolver;
     }
 
     @PostMapping("/track")
@@ -31,7 +37,7 @@ public class TrafficMetricController {
     public ApiResponse<TrafficMetricTrackResponse> track(
             @Valid @RequestBody TrafficMetricTrackRequest request,
             HttpServletRequest httpServletRequest) {
-        String clientIp = resolveClientIp(httpServletRequest);
+        String clientIp = clientIpResolver.resolve(httpServletRequest);
         String userAgent = httpServletRequest.getHeader("User-Agent");
         return ApiResponse.success(trafficMetricService.track(request, clientIp, userAgent));
     }
@@ -41,7 +47,7 @@ public class TrafficMetricController {
     public ApiResponse<Map<String, Integer>> batch(
             @Valid @RequestBody TrafficMetricTrackRequest[] items,
             HttpServletRequest httpServletRequest) {
-        String clientIp = resolveClientIp(httpServletRequest);
+        String clientIp = clientIpResolver.resolve(httpServletRequest);
         String userAgent = httpServletRequest.getHeader("User-Agent");
         if (items == null || items.length == 0) {
             throw new BusinessException("EMPTY_ITEMS", "请求体不能为空");
@@ -57,12 +63,4 @@ public class TrafficMetricController {
         ));
     }
 
-    private static String resolveClientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            int comma = forwarded.indexOf(',');
-            return (comma > 0 ? forwarded.substring(0, comma) : forwarded).trim();
-        }
-        return request.getRemoteAddr();
-    }
 }

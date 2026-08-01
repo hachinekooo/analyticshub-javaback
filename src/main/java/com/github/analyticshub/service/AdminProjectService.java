@@ -3,6 +3,9 @@ package com.github.analyticshub.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.github.analyticshub.config.MultiDataSourceManager;
+import com.github.analyticshub.database.project.ProjectSchemaMigrationResult;
+import com.github.analyticshub.database.project.ProjectSchemaMigrator;
+import com.github.analyticshub.database.project.ProjectSchemaStatus;
 import com.github.analyticshub.dto.AdminProjectCreateRequest;
 import com.github.analyticshub.dto.AdminProjectUpdateRequest;
 import com.github.analyticshub.dto.ProjectConnectionTestResult;
@@ -11,22 +14,17 @@ import com.github.analyticshub.dto.ProjectInitResult;
 import com.github.analyticshub.entity.AnalyticsProject;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.mapper.AnalyticsProjectMapper;
-import com.github.analyticshub.util.CryptoUtils;
+import com.github.analyticshub.security.ProjectCredentialCipher;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
-import org.springframework.core.io.ByteArrayResource;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.init.ScriptUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-import java.nio.charset.StandardCharsets;
-import java.sql.Connection;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
@@ -49,11 +47,20 @@ public class AdminProjectService {
 
     private final AnalyticsProjectMapper projectMapper;
     private final MultiDataSourceManager dataSourceManager;
+    private final ProjectSchemaMigrator projectSchemaMigrator;
+    private final ProjectCredentialCipher credentialCipher;
 
 
-    public AdminProjectService(AnalyticsProjectMapper projectMapper, MultiDataSourceManager dataSourceManager) {
+    public AdminProjectService(
+            AnalyticsProjectMapper projectMapper,
+            MultiDataSourceManager dataSourceManager,
+            ProjectSchemaMigrator projectSchemaMigrator,
+            ProjectCredentialCipher credentialCipher
+    ) {
         this.projectMapper = projectMapper;
         this.dataSourceManager = dataSourceManager;
+        this.projectSchemaMigrator = projectSchemaMigrator;
+        this.credentialCipher = credentialCipher;
     }
 
     public List<AnalyticsProject> listProjects() {
@@ -85,13 +92,13 @@ public class AdminProjectService {
         project.setDbName(dbName);
         project.setDbSchema(dbSchema);
         project.setDbUser(request.dbUser());
-        project.setDbPasswordEncrypted(CryptoUtils.encrypt(request.dbPassword()));
+        project.setDbPasswordEncrypted(encryptProjectPassword(projectId, request.dbPassword()));
         project.setTablePrefix(tablePrefix);
         project.setIsActive(Boolean.TRUE);
 
         projectMapper.insert(project);
 
-        dataSourceManager.reloadProject(projectId);
+        invalidateProjectRuntimeAfterCommit(projectId);
 
         return projectMapper.selectById(project.getId());
     }
@@ -125,11 +132,11 @@ public class AdminProjectService {
             project.setIsActive(request.isActive());
         }
         if (request.dbPassword() != null && !request.dbPassword().isBlank()) {
-            project.setDbPasswordEncrypted(CryptoUtils.encrypt(request.dbPassword()));
+            project.setDbPasswordEncrypted(encryptProjectPassword(project.getProjectId(), request.dbPassword()));
         }
 
         projectMapper.updateById(project);
-        dataSourceManager.reloadProject(project.getProjectId());
+        invalidateProjectRuntimeAfterCommit(project.getProjectId());
 
         return projectMapper.selectById(project.getId());
     }
@@ -138,7 +145,7 @@ public class AdminProjectService {
     public AnalyticsProject deleteProject(Long id) {
         AnalyticsProject project = requireProject(id);
         projectMapper.deleteById(id);
-        dataSourceManager.reloadProject(project.getProjectId());
+        invalidateProjectRuntimeAfterCommit(project.getProjectId());
         return project;
     }
 
@@ -149,8 +156,12 @@ public class AdminProjectService {
             jdbcTemplate.queryForObject("SELECT 1", Integer.class);
             return new ProjectConnectionTestResult("数据库连接成功");
         } catch (Exception e) {
-            log.log(System.Logger.Level.WARNING, "测试连接失败: {0}", e.getMessage());
-            throw new BusinessException("DB_CONNECTION_FAILED", "连接失败: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+            log.log(System.Logger.Level.WARNING, "测试项目数据库连接失败", e);
+            throw new BusinessException(
+                    "DB_CONNECTION_FAILED",
+                    "无法连接项目数据库，请检查地址、凭据与网络",
+                    HttpStatus.SERVICE_UNAVAILABLE
+            );
         }
     }
 
@@ -158,54 +169,105 @@ public class AdminProjectService {
         ProjectDbConfig config = resolveProjectConfig(id);
         String schema = normalizeDbSchema(config.dbSchema());
         String prefix = normalizeTablePrefix(config.tablePrefix());
-        String sql = loadProjectInitSql(schema, prefix);
 
-        try (HikariDataSource dataSource = createDataSource(config);
-             Connection connection = dataSource.getConnection()) {
-            ScriptUtils.executeSqlScript(connection, new ByteArrayResource(sql.getBytes(StandardCharsets.UTF_8)));
+        try (HikariDataSource dataSource = createDataSource(config)) {
+            try {
+                new JdbcTemplate(dataSource).queryForObject("SELECT 1", Integer.class);
+            } catch (Exception connectionException) {
+                log.log(System.Logger.Level.WARNING, "初始化前连接项目数据库失败", connectionException);
+                throw new BusinessException(
+                        "DB_CONNECTION_FAILED",
+                        "无法连接项目数据库，请检查地址、凭据与网络",
+                        HttpStatus.SERVICE_UNAVAILABLE
+                );
+            }
+
+            try {
+                ProjectSchemaMigrationResult migration = projectSchemaMigrator.migrate(dataSource, schema, prefix);
+                String message = migration.migrationsExecuted() == 0
+                        ? "项目 " + config.projectId() + " 数据库已是最新版本"
+                        : "项目 " + config.projectId() + " 数据库迁移成功";
+                return new ProjectInitResult(
+                        message,
+                        migration.tables(),
+                        migration.currentVersion(),
+                        migration.migrationsExecuted(),
+                        migration.historyTable(),
+                        migration.legacyBaselineApplied()
+                );
+            } catch (BusinessException exception) {
+                throw exception;
+            } catch (Exception migrationException) {
+                log.log(System.Logger.Level.WARNING, "项目数据库迁移失败", migrationException);
+                throw new BusinessException(
+                        "PROJECT_SCHEMA_MIGRATION_FAILED",
+                        "项目数据库迁移失败，请检查数据库权限和迁移状态",
+                        HttpStatus.CONFLICT
+                );
+            }
+        } catch (BusinessException exception) {
+            throw exception;
         } catch (Exception e) {
-            log.log(System.Logger.Level.WARNING, "初始化数据库失败: {0}", e.getMessage());
-            throw new BusinessException("PROJECT_INIT_FAILED", "初始化失败: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+            log.log(System.Logger.Level.WARNING, "创建项目数据库连接池失败", e);
+            throw new BusinessException(
+                    "DB_CONNECTION_FAILED",
+                    "无法连接项目数据库，请检查地址、凭据与网络",
+                    HttpStatus.SERVICE_UNAVAILABLE
+            );
         }
-
-        List<String> tables = List.of(
-                prefix + "devices",
-                prefix + "events",
-                prefix + "sessions",
-                prefix + "traffic_metrics",
-                prefix + "counters",
-                prefix + "privacy_requests"
-        );
-
-        return new ProjectInitResult("项目 " + config.projectId() + " 数据库初始化成功", tables);
     }
 
     public ProjectHealthResult checkProjectHealth(Long id) {
         ProjectDbConfig config = resolveProjectConfig(id);
+        String schema = normalizeDbSchema(config.dbSchema());
         String prefix = normalizeTablePrefix(config.tablePrefix());
-        List<String> requiredTables = List.of("devices", "events", "sessions", "traffic_metrics", "privacy_requests");
-        Map<String, Boolean> tables = new LinkedHashMap<>();
 
         try (HikariDataSource dataSource = createDataSource(config)) {
             JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
             jdbcTemplate.queryForObject("SELECT 1", Integer.class);
-
-            for (String table : requiredTables) {
-                String fullTableName = prefix + table;
-                Boolean exists = jdbcTemplate.queryForObject(
-                        "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = ? AND table_name = ?)",
-                        Boolean.class,
-                        config.dbSchema(),
-                        fullTableName
+            try {
+                ProjectSchemaStatus status = projectSchemaMigrator.inspect(dataSource, schema, prefix);
+                return new ProjectHealthResult(
+                        true,
+                        status.tables(),
+                        status.allTablesExist(),
+                        status.current(),
+                        status.migrationHistoryValid(),
+                        status.currentVersion(),
+                        status.pendingMigrations(),
+                        status.historyTable(),
+                        null,
+                        null
                 );
-                tables.put(table, Boolean.TRUE.equals(exists));
+            } catch (Exception schemaException) {
+                log.log(System.Logger.Level.WARNING, "检查项目数据库结构失败", schemaException);
+                return new ProjectHealthResult(
+                        true,
+                        java.util.Map.of(),
+                        false,
+                        false,
+                        false,
+                        null,
+                        0,
+                        null,
+                        "SCHEMA_INSPECTION_FAILED",
+                        "数据库可连接，但结构检查失败"
+                );
             }
-
-            boolean allTablesExist = tables.values().stream().allMatch(Boolean::booleanValue);
-            return new ProjectHealthResult(true, tables, allTablesExist, null);
         } catch (Exception e) {
-            log.log(System.Logger.Level.WARNING, "检查项目健康失败: {0}", e.getMessage());
-            return new ProjectHealthResult(false, Map.of(), false, e.getMessage());
+            log.log(System.Logger.Level.WARNING, "连接项目数据库失败", e);
+            return new ProjectHealthResult(
+                    false,
+                    java.util.Map.of(),
+                    false,
+                    false,
+                    false,
+                    null,
+                    0,
+                    null,
+                    "DB_CONNECTION_FAILED",
+                    "无法连接项目数据库"
+            );
         }
     }
 
@@ -217,6 +279,31 @@ public class AdminProjectService {
         return project;
     }
 
+    private void invalidateProjectRuntimeAfterCommit(String projectId) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()
+                && TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    invalidateProjectRuntime(projectId);
+                }
+            });
+            return;
+        }
+        invalidateProjectRuntime(projectId);
+    }
+
+    private void invalidateProjectRuntime(String projectId) {
+        try {
+            dataSourceManager.reloadProject(projectId);
+        } catch (RuntimeException exception) {
+            // The system-database change is already committed at this point.
+            // Keep the request successful and make the cache failure observable.
+            log.log(System.Logger.Level.ERROR,
+                    "项目运行时缓存清理失败，等待下一次显式重载: projectId={0}", projectId);
+        }
+    }
+
     private ProjectDbConfig resolveProjectConfig(Long id) {
         AnalyticsProject project = requireProject(id);
         String projectId = normalizeProjectId(project.getProjectId());
@@ -225,7 +312,7 @@ public class AdminProjectService {
 
         String password = null;
         if (project.getDbPasswordEncrypted() != null && !project.getDbPasswordEncrypted().isBlank()) {
-            password = CryptoUtils.decrypt(project.getDbPasswordEncrypted());
+            password = credentialCipher.decrypt(projectId, project.getDbPasswordEncrypted());
         }
 
         return new ProjectDbConfig(
@@ -250,9 +337,26 @@ public class AdminProjectService {
         return projectId;
     }
 
+    private String encryptProjectPassword(String projectId, String password) {
+        if (!credentialCipher.isConfigured()) {
+            throw new BusinessException(
+                    "PROJECT_CREDENTIAL_ENCRYPTION_NOT_CONFIGURED",
+                    "项目数据库凭据加密密钥未配置",
+                    HttpStatus.SERVICE_UNAVAILABLE
+            );
+        }
+        return credentialCipher.encrypt(projectId, password);
+    }
+
     private static String normalizeTablePrefix(String tablePrefix) {
-        if (tablePrefix == null || tablePrefix.isBlank()) {
+        if (tablePrefix == null) {
             return "analytics_";
+        }
+        if (tablePrefix.isEmpty()) {
+            return "";
+        }
+        if (tablePrefix.isBlank()) {
+            throw new IllegalArgumentException("tablePrefix 格式无效");
         }
         if (tablePrefix.length() > MAX_TABLE_PREFIX_LENGTH) {
             throw new IllegalArgumentException("tablePrefix 长度超限");
@@ -292,19 +396,6 @@ public class AdminProjectService {
             throw new IllegalArgumentException("dbSchema 格式无效");
         }
         return dbSchema;
-    }
-
-    private static String loadProjectInitSql(String schema, String prefix) {
-        try {
-            ClassPathResource resource = new ClassPathResource("db/project-init.sql");
-            String sql;
-            try (var inputStream = resource.getInputStream()) {
-                sql = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
-            }
-            return sql.replace("{{SCHEMA}}", schema).replace("{{PREFIX}}", prefix);
-        } catch (Exception e) {
-            throw new BusinessException("PROJECT_INIT_TEMPLATE_MISSING", "加载初始化脚本失败", HttpStatus.INTERNAL_SERVER_ERROR);
-        }
     }
 
     private static HikariDataSource createDataSource(ProjectDbConfig config) {

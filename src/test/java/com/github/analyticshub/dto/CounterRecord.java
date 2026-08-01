@@ -1,6 +1,6 @@
 package com.github.analyticshub.dto;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 
 public record CounterRecord(
         String key,
@@ -10,5 +10,20 @@ public record CounterRecord(
         JsonNode eventTrigger,
         boolean isPublic,
         String description,
-        String updatedAt
-) {}
+        String updatedAt,
+        String lastRebuiltAt,
+        Long lastRebuildEventCount
+) {
+    public CounterRecord(
+            String key,
+            long value,
+            JsonNode displayName,
+            JsonNode unit,
+            JsonNode eventTrigger,
+            boolean isPublic,
+            String description,
+            String updatedAt
+    ) {
+        this(key, value, displayName, unit, eventTrigger, isPublic, description, updatedAt, null, null);
+    }
+}

@@ -1,5 +1,6 @@
 package com.github.analyticshub.service;
 
+import jakarta.mail.internet.InternetAddress;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
@@ -34,14 +35,14 @@ public class EmailService {
     /**
      * 发送安全告警邮件
      */
-    public void sendSecurityAlert(String subject, String content) {
-        sendToAlertRecipient("[Analytics Hub 安全告警] " + subject, content);
+    public EmailDeliveryStatus sendSecurityAlert(String subject, String content) {
+        return sendToAlertRecipient("[Analytics Hub 安全告警] " + subject, content);
     }
 
     /**
      * 发送暴力破解告警
      */
-    public void sendBruteForceAlert(String ip, int failureCount) {
+    public EmailDeliveryStatus sendBruteForceAlert(String ip, int failureCount) {
         String subject = "检测到暴力破解尝试";
         String content = String.format(
                 "检测到 IP 地址 %s 在尝试暴力破解 Admin Token。\n\n" +
@@ -54,19 +55,19 @@ public class EmailService {
                 Instant.now()
         );
 
-        sendSecurityAlert(subject, content);
+        return sendSecurityAlert(subject, content);
     }
 
     /**
      * 隐私请求提交后，通知运营处理邮箱。
      */
-    public void sendPrivacyRequestSubmittedAlert(String requestId,
-                                                 String projectId,
-                                                 String userId,
-                                                 String requestType,
-                                                 String processor,
-                                                 String contactEmail,
-                                                 Instant requestedAt) {
+    public EmailDeliveryStatus sendPrivacyRequestSubmittedAlert(String requestId,
+                                                                String projectId,
+                                                                String userId,
+                                                                String requestType,
+                                                                String processor,
+                                                                String contactEmail,
+                                                                Instant requestedAt) {
         String subject = "新的隐私请求工单: " + requestType + " / " + requestId;
         String content = String.format(
                 "已收到新的隐私请求工单，请尽快人工处理。\n\n" +
@@ -90,44 +91,77 @@ public class EmailService {
                 requestedAt
         );
 
-        sendToAlertRecipient("[Analytics Hub 隐私工单] " + subject, content);
+        return sendToAlertRecipient("[Analytics Hub 隐私工单] " + subject, content);
     }
 
     /**
      * 给用户发送隐私请求处理结果。
      */
-    public void sendPrivacyUserNotification(String toEmail, String subject, String content) {
-        if (toEmail == null || toEmail.isBlank()) {
-            log.log(System.Logger.Level.WARNING, "Skipped privacy notification email because recipient is empty");
-            return;
-        }
-        sendEmail(toEmail.trim(), subject, content);
+    public EmailDeliveryStatus sendPrivacyUserNotification(String toEmail, String subject, String content) {
+        return sendEmail(toEmail, subject, content);
     }
 
-    private void sendToAlertRecipient(String subject, String content) {
+    /**
+     * Whether background delivery can currently reach an SMTP sender.
+     * The outbox scheduler uses this guard so disabled mail does not consume
+     * retry attempts or turn queued notifications into dead letters.
+     */
+    public boolean isDeliveryEnabled() {
+        return emailEnabled && mailSender != null && fromEmail != null && !fromEmail.isBlank();
+    }
+
+    private EmailDeliveryStatus sendToAlertRecipient(String subject, String content) {
         if (alertRecipient == null || alertRecipient.isBlank()) {
-            log.log(System.Logger.Level.WARNING, "Alert recipient not configured, skip email: {0}", subject);
-            return;
+            log.log(System.Logger.Level.WARNING, "Alert recipient not configured, skip email");
+            return EmailDeliveryStatus.INVALID_RECIPIENT;
         }
-        sendEmail(alertRecipient.trim(), subject, content);
+        return sendEmail(alertRecipient, subject, content);
     }
 
-    private void sendEmail(String to, String subject, String content) {
-        if (!emailEnabled || mailSender == null) {
-            log.log(System.Logger.Level.WARNING, "Mail disabled or sender unavailable, skip email: {0}", subject);
-            return;
+    private EmailDeliveryStatus sendEmail(String to, String subject, String content) {
+        String normalizedRecipient = normalizeRecipient(to);
+        if (normalizedRecipient == null) {
+            log.log(System.Logger.Level.WARNING, "Skipped email because recipient is invalid");
+            return EmailDeliveryStatus.INVALID_RECIPIENT;
+        }
+        if (!isDeliveryEnabled()) {
+            log.log(System.Logger.Level.WARNING, "Mail disabled or sender unavailable, skip email");
+            return EmailDeliveryStatus.DISABLED;
         }
 
         try {
             SimpleMailMessage message = new SimpleMailMessage();
             message.setFrom(fromEmail);
-            message.setTo(to);
+            message.setTo(normalizedRecipient);
             message.setSubject(subject);
             message.setText(content);
             mailSender.send(message);
-            log.log(System.Logger.Level.INFO, "Email sent: subject={0}, to={1}", subject, to);
+            // Recipient addresses are deliberately excluded from logs.
+            log.log(System.Logger.Level.INFO, "Email sent");
+            return EmailDeliveryStatus.SENT;
         } catch (Exception e) {
-            log.log(System.Logger.Level.ERROR, "Email send failed: " + e.getMessage(), e);
+            // SMTP exception text can contain the full recipient address.
+            log.log(System.Logger.Level.ERROR,
+                    "Email send failed: failureType={0}",
+                    e.getClass().getSimpleName());
+            return EmailDeliveryStatus.FAILED;
+        }
+    }
+
+    private static String normalizeRecipient(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String candidate = raw.trim();
+        if (candidate.length() > 255 || candidate.contains("\r") || candidate.contains("\n")) {
+            return null;
+        }
+        try {
+            InternetAddress address = new InternetAddress(candidate, true);
+            address.validate();
+            return address.getAddress().equals(candidate) ? candidate : null;
+        } catch (Exception exception) {
+            return null;
         }
     }
 }

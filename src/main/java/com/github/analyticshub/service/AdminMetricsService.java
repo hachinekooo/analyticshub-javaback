@@ -22,6 +22,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 管理端运营数据服务
@@ -32,9 +33,14 @@ public class AdminMetricsService {
     private static final System.Logger log = System.getLogger(AdminMetricsService.class.getName());
 
     private final MultiDataSourceManager dataSourceManager;
+    private final SemanticDictionaryService semanticDictionaryService;
 
-    public AdminMetricsService(MultiDataSourceManager dataSourceManager) {
+    public AdminMetricsService(
+            MultiDataSourceManager dataSourceManager,
+            SemanticDictionaryService semanticDictionaryService
+    ) {
         this.dataSourceManager = dataSourceManager;
+        this.semanticDictionaryService = semanticDictionaryService;
     }
 
     public AdminMetricsOverviewResponse getOverview(String projectId, String from, String to) {
@@ -131,7 +137,13 @@ public class AdminMetricsService {
         );
     }
 
-    public AdminMetricsTopEventsResponse getTopEvents(String projectId, String from, String to, Integer limit) {
+    public AdminMetricsTopEventsResponse getTopEvents(
+            String projectId,
+            String from,
+            String to,
+            Integer limit,
+            String aggregation
+    ) {
         String normalizedProjectId = normalizeProjectId(projectId);
         AdminQueryUtils.Range range = AdminQueryUtils.resolveRange(from, to);
         ProjectContext context = requireProject(normalizedProjectId);
@@ -142,19 +154,43 @@ public class AdminMetricsService {
         Timestamp end = Timestamp.from(range.end());
 
         int topN = (limit == null || limit < 1) ? 10 : Math.min(limit, 50);
+        String aggregationMode = normalizeTopEventsAggregation(aggregation);
 
         String sql = String.format(
                 "SELECT event_type, COUNT(*) AS total FROM %s " +
                         "WHERE project_id = ? AND created_at >= ? AND created_at < ? " +
-                        "GROUP BY event_type ORDER BY total DESC LIMIT %d",
-                eventsTable,
-                topN
+                        "GROUP BY event_type",
+                eventsTable
         );
 
-        List<AdminMetricsTopEvent> items = jdbcTemplate.query(sql, (rs, rowNum) ->
+        List<AdminMetricsTopEvent> rawItems = jdbcTemplate.query(sql, (rs, rowNum) ->
                         new AdminMetricsTopEvent(rs.getString("event_type"), rs.getLong("total")),
                 normalizedProjectId, start, end
         );
+        List<AdminMetricsTopEvent> items;
+        if ("semantic".equals(aggregationMode)) {
+            Map<String, String> resolutions = semanticDictionaryService
+                    .resolveActiveEventSemanticKeys(normalizedProjectId);
+            Map<String, Long> totals = new HashMap<>();
+            for (AdminMetricsTopEvent item : rawItems) {
+                String key = resolutions.getOrDefault(item.eventType(), item.eventType());
+                totals.merge(key, item.count(), Long::sum);
+            }
+            items = totals.entrySet().stream()
+                    .map(entry -> new AdminMetricsTopEvent(entry.getKey(), entry.getValue()))
+                    .sorted(java.util.Comparator
+                            .comparingLong(AdminMetricsTopEvent::count).reversed()
+                            .thenComparing(AdminMetricsTopEvent::eventType))
+                    .limit(topN)
+                    .toList();
+        } else {
+            items = rawItems.stream()
+                    .sorted(java.util.Comparator
+                            .comparingLong(AdminMetricsTopEvent::count).reversed()
+                            .thenComparing(AdminMetricsTopEvent::eventType))
+                    .limit(topN)
+                    .toList();
+        }
 
         return new AdminMetricsTopEventsResponse(
                 normalizedProjectId,
@@ -162,6 +198,16 @@ public class AdminMetricsService {
                 range.end().toString(),
                 items
         );
+    }
+
+    private static String normalizeTopEventsAggregation(String aggregation) {
+        String normalized = aggregation == null || aggregation.isBlank()
+                ? "raw"
+                : aggregation.strip().toLowerCase(Locale.ROOT);
+        if (!Set.of("raw", "semantic").contains(normalized)) {
+            throw new IllegalArgumentException("aggregation 仅支持 raw/semantic");
+        }
+        return normalized;
     }
 
     private ProjectContext requireProject(String projectId) {

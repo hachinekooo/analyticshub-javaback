@@ -35,6 +35,8 @@ class CryptoUtilsTest {
     @Test
     void testIsValidUUID() {
         assertTrue(CryptoUtils.isValidUUID("550e8400-e29b-41d4-a716-446655440000"));
+        assertFalse(CryptoUtils.isValidUUID("1-1-1-1-1"));
+        assertFalse(CryptoUtils.isValidUUID("550e8400e29b41d4a716446655440000"));
         assertFalse(CryptoUtils.isValidUUID("invalid-uuid"));
         assertFalse(CryptoUtils.isValidUUID(null));
         assertFalse(CryptoUtils.isValidUUID(""));
@@ -52,18 +54,6 @@ class CryptoUtilsTest {
         // 验证签名
         assertTrue(CryptoUtils.verifySignature(data, signature, secretKey));
         assertFalse(CryptoUtils.verifySignature(data, "invalid-signature", secretKey));
-    }
-
-    @Test
-    void testEncryptDecrypt() {
-        String original = "test-password";
-        
-        String encrypted = CryptoUtils.encrypt(original);
-        assertNotNull(encrypted);
-        assertNotEquals(original, encrypted);
-        
-        String decrypted = CryptoUtils.decrypt(encrypted);
-        assertEquals(original, decrypted);
     }
 
     @Test

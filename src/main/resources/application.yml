@@ -1,17 +1,13 @@
 # ============================================================
 # Analytics Hub - Spring Boot 4 Application Configuration
 # Multi-Project Analytics Backend Service
-# JDK 25 + Spring Boot 4.0.1
+# JDK 25 + Spring Boot 4.0.7
 # ============================================================
 
 spring:
   application:
     name: analyticshub-javaback
   
-  profiles:
-    active: dev
-  
-  # ============================================================
   # ============================================================
   # Database Configuration (System Database)
   # ============================================================
@@ -57,6 +53,11 @@ spring:
       mail:
         smtp:
           auth: true
+          # Bound each SMTP network operation so an outbox worker cannot remain
+          # blocked near the default 300-second claim reclaim window.
+          connectiontimeout: ${MAIL_CONNECTION_TIMEOUT_MS:10000}
+          timeout: ${MAIL_READ_TIMEOUT_MS:10000}
+          writetimeout: ${MAIL_WRITE_TIMEOUT_MS:10000}
           starttls:
             enable: true
             required: true
@@ -67,7 +68,9 @@ spring:
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    # Route SQL logs through SLF4J so profile log levels control whether SQL and
+    # bound parameters are emitted. Never write SQL directly to stdout in prod.
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
   global-config:
     db-config:
       id-type: auto
@@ -86,8 +89,11 @@ server:
     enabled: true
     mime-types: application/json,application/xml,text/html,text/xml,text/plain
   error:
-    include-message: always
-    include-binding-errors: always
+    # MVC endpoints use the typed ApiResponse exception handler. Keep the
+    # fallback error endpoint generic so filter/container failures cannot leak
+    # exception messages or rejected request values.
+    include-message: never
+    include-binding-errors: never
 
 # ============================================================
 # Management & Actuator
@@ -99,7 +105,9 @@ management:
         include: health,info,metrics
   endpoint:
     health:
-      show-details: when-authorized
+      # /actuator/health is the only anonymous Actuator endpoint. Keep its
+      # response intentionally minimal; detailed component paths require Admin Token.
+      show-details: never
   health:
     defaults:
       enabled: true
@@ -110,7 +118,7 @@ management:
 logging:
   level:
     root: INFO
-    com.github.analyticshub: DEBUG
+    com.github.analyticshub: INFO
     org.springframework.web: INFO
     org.springframework.security: INFO
   pattern:
@@ -121,20 +129,46 @@ logging:
 # ============================================================
 app:
   cors:
-    allowed-origins: "*"
-    allowed-methods: GET,POST,PUT,DELETE,OPTIONS
-    allowed-headers: Content-Type,Authorization,X-API-Key,X-Device-ID,X-User-ID,X-Timestamp,X-Signature,X-App-Version,X-Project-ID,X-Admin-Token,X-Traffic-Token
-    max-age: 3600
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:*}
+    allowed-methods: ${APP_CORS_ALLOWED_METHODS:GET,POST,PUT,PATCH,DELETE,OPTIONS}
+    allowed-headers: ${APP_CORS_ALLOWED_HEADERS:Content-Type,Authorization,X-API-Key,X-Device-ID,X-User-ID,X-Timestamp,X-Signature,X-App-Version,X-Project-ID,X-Admin-Token,X-Admin-OTP,X-Traffic-Token}
+    allow-credentials: ${APP_CORS_ALLOW_CREDENTIALS:false}
+    max-age: ${APP_CORS_MAX_AGE:3600}
+
+  json:
+    # Bound parser work even for public endpoints that do not pass through the
+    # HMAC request wrapper.
+    max-nesting-depth: ${APP_JSON_MAX_NESTING_DEPTH:64}
+    max-string-length: ${APP_JSON_MAX_STRING_LENGTH:262144}
+    max-number-length: ${APP_JSON_MAX_NUMBER_LENGTH:128}
   
   rate-limit:
-    enabled: true
-    requests: 100
-    window-ms: 60000
+    enabled: ${APP_RATE_LIMIT_ENABLED:true}
+    requests: ${APP_RATE_LIMIT_REQUESTS:100}
+    window-ms: ${APP_RATE_LIMIT_WINDOW_MS:60000}
   
   security:
     admin-token: ${ADMIN_TOKEN:}
     # 签名有效期（毫秒）
     signature-validity-ms: 300000
+    # HMAC validation needs a repeatable body, so cap its in-memory copy before
+    # reading the request. The stream is also counted when Content-Length is absent.
+    max-request-body-bytes: ${APP_SECURITY_MAX_REQUEST_BODY_BYTES:1048576}
+    # Forwarded client-IP headers are trusted only from these immediate proxy
+    # networks. The bundled Nginx deployment proxies from loopback.
+    trusted-proxies: ${APP_SECURITY_TRUSTED_PROXIES:127.0.0.1,::1}
+    # Compatibility escape hatch only. Public re-registration can let anyone
+    # who knows a device UUID replace that device's credentials.
+    allow-insecure-device-reregistration: ${ALLOW_INSECURE_DEVICE_REREGISTRATION:false}
+    # Previous authenticated credentials remain valid briefly so a lost rotate
+    # response can be retried without public re-registration.
+    credential-rotation-grace-seconds: ${CREDENTIAL_ROTATION_GRACE_SECONDS:600}
+    project-credentials:
+      # Base64-encoded 32-byte AES key. Keep it outside the database and back it
+      # up with the database; losing it makes encrypted project passwords unreadable.
+      encryption-key: ${PROJECT_CREDENTIAL_ENCRYPTION_KEY:}
+      # During key rotation, put the old key here for one successful startup.
+      previous-encryption-key: ${PROJECT_CREDENTIAL_PREVIOUS_ENCRYPTION_KEY:}
 
   traffic:
     ip-hash-salt: ${TRAFFIC_IP_HASH_SALT:}
@@ -142,6 +176,22 @@ app:
 
   email:
     alert-recipient: ${ALERT_EMAIL:}  # 安全告警接收邮箱
+
+  work-order:
+    outbox:
+      # PROCESSING rows older than this can be reclaimed after a worker crash.
+      claim-timeout-seconds: ${WORK_ORDER_OUTBOX_CLAIM_TIMEOUT_SECONDS:300}
+      retry-delay-seconds: ${WORK_ORDER_OUTBOX_RETRY_DELAY_SECONDS:60}
+      scheduler-enabled: ${WORK_ORDER_OUTBOX_SCHEDULER_ENABLED:true}
+      scheduler-initial-delay-ms: ${WORK_ORDER_OUTBOX_SCHEDULER_INITIAL_DELAY_MS:30000}
+      scheduler-fixed-delay-ms: ${WORK_ORDER_OUTBOX_SCHEDULER_FIXED_DELAY_MS:60000}
+      scheduler-batch-size: ${WORK_ORDER_OUTBOX_SCHEDULER_BATCH_SIZE:20}
+
+  project-datasource:
+    # Pools are created lazily per project. Keep minimumIdle at zero so an
+    # operations center with many projects does not reserve N connections each.
+    maximum-pool-size: ${PROJECT_DATASOURCE_MAXIMUM_POOL_SIZE:5}
+    minimum-idle: ${PROJECT_DATASOURCE_MINIMUM_IDLE:0}
 
 # 多项目数据源配置（从环境变量读取）
 analytics:
@@ -176,6 +226,11 @@ spring:
   config:
     activate:
       on-profile: prod
+
+server:
+  # Production traffic enters through the bundled loopback Nginx proxy.
+  # Do not expose the application port directly to the public network.
+  address: ${SERVER_ADDRESS:127.0.0.1}
 
 logging:
   level:

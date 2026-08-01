@@ -1,6 +1,6 @@
 package com.github.analyticshub.dto;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 
 /**
  * 管理端 - 流量指标记录

@@ -1,7 +1,6 @@
 package com.github.analyticshub.logging;
 
 import org.springframework.core.env.Environment;
-import org.springframework.core.env.Profiles;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -9,7 +8,7 @@ import java.util.TreeMap;
 
 /**
  * 启动时打印关键环境变量。
- * 仅 dev 环境允许输出原值，test/prod 等非 dev 环境一律对敏感配置脱敏。
+ * 所有环境都对敏感配置脱敏；开发日志也不能输出原始凭据。
  */
 @Component
 public class StartupEnvironmentLogger {
@@ -27,6 +26,7 @@ public class StartupEnvironmentLogger {
             "PRIVATE_KEY",
             "JWT",
             "SIGNATURE",
+            "ENCRYPTION_KEY",
             "COOKIE",
             "DATABASE_URL",
             "JDBC",
@@ -50,6 +50,8 @@ public class StartupEnvironmentLogger {
             "SPRING_DATASOURCE_USERNAME",
             "SPRING_DATASOURCE_PASSWORD",
             "ADMIN_TOKEN",
+            "PROJECT_CREDENTIAL_ENCRYPTION_KEY",
+            "PROJECT_CREDENTIAL_PREVIOUS_ENCRYPTION_KEY",
             "LOG_PATH",
             "LOG_FILE",
             "LOG_MAX_FILE_SIZE",
@@ -74,8 +76,6 @@ public class StartupEnvironmentLogger {
     public void logStartupEnvironment() {
         String[] activeProfiles = environment.getActiveProfiles();
         String profiles = activeProfiles.length == 0 ? "default" : String.join(",", activeProfiles);
-        boolean isDev = environment.acceptsProfiles(Profiles.of("dev"));
-
         log.log(System.Logger.Level.INFO, "Active profiles: {0}", profiles);
 
         Map<String, String> envVars = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
@@ -101,11 +101,7 @@ public class StartupEnvironmentLogger {
                 log.log(System.Logger.Level.INFO, "{0}=<not configured>", key);
                 continue;
             }
-            if (isDev) {
-                log.log(System.Logger.Level.INFO, "{0}={1}", key, value);
-            } else {
-                log.log(System.Logger.Level.INFO, "{0}={1}", key, maskIfSensitive(key, value));
-            }
+            log.log(System.Logger.Level.INFO, "{0}={1}", key, maskIfSensitive(key, value));
         }
     }
 

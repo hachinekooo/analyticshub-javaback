@@ -1,5 +1,6 @@
 -- ============================================================
--- Project Init Script (Template)
+-- Frozen AnalyticsHub 1.0.0 Project Init Script (test fixture)
+-- Do not update this fixture when adding new project migrations.
 -- 使用 {{PREFIX}} 作为表前缀占位符
 -- 该脚本运行在“项目自己的数据库”中
 -- ============================================================

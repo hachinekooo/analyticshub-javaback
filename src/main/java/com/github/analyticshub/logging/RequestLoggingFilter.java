@@ -4,14 +4,13 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import com.github.analyticshub.security.ClientIpResolver;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.UUID;
-
 /**
  * 请求日志过滤器
  * 记录 API 请求的关键信息（不记录敏感头/请求体）
@@ -21,6 +20,11 @@ import java.util.UUID;
 public class RequestLoggingFilter extends OncePerRequestFilter {
 
     private static final System.Logger log = System.getLogger(RequestLoggingFilter.class.getName());
+    private final ClientIpResolver clientIpResolver;
+
+    public RequestLoggingFilter(ClientIpResolver clientIpResolver) {
+        this.clientIpResolver = clientIpResolver;
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -33,10 +37,9 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         }
 
         long startNs = System.nanoTime();
-        String requestId = request.getHeader("X-Request-Id");
-        if (requestId == null || requestId.isBlank()) {
-            requestId = UUID.randomUUID().toString();
-        }
+        String requestId = LogValueSanitizer.requestIdOrRandom(
+                request.getHeader("X-Request-Id")
+        );
         response.setHeader("X-Request-Id", requestId);
 
         try {
@@ -45,17 +48,20 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             long durationMs = (System.nanoTime() - startNs) / 1_000_000;
             int status = response.getStatus();
             String method = request.getMethod();
-            String clientIp = maskIp(resolveClientIp(request));
-            String projectId = request.getHeader("X-Project-ID");
+            String clientIp = maskIp(clientIpResolver.resolve(request));
+            String logPath = LogValueSanitizer.path(path);
+            String projectId = LogValueSanitizer.projectId(
+                    request.getHeader("X-Project-ID")
+            );
 
             String message = String.format(
                     "HTTP %s %s -> %d (%d ms) ip=%s projectId=%s requestId=%s",
                     method,
-                    path,
+                    logPath,
                     status,
                     durationMs,
                     clientIp,
-                    (projectId == null || projectId.isBlank()) ? "-" : projectId,
+                    projectId,
                     requestId
             );
 
@@ -71,15 +77,6 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
 
     private static boolean shouldLog(String path) {
         return path != null && (path.startsWith("/api") || path.startsWith("/actuator"));
-    }
-
-    private static String resolveClientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            int comma = forwarded.indexOf(',');
-            return (comma > 0 ? forwarded.substring(0, comma) : forwarded).trim();
-        }
-        return request.getRemoteAddr();
     }
 
     static String maskIp(String ip) {

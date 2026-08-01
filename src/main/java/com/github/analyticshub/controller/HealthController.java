@@ -1,5 +1,7 @@
 package com.github.analyticshub.controller;
 
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.info.BuildProperties;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -16,6 +18,13 @@ import java.util.Map;
 @RequestMapping("/api/health")
 public class HealthController {
 
+    private final String applicationVersion;
+
+    public HealthController(ObjectProvider<BuildProperties> buildPropertiesProvider) {
+        BuildProperties buildProperties = buildPropertiesProvider.getIfAvailable();
+        this.applicationVersion = buildProperties == null ? "development" : buildProperties.getVersion();
+    }
+
     /**
      * 健康检查接口
      * GET /health
@@ -27,7 +36,7 @@ public class HealthController {
         health.put("status", "UP");
         health.put("service", "analyticshub-javaback");
         health.put("timestamp", Instant.now().toString());
-        health.put("version", "1.0.0");
+        health.put("version", applicationVersion);
         
         return ResponseEntity.ok(health);
     }
