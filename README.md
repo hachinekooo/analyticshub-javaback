@@ -14,7 +14,7 @@ agent_notes: 项目入口概览；具体 API、部署或安全任务应转到 do
 ## 技术栈
 
 - **JDK**: 25
-- **Spring Boot**: 4.0.1
+- **Spring Boot**: 4.0.7
 - **Spring Security**: 7.x（由 Spring Boot 4 管理）
 - **Database**: PostgreSQL 15+
 - **Connection Pool**: HikariCP
@@ -58,7 +58,7 @@ agent_notes: 项目入口概览；具体 API、部署或安全任务应转到 do
 - 管理端 API（`/api/admin/**`）：项目管理、数据查询与配置；使用 Admin Token 认证
 - 管理端 Token 校验（`/api/v1/auth/admin-token/verify`）：用于管理端登录态/Token 有效性探测
 - 多项目多数据源：每个项目独立数据库与连接池，按项目动态切换
-- 系统数据库（spring.datasource）仅保存项目管理元数据（analytics_projects），不承载业务采集表
+- 1.0.1 运行时只向系统数据库（spring.datasource）写入平台元数据；业务采集事实保存在各 project database
 - 运行状态：`/api/health` 公开；`/actuator/**` 生产环境需要 Admin Token
 - 架构与时序文档：`docs/ARCHITECTURE.md`
 
@@ -81,10 +81,11 @@ export DB_NAME=analytics
 export DB_SCHEMA=analytics
 export DB_USER=analytic
 export DB_PASSWORD=replace-with-local-analytic-password
-export ADMIN_TOKEN=replace-with-local-admin-token
+export ADMIN_TOKEN=replace-with-at-least-32-random-characters
+export PROJECT_CREDENTIAL_ENCRYPTION_KEY="$(openssl rand -base64 32)"
 
-mvn clean install -DskipTests
-mvn spring-boot:run
+./scripts/mvn-project clean install -DskipTests
+./scripts/mvn-project spring-boot:run
 ```
 
 健康检查：
@@ -93,7 +94,7 @@ mvn spring-boot:run
 curl http://localhost:3001/api/health
 ```
 
-系统数据库（`spring.datasource`）只保存项目管理元数据，不承载业务采集表。管理端创建项目不会自动创建数据库或用户，接入项目的目标数据库和账号需要提前准备：
+1.0.1 运行时只向系统数据库（`spring.datasource`）写入平台元数据，不把业务采集事实写入其中。管理端创建项目不会自动创建数据库或用户，接入项目的目标数据库和账号需要提前准备：
 
 ```sql
 CREATE ROLE your_project_user LOGIN PASSWORD 'replace-with-project-password';
@@ -107,8 +108,9 @@ GRANT USAGE, CREATE ON SCHEMA analytics TO your_project_user;
 
 **必需配置：**
 ```bash
-export ADMIN_TOKEN=your_secure_admin_token_here
+export ADMIN_TOKEN=replace-with-at-least-32-random-characters
 export DB_PASSWORD=your_db_password
+export PROJECT_CREDENTIAL_ENCRYPTION_KEY=base64_encoded_32_byte_key
 ```
 
 **邮件告警配置（可选）：**
@@ -119,6 +121,8 @@ export MAIL_PORT=465
 export MAIL_USERNAME=notify@mail.yourdomain.com
 export MAIL_PASSWORD=your_smtp_password
 export ALERT_EMAIL=admin@yourdomain.com
+# Optional tuning; the scheduler only consumes the outbox when mail is configured.
+export WORK_ORDER_OUTBOX_SCHEDULER_ENABLED=true
 ```
 
 **双因素认证 (2FA) 配置（可选）：**
@@ -177,11 +181,18 @@ sudo bash ops/analyticshub rotate-secrets
 
 ## 数据库迁移
 
-使用 Flyway 进行数据库版本管理：
+使用 Flyway 进行数据库版本管理。AnalyticsHub 有两条互相独立的 migration stream（迁移链）：
+
+- `src/main/resources/db/migration/`：AnalyticsHub system database，只保存项目配置、语义字典和 Dashboard 定义等平台元数据；应用启动时自动迁移。
+- `src/main/resources/db/project-migration/`：每个接入项目自己的数据库/schema，保存设备、事件、会话、Counter 和工单；通过项目初始化/升级接口逐项目迁移。
+
+已发布的 system V2 遗留 `analytics_idempotency_keys` 表在 1.0.1 中不再读写；升级时为避免破坏性清理会保留该表。当前事件幂等状态只保存在 project database V2 表中，详见 [1.0.1 升级说明](docs/RELEASE_1.0.1.md)。
+
+不要使用 system database 的 `./scripts/mvn-project flyway:*` 命令替代项目库迁移。
 
 ### 创建新迁移
 
-在 `src/main/resources/db/migration/` 目录下创建新的 SQL 文件：
+根据数据归属，在上述对应目录创建新的 SQL 文件：
 
 ```
 V3__add_new_feature.sql
@@ -191,15 +202,25 @@ V3__add_new_feature.sql
 
 ### 迁移状态
 
+system database：
+
 ```bash
-mvn flyway:info
+./scripts/mvn-project flyway:info
 ```
+
+project database：调用 `GET /api/admin/projects/{id}/health` 查看 `schemaVersion`、`pendingMigrations` 和 `schemaCurrent`。
 
 ### 手动迁移
 
+system database：
+
 ```bash
-mvn flyway:migrate
+./scripts/mvn-project flyway:migrate
 ```
+
+project database：调用 `POST /api/admin/projects/{id}/init`。该接口是幂等升级入口，不会重建业务项目数据库。
+
+从 1.0.0 升级到 1.0.1 前，请阅读 [1.0.1 升级说明](docs/RELEASE_1.0.1.md)。
 
 ## 配置说明
 
@@ -208,9 +229,10 @@ mvn flyway:migrate
 主要配置项在 `application.yml`:
 
 - `server.port`: 服务端口（默认 3001）
+- `server.address`: `prod` 默认绑定 `127.0.0.1`，通过 Nginx 对外服务
 - `spring.datasource.*`: 数据库连接配置
 - `spring.flyway.*`: Flyway 迁移配置
-- `app.rate-limit.*`: 请求限流配置
+- `app.rate-limit.*`: 匿名公开入口的单实例基础限流配置；多实例还应在共享网关限流
 - `app.security.*`: 安全配置
 - `app.traffic.*`: 官网流量采集配置（Token、IP 哈希盐）
 
@@ -241,7 +263,7 @@ CREATE SCHEMA IF NOT EXISTS analytics AUTHORIZATION your_project_user;
 
 ## 许可证
 
-MIT License
+[MIT License](LICENSE)
 
 ## 📧 联系作者
 

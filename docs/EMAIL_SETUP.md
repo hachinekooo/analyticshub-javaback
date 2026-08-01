@@ -21,6 +21,9 @@ MAIL_HOST=smtp.example.com
 MAIL_PORT=465
 MAIL_USERNAME=notify@example.com
 MAIL_PASSWORD=replace-with-smtp-password
+MAIL_CONNECTION_TIMEOUT_MS=10000
+MAIL_READ_TIMEOUT_MS=10000
+MAIL_WRITE_TIMEOUT_MS=10000
 ALERT_EMAIL=admin@example.com
 ```
 
@@ -29,7 +32,10 @@ ALERT_EMAIL=admin@example.com
 - `MAIL_ENABLED`：是否启用邮件发送。
 - `MAIL_HOST` / `MAIL_PORT`：SMTP 服务地址和端口。
 - `MAIL_USERNAME` / `MAIL_PASSWORD`：SMTP 账号和密码。
+- `MAIL_CONNECTION_TIMEOUT_MS` / `MAIL_READ_TIMEOUT_MS` / `MAIL_WRITE_TIMEOUT_MS`：连接、读取和写入的超时毫秒数，默认均为 10000。
 - `ALERT_EMAIL`：安全告警接收地址。
+
+三个 SMTP timeout 应保持为正整数，并明显小于 `WORK_ORDER_OUTBOX_CLAIM_TIMEOUT_SECONDS`。默认每项 10 秒，outbox claim 默认 300 秒，可避免邮件网络阻塞接近任务回收窗口。
 
 ## 端口与加密
 

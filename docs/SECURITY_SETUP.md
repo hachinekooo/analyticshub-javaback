@@ -56,6 +56,10 @@ APP_SECURITY_2FA_ENABLED=true
 APP_SECURITY_2FA_SECRET=replace-with-totp-secret
 ```
 
+开启 2FA 时 secret 必须是 16–128 个字符的无 padding Base32 值（字母与 `2-7`，大小写均可），否则应用会在启动阶段 fail-fast（拒绝启动），部署前检查也会失败。
+
+`ADMIN_TOKEN` 可以留空以禁用管理端；一旦配置，则不允许首尾空白且长度必须至少 32 个字符，否则应用会在启动阶段拒绝启动。
+
 相关 `application.yml` 路径：
 
 - `spring.datasource.*`

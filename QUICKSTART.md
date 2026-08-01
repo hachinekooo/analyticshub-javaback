@@ -56,7 +56,8 @@ export DB_NAME=analytics
 export DB_SCHEMA=analytics
 export DB_USER=analytic
 export DB_PASSWORD=replace-with-local-analytic-password
-export ADMIN_TOKEN=replace-with-local-admin-token
+export ADMIN_TOKEN=replace-with-at-least-32-random-characters
+export PROJECT_CREDENTIAL_ENCRYPTION_KEY="$(openssl rand -base64 32)"
 ```
 
 也可以直接编辑 `src/main/resources/application.yml`，但不要提交真实密码、Token 或生产配置。
@@ -64,8 +65,8 @@ export ADMIN_TOKEN=replace-with-local-admin-token
 ## 4. 构建并启动
 
 ```bash
-mvn clean install -DskipTests
-mvn spring-boot:run
+./scripts/mvn-project clean install -DskipTests
+./scripts/mvn-project spring-boot:run
 ```
 
 应用默认监听 `3001`。
@@ -82,7 +83,7 @@ curl http://localhost:3001/api/health
 {
   "status": "UP",
   "service": "analyticshub-javaback",
-  "version": "1.0.0"
+  "version": "1.0.1"
 }
 ```
 
@@ -98,14 +99,14 @@ sudo systemctl start postgresql
 端口被占用时，可以临时指定端口：
 
 ```bash
-mvn spring-boot:run -Dspring-boot.run.arguments=--server.port=3002
+./scripts/mvn-project spring-boot:run -Dspring-boot.run.arguments=--server.port=3002
 ```
 
 Flyway 本地迁移失败且可以重建本地库时：
 
 ```bash
 psql -U postgres -d analytics -c "DROP SCHEMA analytics CASCADE; CREATE SCHEMA analytics AUTHORIZATION analytic;"
-mvn spring-boot:run
+./scripts/mvn-project spring-boot:run
 ```
 
 ## 生产部署入口

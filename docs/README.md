@@ -24,6 +24,8 @@ agent_notes: 用于选择要阅读的文档；不要替代具体 API 或运维�
 - 本地启动：[../QUICKSTART.md](../QUICKSTART.md)
 - 项目总览：[../README.md](../README.md)
 - 架构与认证链路：[ARCHITECTURE.md](ARCHITECTURE.md)
+- Dashboard 与项目定制：[DASHBOARD_CUSTOMIZATION.md](DASHBOARD_CUSTOMIZATION.md)
+- 1.0.1 升级说明：[RELEASE_1.0.1.md](RELEASE_1.0.1.md)
 
 ## API 参考
 

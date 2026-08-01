@@ -42,6 +42,8 @@ sudo bash ops/analyticshub bootstrap
 
 这个命令会准备基础包、Java、Nginx、firewalld、PostgreSQL、swap、journald，以及 AnalyticsHub 的 `analytics` 数据库、`analytic` 用户和 `analytics` schema。
 
+该命令按幂等方式执行，可以用于补齐或复查基础环境。数据库角色已存在时，它不会重设密码，也不会改写已有 app env 和 credential file。需要主动更换密码时，只使用后文的 `rotate-secrets`，不要通过重复 `bootstrap` 或重新传入 `ANALYTICS_DB_PASSWORD` 实现。
+
 ### 3. 配置证书和 Nginx 子路由
 
 ```bash
@@ -95,13 +97,13 @@ analyticshub.service
 本地构建：
 
 ```bash
-mvn clean package -DskipTests
+./scripts/mvn-project clean package -DskipTests
 ```
 
 上传：
 
 ```bash
-scp target/analyticshub-0.0.1-SNAPSHOT.jar user@server:/opt/analyticshub/app.jar
+scp target/analyticshub-1.0.1.jar user@server:/opt/analyticshub/app.jar
 ```
 
 服务器上修正权限：
@@ -123,6 +125,7 @@ sudo vim /etc/analyticshub/analyticshub.env
 
 ```env
 SPRING_PROFILES_ACTIVE=prod
+SERVER_ADDRESS=127.0.0.1
 SERVER_PORT=3001
 DB_HOST=127.0.0.1
 DB_PORT=5432
@@ -131,7 +134,14 @@ DB_SCHEMA=analytics
 DB_USER=analytic
 DB_PASSWORD=replace-with-real-password
 ADMIN_TOKEN=replace-with-at-least-32-random-characters
+PROJECT_CREDENTIAL_ENCRYPTION_KEY=replace-with-base64-32-byte-key
+APP_CORS_ALLOWED_ORIGINS=https://analytics.example.com
+APP_CORS_ALLOW_CREDENTIALS=false
 ```
+
+`SERVER_ADDRESS=127.0.0.1` 让应用端口只接受本机 Nginx 转发；不要改成 `0.0.0.0` 暴露 3001。对外入口只开放 Nginx 的 HTTP/HTTPS 端口。
+
+`ops/analyticshub deploy` 首次创建 env 时会自动生成 `PROJECT_CREDENTIAL_ENCRYPTION_KEY`。不要在后续部署时重新生成或覆盖它；应把这把 key 单独备份，否则已保存的项目数据库密码无法解密。
 
 需要邮件或 2FA 时，再配置：
 
@@ -141,6 +151,7 @@ MAIL_HOST=smtpdm.aliyun.com
 MAIL_USERNAME=notify@example.com
 MAIL_PASSWORD=replace-with-smtp-password
 ALERT_EMAIL=admin@example.com
+WORK_ORDER_OUTBOX_SCHEDULER_ENABLED=true
 
 APP_SECURITY_2FA_ENABLED=true
 APP_SECURITY_2FA_SECRET=replace-with-totp-secret

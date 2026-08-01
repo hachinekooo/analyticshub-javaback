@@ -17,7 +17,7 @@ AnalyticsHub is an open-source Java backend for multi-project analytics operatio
 
 ## Project Facts
 
-- Stack: JDK 25, Spring Boot 4.0.1, Spring Security 7.x, Maven, PostgreSQL 15+, Flyway, MyBatis Plus, HikariCP.
+- Stack: JDK 25, Spring Boot 4.0.7, Spring Security 7.x, Maven, PostgreSQL 15+, Flyway, MyBatis Plus, HikariCP.
 - Main package: `com.github.analyticshub`.
 - Default backend port: `3001`.
 - Public health endpoint: `GET /api/health`.
@@ -82,13 +82,13 @@ When code, scripts, and docs disagree, inspect the code/scripts first, update th
 
 ## Commands
 
-Use Maven directly in this repository:
+Use the repository Maven entrypoint so jenv selects the project JDK consistently:
 
 ```bash
-mvn -DskipTests compile
-mvn test
-mvn -Dtest=ClassNameTest test
-mvn -DskipTests package
+./scripts/mvn-project -DskipTests compile
+./scripts/mvn-project test
+./scripts/mvn-project -Dtest=ClassNameTest test
+./scripts/mvn-project -DskipTests package
 ```
 
 Validate ops scripts after changing `ops/**`:

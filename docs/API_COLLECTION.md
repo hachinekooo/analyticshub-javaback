@@ -13,10 +13,12 @@ agent_notes: 按路径或小节检索；不要作为默认上下文整篇读取
 
 ## 认证机制
 
-- **采集端接口**：API Key + HMAC 签名 + 时间戳校验
-  - 适用于：设备注册、事件追踪、会话上传、App 内流量指标采集
+- **设备首次注册**：`POST /api/v1/auth/register` 是公开 bootstrap endpoint（引导注册入口），不使用 HMAC；它只为从未注册的 device UUID 发放一次凭据。
+- **已注册采集端接口**：API Key + HMAC 签名 + 时间戳校验
+  - 适用于：凭据轮换、事件追踪、会话上传、App 内流量指标采集
 - **官网流量采集**：无需 HMAC 签名。
-  - 基于 Cookie (`ah_did`) 自动识别设备。
+  - 同源接入可基于 first-party Cookie (`ah_did`) 零配置识别设备。
+  - 跨域接入应稳定传递 `X-Device-ID`。
   - 可选 `X-Traffic-Token`。
   - 适用于：`/api/public/traffic/**`
 
@@ -51,6 +53,22 @@ X-Project-ID: your-project-id
 }
 ```
 
+公共注册不会覆盖同一项目下已存在 device UUID 的凭据。重复注册返回 HTTP 409 `DEVICE_ALREADY_REGISTERED`；客户端必须安全持久化首次响应，不能在遇到任意 HTTP 401 时直接删除凭据并重新注册。设备已经丢失全部凭据时，应由管理员调用管理端 credential reset endpoint（凭据重置接口），而不是恢复公开覆盖注册。
+
+#### 已认证凭据轮换
+
+```http
+POST /api/v1/auth/credentials/rotate
+X-Project-ID: your-project-id
+X-API-Key: ak_xxxxxxxxxxxxx
+X-Device-ID: 550e8400-e29b-41d4-a716-446655440000
+X-User-ID: 00112233-4455-6677-8899-aabbccddeeff
+X-Timestamp: 1673520000000
+X-Signature: hmac_signature_here
+```
+
+响应 shape 与注册相同，但 `isNew=false`。客户端收到后先持久化完整新凭据，再切换内存状态。服务端默认让旧凭据保留 600 秒 grace window；窗口内旧凭据仍可认证所有 HMAC API。如果首次响应丢失，用旧凭据重试 rotate endpoint 会返回已生效的新凭据，不会再次轮换。
+
 ### 2. 事件追踪
 
 ```http
@@ -59,7 +77,7 @@ Content-Type: application/json
 X-Project-ID: your-project-id
 X-API-Key: ak_xxxxxxxxxxxxx
 X-Device-ID: 550e8400-e29b-41d4-a716-446655440000
-X-User-ID: 00112233445566778899aabbccddeeff
+X-User-ID: 00112233-4455-6677-8899-aabbccddeeff
 X-Timestamp: 1673520000000
 X-Signature: hmac_signature_here
 
@@ -70,12 +88,13 @@ X-Signature: hmac_signature_here
     "button_name": "submit",
     "screen": "home"
   },
-  "sessionId": "660e8400-e29b-41d4-a716-446655440000"
+  "sessionId": "660e8400-e29b-41d4-a716-446655440000",
+  "idempotencyKey": "button-click:550e8400:1673520000000"
 }
 ```
 
 说明：
-- `X-User-ID` 必须是 32 位十六进制字符串（不含 `-`）。
+- `X-User-ID` 必须是 canonical UUID（标准 UUID，包含连字符）。缩写 UUID 和 32 位无连字符写法都会被拒绝，避免同一用户形成多个统计身份。
 - HMAC 签名串格式：`method|path|timestamp|deviceId|userId|body`。
 - `body` 使用原始请求体字符串；没有请求体时为空字符串。
 
@@ -91,6 +110,8 @@ X-Signature: hmac_signature_here
 }
 ```
 
+`idempotencyKey` 是可选的 client-generated key（客户端生成键），最大 256 字符。同一项目内，同 key + 同 payload 会重放首次 `eventId`；同 key + 不同 payload 返回 HTTP 409 `IDEMPOTENCY_KEY_REUSED`。批量接口中的每个 item 独立使用自己的 key；单批最多 100 条。
+
 ### 3. 批量事件追踪
 
 ```http
@@ -99,7 +120,7 @@ Content-Type: application/json
 X-Project-ID: your-project-id
 X-API-Key: ak_xxxxxxxxxxxxx
 X-Device-ID: 550e8400-e29b-41d4-a716-446655440000
-X-User-ID: 00112233445566778899aabbccddeeff
+X-User-ID: 00112233-4455-6677-8899-aabbccddeeff
 X-Timestamp: 1673520000000
 X-Signature: hmac_signature_here
 
@@ -111,7 +132,8 @@ X-Signature: hmac_signature_here
       "button_name": "submit",
       "screen": "home"
     },
-    "sessionId": "660e8400-e29b-41d4-a716-446655440000"
+    "sessionId": "660e8400-e29b-41d4-a716-446655440000",
+    "idempotencyKey": "button-click:550e8400:1673520000000"
   }
 ]
 ```
@@ -133,7 +155,7 @@ Content-Type: application/json
 X-Project-ID: your-project-id
 X-API-Key: ak_xxxxxxxxxxxxx
 X-Device-ID: 550e8400-e29b-41d4-a716-446655440000
-X-User-ID: 00112233445566778899aabbccddeeff
+X-User-ID: 00112233-4455-6677-8899-aabbccddeeff
 X-Timestamp: 1673520000000
 X-Signature: hmac_signature_here
 
@@ -166,7 +188,7 @@ Content-Type: application/json
 X-Project-ID: your-project-id
 X-API-Key: ak_xxxxxxxxxxxxx
 X-Device-ID: 550e8400-e29b-41d4-a716-446655440000
-X-User-ID: 00112233445566778899aabbccddeeff
+X-User-ID: 00112233-4455-6677-8899-aabbccddeeff
 X-Timestamp: 1673520000000
 X-Signature: hmac_signature_here
 
@@ -218,11 +240,35 @@ POST /api/v1/traffic-metrics/batch
 
 该入口专为“官网流量统计”设计，追求接入极简：
 
-- **认证**：无需 HMAC 签名。基于 Cookie (`ah_did`) 自动识别设备。
+- **认证**：无需 HMAC 签名。可选配置 `X-Traffic-Token`。
 - **项目识别**：支持通过请求头 `X-Project-ID` 或 URL 参数 `projectId` 传递（如 `?projectId=your_project`）。
-- **设备识别**：前端无需传递任何 ID。服务端通过 `ah_did` Cookie 自动识别访客（用于 UV 统计）。
-- **跨域支持**：请求请开启 `credentials: 'include'` 确保 Cookie 正常传递。
+- **设备识别优先级**：canonical UUID 格式的 `X-Device-ID` → 同源 `ah_did` Cookie → 服务端生成新 UUID 并写入 `SameSite=Lax` first-party Cookie。
+- **同源接入**：无需维护设备 ID；浏览器会复用 `ah_did` Cookie，可零配置完成 UV 识别。
+- **跨域接入**：SDK 应在站点自己的 `localStorage` 生成并保存稳定 UUID，每次通过 `X-Device-ID` 传递。浏览器可能拦截或分区第三方 Cookie，因此不能把 `credentials: 'include'` 当作可靠的跨域 UV 方案。
 - **元数据**：服务端会自动解析 `userAgent`、机器人标记 (`isBot`)，并自动补全 `referrer`（基于 Header Fallback）。
+
+跨域 SDK 示例：
+
+```js
+const storageKey = 'analyticshub_device_id';
+let deviceId = localStorage.getItem(storageKey);
+if (!deviceId) {
+  deviceId = crypto.randomUUID();
+  localStorage.setItem(storageKey, deviceId);
+}
+
+await fetch('https://analytics.example.com/api/public/traffic/track', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-Project-ID': 'your_project',
+    'X-Device-ID': deviceId
+  },
+  body: JSON.stringify({ metricType: 'page_view', pagePath: location.pathname })
+});
+```
+
+`X-Device-ID` 必须是小写、带连字符的 canonical UUID；格式非法时接口返回 HTTP 400，不会回退到 Cookie 或随机 ID。
 
 **查询汇总数据（供官网展示实时 PV/UV）：**
 
@@ -253,6 +299,7 @@ GET /api/public/traffic/summary?projectId=your-project-id&from=2026-01-01&to=202
 POST /api/public/traffic/track
 Content-Type: application/json
 X-Project-ID: your-project-id
+X-Device-ID: 550e8400-e29b-41d4-a716-446655440000
 X-Traffic-Token: your_traffic_token
 ```
 
@@ -272,6 +319,9 @@ X-Traffic-Token: your_traffic_token
 
 ```http
 POST /api/public/traffic/batch
+Content-Type: application/json
+X-Project-ID: your-project-id
+X-Device-ID: 550e8400-e29b-41d4-a716-446655440000
 ```
 
 **响应示例（批量）：**
@@ -290,7 +340,7 @@ POST /api/public/traffic/batch
 
 ### 7. 运营累计统计（官网展示集成）
 
-适用于“累计写信 10000 封”这类高性能运营展示。
+适用于“累计完成任务 10000 项”这类高性能运营展示。
 
 *   **批量加载（推荐首页使用）**：
     返回所有标记为 `isPublic=true` 的计数器，并**自动根据请求头切换语言**。
@@ -306,10 +356,10 @@ POST /api/public/traffic/batch
   "success": true,
   "data": [
     {
-      "key": "total_letters",
+      "key": "tasks_completed",
       "value": 1024,
-      "displayName": "累计寄信",
-      "unit": "封",
+      "displayName": "累计完成任务",
+      "unit": "项",
       "updatedAt": "2026-02-12T09:00:00Z"
     },
     {
@@ -340,7 +390,7 @@ GET /api/v1/protected/test
 X-Project-ID: your-project-id
 X-API-Key: ak_xxxxxxxxxxxxx
 X-Device-ID: 550e8400-e29b-41d4-a716-446655440000
-X-User-ID: 00112233445566778899aabbccddeeff
+X-User-ID: 00112233-4455-6677-8899-aabbccddeeff
 X-Timestamp: 1673520000000
 X-Signature: hmac_signature_here
 ```
