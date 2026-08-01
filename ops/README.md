@@ -52,7 +52,11 @@ sudo bash ops/analyticshub rotate-secrets
 sudo bash ops/analyticshub backup-db
 ```
 
+API 路由默认设置 Nginx `client_max_body_size 1m`，与后端 HMAC body 上限一致。确需调整时，在执行 `web` 命令时显式传入 `ANALYTICSHUB_MAX_BODY_SIZE`，并同步调整 `APP_SECURITY_MAX_REQUEST_BODY_BYTES`；不要只放宽其中一层。
+
 底层脚本仍可单独执行，便于排障和局部重跑。
+
+`bootstrap` 可以安全重跑：数据库角色只在不存在时创建并设置初始密码；角色已存在时，不修改 PostgreSQL 密码、app env 或 root-only credential file。即使再次传入 `ANALYTICS_DB_PASSWORD`，也不会把它应用到已有角色。所有主动密码变更统一通过 `rotate-secrets` 完成，确保 PostgreSQL、app env 和 credential file 一致更新。
 
 ## 当前口径
 
@@ -93,6 +97,8 @@ sudo systemctl restart analyticshub
   - `/analyticshub/api/public/` -> `127.0.0.1:3001/api/public/`
 - 真实密钥：数据库密码、SMTP 密码、管理端 token、2FA secret 只写入服务器 root-only env，不提交到 Git。
 - 前端 dist：当前推荐路径为 `/usr/share/nginx/html/analyticshub-frontend/dist`，前端产物需要单独上传或部署。
+
+首次创建数据库角色时，初始密码按以下顺序选取：显式传入的 `ANALYTICS_DB_PASSWORD`、已有 app env 的 `DB_PASSWORD`、已有 credential file 的 `ANALYTICS_DB_PASSWORD`、自动生成的强随机密码。仅首次创建会写入 `/root/analyticshub-db-credentials.txt`；后续 `bootstrap` 不再改写该文件。
 
 ## 目录约定
 
@@ -155,3 +161,13 @@ sudo -E env ROTATE_2FA_SECRET=true bash ops/analyticshub rotate-secrets
 # 只轮换 admin token，不改数据库密码。
 sudo -E env ROTATE_DB_PASSWORD=false bash ops/analyticshub rotate-secrets
 ```
+
+## 脚本回归测试
+
+数据库初始化测试使用命令桩模拟 PostgreSQL 和系统命令，不会修改本机用户、数据库或 `/etc`：
+
+```bash
+bash ops/tests/run.sh
+```
+
+测试覆盖首次安装、重复 `bootstrap` 和已有 app env/数据库角色三种情况。

@@ -7,6 +7,8 @@ set -euo pipefail
 PG_VERSION="${PG_VERSION:-15}"
 PG_PORT="${PG_PORT:-5432}"
 EXPOSE_POSTGRES_PUBLICLY="${EXPOSE_POSTGRES_PUBLICLY:-false}"
+PGDG_REPO_FILE="${PGDG_REPO_FILE:-/etc/yum.repos.d/pgdg-analyticshub.repo}"
+PGDG_GPG_KEY_URL="https://download.postgresql.org/pub/repos/yum/keys/PGDG-RPM-GPG-KEY-RHEL"
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
 
@@ -28,12 +30,17 @@ install_postgresql_el() {
   local manager="$1"
   if ! rpm -q "postgresql${PG_VERSION}-server" >/dev/null 2>&1; then
     "$manager" -qy module disable postgresql || true
-    cat >/etc/yum.repos.d/pgdg-alibaba.repo <<EOF
+    install -d -m 755 "$(dirname "$PGDG_REPO_FILE")"
+    cat >"$PGDG_REPO_FILE" <<EOF
 [pgdg${PG_VERSION}]
 name=PostgreSQL ${PG_VERSION}
 baseurl=https://mirrors.aliyun.com/postgresql/repos/yum/${PG_VERSION}/redhat/rhel-3-x86_64
 enabled=1
-gpgcheck=0
+# RPM payloads must validate against the PostgreSQL Global Development Group
+# signing key fetched from the independent official PostgreSQL origin.
+gpgcheck=1
+gpgkey=${PGDG_GPG_KEY_URL}
+sslverify=1
 EOF
     "$manager" install -y "postgresql${PG_VERSION}-server" "postgresql${PG_VERSION}"
   fi
@@ -113,24 +120,31 @@ configure_listen() {
   fi
 }
 
-require_root
-manager="$(detect_pkg_manager)"
-case "$manager" in
-  dnf|yum) install_postgresql_el "$manager" ;;
-  apt-get) install_postgresql_apt ;;
-  *) echo "No supported package manager found." >&2; exit 1 ;;
-esac
+main() {
+  require_root
+  local manager pg_service pg_data_dir pg_config_dir
+  manager="$(detect_pkg_manager)"
+  case "$manager" in
+    dnf|yum) install_postgresql_el "$manager" ;;
+    apt-get) install_postgresql_apt ;;
+    *) echo "No supported package manager found." >&2; exit 1 ;;
+  esac
 
-PG_SERVICE="$(service_name)"
-PG_DATA_DIR="$(data_dir)"
-PG_CONFIG_DIR="$(config_dir)"
-init_database_if_needed "$PG_DATA_DIR"
-configure_listen "$PG_CONFIG_DIR"
+  pg_service="$(service_name)"
+  pg_data_dir="$(data_dir)"
+  pg_config_dir="$(config_dir)"
+  init_database_if_needed "$pg_data_dir"
+  configure_listen "$pg_config_dir"
 
-systemctl enable --now "$PG_SERVICE"
-systemctl restart "$PG_SERVICE"
+  systemctl enable --now "$pg_service"
+  systemctl restart "$pg_service"
 
-echo "PostgreSQL is ready."
-echo "  Service: $PG_SERVICE"
-echo "  Data dir: $PG_DATA_DIR"
-echo "  Config dir: $PG_CONFIG_DIR"
+  echo "PostgreSQL is ready."
+  echo "  Service: $pg_service"
+  echo "  Data dir: $pg_data_dir"
+  echo "  Config dir: $pg_config_dir"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

@@ -36,6 +36,10 @@ random_secret() {
   openssl rand -hex 32
 }
 
+random_encryption_key() {
+  openssl rand -base64 32 | tr -d '\n'
+}
+
 ensure_user() {
   getent group "$APP_GROUP" >/dev/null || groupadd --system "$APP_GROUP"
   id "$APP_USER" >/dev/null 2>&1 || useradd --system --gid "$APP_GROUP" --home-dir "$APP_DIR" --shell /usr/sbin/nologin "$APP_USER"
@@ -65,6 +69,7 @@ install_env() {
     -e "s|LOG_PATH=/var/log/analyticshub|LOG_PATH=${LOG_DIR}|" \
     -e "s|LOG_FILE=analyticshub|LOG_FILE=${APP_NAME}|" \
     -e "s|ADMIN_TOKEN=replace-with-at-least-32-random-characters|ADMIN_TOKEN=$(random_secret)|" \
+    -e "s|PROJECT_CREDENTIAL_ENCRYPTION_KEY=replace-with-base64-32-byte-key|PROJECT_CREDENTIAL_ENCRYPTION_KEY=$(random_encryption_key)|" \
     "$ENV_FILE"
   echo "Created env file: $ENV_FILE"
 }

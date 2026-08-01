@@ -12,6 +12,7 @@ set -euo pipefail
 
 CONF_FILE="${CONF_FILE:-/etc/nginx/conf.d/analyticshub.conf}"
 ANALYTICSHUB_WEB_ROOT="${ANALYTICSHUB_WEB_ROOT:-/usr/share/nginx/html/analyticshub-frontend/dist}"
+ANALYTICSHUB_MAX_BODY_SIZE="${ANALYTICSHUB_MAX_BODY_SIZE:-1m}"
 CONF_DIR="$(dirname "$CONF_FILE")"
 
 require_root() {
@@ -22,6 +23,11 @@ require_root() {
 }
 
 require_root
+
+if [[ ! "$ANALYTICSHUB_MAX_BODY_SIZE" =~ ^[1-9][0-9]*[kKmMgG]?$ ]]; then
+  echo "ANALYTICSHUB_MAX_BODY_SIZE must be a positive nginx size such as 1m or 512k." >&2
+  exit 1
+fi
 
 regex_escape() {
   printf "%s" "$1" | sed 's/[][\/.^$*+?{}()|]/\\&/g'
@@ -78,6 +84,7 @@ location = /analyticshub {
 }
 
 location ^~ /analyticshub/api/ {
+    client_max_body_size ${ANALYTICSHUB_MAX_BODY_SIZE};
     proxy_pass http://127.0.0.1:3001/api/;
     proxy_http_version 1.1;
     proxy_set_header Host \$host;

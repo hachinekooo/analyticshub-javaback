@@ -2,8 +2,11 @@
 set -euo pipefail
 
 # Create the AnalyticsHub database, role, and schema.
-# Passwords are never printed. If ANALYTICS_DB_PASSWORD is empty, a strong
-# password is generated and written to a root-only credential file.
+#
+# This script owns initial database provisioning only. Once the role exists,
+# its password and all secret files are left untouched. Password changes must
+# go through rotate-analytics-secrets.sh so PostgreSQL and the app env are
+# updated as one operation.
 
 PG_SUPERUSER="${PG_SUPERUSER:-postgres}"
 DB_NAME="${DB_NAME:-analytics}"
@@ -11,6 +14,8 @@ DB_USER="${DB_USER:-analytic}"
 DB_SCHEMA="${DB_SCHEMA:-analytics}"
 ANALYTICS_DB_PASSWORD="${ANALYTICS_DB_PASSWORD:-}"
 CREDENTIAL_FILE="${CREDENTIAL_FILE:-/root/analyticshub-db-credentials.txt}"
+APP_NAME="${APP_NAME:-analyticshub}"
+ENV_FILE="${ENV_FILE:-/etc/${APP_NAME}/${APP_NAME}.env}"
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
 
@@ -29,6 +34,15 @@ sql_escape() {
   printf "%s" "$1" | sed "s/'/''/g"
 }
 
+validate_identifier() {
+  local name="$1"
+  local value="$2"
+  if [[ ! "$value" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    echo "$name must be a PostgreSQL identifier containing only letters, digits, and underscores: $value" >&2
+    exit 1
+  fi
+}
+
 psql_as_admin() {
   if [[ "$(id -un)" == "$PG_SUPERUSER" ]]; then
     psql -v ON_ERROR_STOP=1 "$@"
@@ -39,19 +53,51 @@ psql_as_admin() {
   fi
 }
 
-ensure_role() {
+role_exists() {
+  local escaped result
+  escaped="$(sql_escape "$DB_USER")"
+  result="$(psql_as_admin postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = '${escaped}';")"
+  [[ "${result//[[:space:]]/}" == "1" ]]
+}
+
+get_file_value() {
+  local file="$1"
+  local key="$2"
+  [[ -f "$file" ]] || return 1
+  awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$file"
+}
+
+is_usable_password() {
+  local value="$1"
+  [[ -n "$value" && "$value" != replace-with-* ]]
+}
+
+resolve_initial_password() {
+  local value
+  if is_usable_password "$ANALYTICS_DB_PASSWORD"; then
+    return
+  fi
+
+  value="$(get_file_value "$ENV_FILE" DB_PASSWORD || true)"
+  if is_usable_password "$value"; then
+    ANALYTICS_DB_PASSWORD="$value"
+    return
+  fi
+
+  value="$(get_file_value "$CREDENTIAL_FILE" ANALYTICS_DB_PASSWORD || true)"
+  if is_usable_password "$value"; then
+    ANALYTICS_DB_PASSWORD="$value"
+    return
+  fi
+
+  ANALYTICS_DB_PASSWORD="$(random_password)"
+}
+
+create_role() {
   local escaped
   escaped="$(sql_escape "$ANALYTICS_DB_PASSWORD")"
   psql_as_admin postgres <<SQL
-DO \$\$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${DB_USER}') THEN
-    CREATE ROLE ${DB_USER} LOGIN PASSWORD '${escaped}';
-  ELSE
-    ALTER ROLE ${DB_USER} LOGIN PASSWORD '${escaped}';
-  END IF;
-END
-\$\$;
+CREATE ROLE ${DB_USER} LOGIN PASSWORD '${escaped}';
 SQL
 }
 
@@ -87,13 +133,35 @@ EOF
   chmod 600 "$CREDENTIAL_FILE"
 }
 
-require_root
-ANALYTICS_DB_PASSWORD="${ANALYTICS_DB_PASSWORD:-$(random_password)}"
+main() {
+  local role_created=false
 
-ensure_role
-ensure_database
-ensure_schema
-write_credentials_file
+  require_root
+  validate_identifier PG_SUPERUSER "$PG_SUPERUSER"
+  validate_identifier DB_NAME "$DB_NAME"
+  validate_identifier DB_USER "$DB_USER"
+  validate_identifier DB_SCHEMA "$DB_SCHEMA"
 
-echo "AnalyticsHub database is ready."
-echo "Credentials written to root-only file: $CREDENTIAL_FILE"
+  if role_exists; then
+    echo "AnalyticsHub database role already exists; password and secret files were kept unchanged."
+  else
+    resolve_initial_password
+    create_role
+    write_credentials_file
+    role_created=true
+  fi
+
+  ensure_database
+  ensure_schema
+
+  echo "AnalyticsHub database is ready."
+  if [[ "$role_created" == "true" ]]; then
+    echo "Initial credentials written to root-only file: $CREDENTIAL_FILE"
+  else
+    echo "Use ops/analyticshub rotate-secrets for intentional password changes."
+  fi
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
