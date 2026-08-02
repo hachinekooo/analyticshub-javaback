@@ -49,18 +49,21 @@ public class AdminProjectService {
     private final MultiDataSourceManager dataSourceManager;
     private final ProjectSchemaMigrator projectSchemaMigrator;
     private final ProjectCredentialCipher credentialCipher;
+    private final SemanticTemplateService semanticTemplateService;
 
 
     public AdminProjectService(
             AnalyticsProjectMapper projectMapper,
             MultiDataSourceManager dataSourceManager,
             ProjectSchemaMigrator projectSchemaMigrator,
-            ProjectCredentialCipher credentialCipher
+            ProjectCredentialCipher credentialCipher,
+            SemanticTemplateService semanticTemplateService
     ) {
         this.projectMapper = projectMapper;
         this.dataSourceManager = dataSourceManager;
         this.projectSchemaMigrator = projectSchemaMigrator;
         this.credentialCipher = credentialCipher;
+        this.semanticTemplateService = semanticTemplateService;
     }
 
     public List<AnalyticsProject> listProjects() {
@@ -98,6 +101,7 @@ public class AdminProjectService {
         project.setIsActive(Boolean.TRUE);
 
         projectMapper.insert(project);
+        semanticTemplateService.initialize(projectId, request.analysisTemplate());
 
         invalidateProjectRuntimeAfterCommit(projectId);
 
@@ -140,6 +144,7 @@ public class AdminProjectService {
         }
 
         projectMapper.updateById(project);
+        semanticTemplateService.initialize(project.getProjectId(), project.getAnalysisTemplate());
         invalidateProjectRuntimeAfterCommit(project.getProjectId());
 
         return projectMapper.selectById(project.getId());

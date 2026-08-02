@@ -42,10 +42,16 @@ public class AdminProductAnalyticsService {
 
     private final MultiDataSourceManager dataSourceManager;
     private final ObjectMapper objectMapper;
+    private final SemanticDictionaryService semanticDictionaryService;
 
-    public AdminProductAnalyticsService(MultiDataSourceManager dataSourceManager, ObjectMapper objectMapper) {
+    public AdminProductAnalyticsService(
+            MultiDataSourceManager dataSourceManager,
+            ObjectMapper objectMapper,
+            SemanticDictionaryService semanticDictionaryService
+    ) {
         this.dataSourceManager = dataSourceManager;
         this.objectMapper = objectMapper;
+        this.semanticDictionaryService = semanticDictionaryService;
     }
 
     public AdminFunnelResponse getFunnel(
@@ -57,10 +63,11 @@ public class AdminProductAnalyticsService {
     ) {
         String normalizedProjectId = normalizeProjectId(projectId);
         AdminQueryUtils.Range range = AdminQueryUtils.resolveRange(from, to);
-        List<String> stepEvents = parseEventList(steps, MAX_FUNNEL_STEPS, "steps");
-        if (stepEvents.size() < 2) {
+        List<String> semanticSteps = parseEventList(steps, MAX_FUNNEL_STEPS, "steps");
+        if (semanticSteps.size() < 2) {
             throw new IllegalArgumentException("steps 至少需要 2 个不同事件");
         }
+        SemanticSelection selection = resolveSelection(normalizedProjectId, semanticSteps);
         String normalizedGroupBy = normalizePropertyKey(groupBy);
 
         JdbcTemplate jdbcTemplate = new JdbcTemplate(requireProject(normalizedProjectId).dataSource());
@@ -71,15 +78,16 @@ public class AdminProductAnalyticsService {
                 normalizedProjectId,
                 range.start(),
                 range.end(),
-                stepEvents
+                selection.rawKeys()
         );
+        rows = canonicalize(rows, selection.rawToSemantic());
 
-        Map<String, Map<String, ActorTimeline>> groups = buildFunnelGroups(rows, stepEvents, normalizedGroupBy);
+        Map<String, Map<String, ActorTimeline>> groups = buildFunnelGroups(rows, semanticSteps, normalizedGroupBy);
         List<AdminFunnelGroupResult> groupResults = groups.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
                 .map(entry -> new AdminFunnelGroupResult(
                         entry.getKey(),
-                        calculateFunnelSteps(stepEvents, entry.getValue())
+                        calculateFunnelSteps(semanticSteps, entry.getValue())
                 ))
                 .toList();
 
@@ -87,7 +95,7 @@ public class AdminProductAnalyticsService {
                 normalizedProjectId,
                 range.start().toString(),
                 range.end().toString(),
-                stepEvents,
+                semanticSteps,
                 normalizedGroupBy,
                 FUNNEL_ATTRIBUTION_MODEL,
                 groupResults
@@ -106,6 +114,10 @@ public class AdminProductAnalyticsService {
         AdminQueryUtils.Range range = AdminQueryUtils.resolveRange(from, to);
         String normalizedCohortEvent = requireEventName(cohortEvent, "cohortEvent");
         String normalizedReturnEvent = requireEventName(returnEvent, "returnEvent");
+        SemanticSelection selection = resolveSelection(
+                normalizedProjectId,
+                List.of(normalizedCohortEvent, normalizedReturnEvent)
+        );
         List<Integer> retentionDays = parseDays(days);
         int maxDay = retentionDays.stream().max(Integer::compareTo).orElse(30);
 
@@ -117,8 +129,9 @@ public class AdminProductAnalyticsService {
                 normalizedProjectId,
                 range.start(),
                 range.end().plus(Duration.ofDays(maxDay + 1L)),
-                List.of(normalizedCohortEvent, normalizedReturnEvent)
+                selection.rawKeys()
         );
+        rows = canonicalize(rows, selection.rawToSemantic());
 
         Map<String, Instant> cohortTimes = new HashMap<>();
         Map<String, List<Instant>> returnTimes = new HashMap<>();
@@ -278,6 +291,9 @@ public class AdminProductAnalyticsService {
             Instant end,
             List<String> eventTypes
     ) {
+        if (eventTypes.isEmpty()) {
+            return List.of();
+        }
         String placeholders = String.join(",", eventTypes.stream().map(ignored -> "?").toList());
         String sql = String.format(
                 "SELECT event_type, created_at, user_id, device_id, properties FROM %s " +
@@ -312,6 +328,33 @@ public class AdminProductAnalyticsService {
                     propertiesNode
             );
         }, args.toArray());
+    }
+
+    private SemanticSelection resolveSelection(String projectId, List<String> semanticKeys) {
+        Map<String, List<String>> aliases = semanticDictionaryService.resolveActiveEventAliases(
+                projectId,
+                semanticKeys
+        );
+        Map<String, String> rawToSemantic = new LinkedHashMap<>();
+        aliases.forEach((semanticKey, rawKeys) -> rawKeys.forEach(rawKey ->
+                rawToSemantic.put(rawKey, semanticKey)
+        ));
+        return new SemanticSelection(List.copyOf(rawToSemantic.keySet()), Map.copyOf(rawToSemantic));
+    }
+
+    private static List<EventRow> canonicalize(
+            List<EventRow> rows,
+            Map<String, String> rawToSemantic
+    ) {
+        return rows.stream()
+                .map(row -> new EventRow(
+                        rawToSemantic.get(row.eventType()),
+                        row.createdAt(),
+                        row.actorId(),
+                        row.properties()
+                ))
+                .filter(row -> row.eventType() != null)
+                .toList();
     }
 
     private ProjectContext requireProject(String projectId) {
@@ -441,6 +484,8 @@ public class AdminProductAnalyticsService {
     private record ProjectContext(MultiDataSourceManager.ProjectConfig config, DataSource dataSource) {}
 
     private record EventRow(String eventType, Instant createdAt, String actorId, JsonNode properties) {}
+
+    private record SemanticSelection(List<String> rawKeys, Map<String, String> rawToSemantic) {}
 
     private static final class ActorTimeline {
         private final Map<String, List<Instant>> timesByEvent = new HashMap<>();

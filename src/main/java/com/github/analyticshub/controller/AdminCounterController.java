@@ -6,7 +6,6 @@ import com.github.analyticshub.dto.CounterRecord;
 import com.github.analyticshub.dto.CounterUpsertRequest;
 import com.github.analyticshub.dto.CountersResponse;
 import com.github.analyticshub.service.CounterService;
-import com.github.analyticshub.service.EventService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -26,23 +25,15 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminCounterController {
 
     private final CounterService counterService;
-    private final EventService eventService;
 
-    public AdminCounterController(CounterService counterService, EventService eventService) {
+    public AdminCounterController(CounterService counterService) {
         this.counterService = counterService;
-        this.eventService = eventService;
     }
 
     /** 返回当前项目的全部计数器，包括非公开计数器。 */
     @GetMapping
     public ApiResponse<CountersResponse> list(@RequestParam("projectId") String projectId) {
         return ApiResponse.success(counterService.list(projectId, false));
-    }
-
-    /** 返回项目中已采集的事件类型，供计数器规则编辑器选择。 */
-    @GetMapping("/metadata/event-types")
-    public ApiResponse<java.util.List<String>> getEventTypes(@RequestParam("projectId") String projectId) {
-        return ApiResponse.success(eventService.getDistinctEventTypes(projectId));
     }
 
     /** 返回指定计数器及其显示信息、触发规则和最近重建结果。 */

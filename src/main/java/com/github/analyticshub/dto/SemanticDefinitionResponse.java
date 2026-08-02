@@ -8,6 +8,7 @@ public record SemanticDefinitionResponse(
         String projectId,
         SemanticSourceKind sourceKind,
         String semanticKey,
+        SemanticDefinitionOrigin origin,
         Map<String, String> displayName,
         String category,
         String description,

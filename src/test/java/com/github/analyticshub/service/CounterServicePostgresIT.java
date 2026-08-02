@@ -22,6 +22,8 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import javax.sql.DataSource;
 import java.util.Map;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -29,6 +31,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 
 @Testcontainers
 class CounterServicePostgresIT {
@@ -84,7 +89,15 @@ class CounterServicePostgresIT {
 
         ObjectMapper objectMapper = JsonMapper.builder().build();
         ProjectTransactionExecutor transactions = new ProjectTransactionExecutor();
-        counterService = new CounterService(dataSourceManager, objectMapper, transactions);
+        SemanticDictionaryService semantics = mock(SemanticDictionaryService.class);
+        when(semantics.resolveActiveEventAliases(eq(PROJECT_ID), anyList())).thenAnswer(invocation -> {
+            Map<String, List<String>> result = new LinkedHashMap<>();
+            for (String key : invocation.<List<String>>getArgument(1)) result.put(key, List.of(key));
+            return result;
+        });
+        when(semantics.resolveActiveEventSemanticKey(eq(PROJECT_ID), anyString()))
+                .thenAnswer(invocation -> invocation.getArgument(1));
+        counterService = new CounterService(dataSourceManager, objectMapper, transactions, semantics);
         eventService = new EventService(dataSourceManager, objectMapper, counterService, transactions);
 
         RequestContext context = new RequestContext();
@@ -112,7 +125,7 @@ class CounterServicePostgresIT {
                         null,
                         objectMapper.readTree("{\"zh-CN\":\"累计完成任务\"}"),
                         objectMapper.readTree("{\"zh-CN\":\"项\"}"),
-                        objectMapper.readTree("{\"event_type\":\"task_completed\"}"),
+                        objectMapper.readTree("{\"semantic_key\":\"task_completed\"}"),
                         true,
                         "累计完成的任务数量"
                 )
@@ -123,7 +136,7 @@ class CounterServicePostgresIT {
         assertThat(created.value()).isZero();
         assertThat(incremented.value()).isEqualTo(1);
         assertThat(incremented.displayName().path("zh-CN").asString()).isEqualTo("累计完成任务");
-        assertThat(incremented.eventTrigger().path("event_type").asString()).isEqualTo("task_completed");
+        assertThat(incremented.eventTrigger().path("semantic_key").asString()).isEqualTo("task_completed");
         assertThat(incremented.isPublic()).isTrue();
     }
 
@@ -137,7 +150,7 @@ class CounterServicePostgresIT {
                         5L,
                         null,
                         null,
-                        objectMapper.readTree("{\"event_type\":\"task_completed\"}"),
+                        objectMapper.readTree("{\"semantic_key\":\"task_completed\"}"),
                         false,
                         false,
                         null
@@ -166,7 +179,7 @@ class CounterServicePostgresIT {
     @Test
     void eventAndEveryMatchingCounterCommitTogether() throws Exception {
         ObjectMapper objectMapper = JsonMapper.builder().build();
-        var trigger = objectMapper.readTree("{\"event_type\":\"task_completed\"}");
+        var trigger = objectMapper.readTree("{\"semantic_key\":\"task_completed\"}");
         counterService.upsert(
                 PROJECT_ID,
                 "tasks_completed",
@@ -189,7 +202,7 @@ class CounterServicePostgresIT {
     @Test
     void anyCounterProjectionFailureRollsBackAllCountersAndEventFacts() throws Exception {
         ObjectMapper objectMapper = JsonMapper.builder().build();
-        var trigger = objectMapper.readTree("{\"event_type\":\"task_completed\"}");
+        var trigger = objectMapper.readTree("{\"semantic_key\":\"task_completed\"}");
         counterService.upsert(
                 PROJECT_ID,
                 "a_normal_counter",

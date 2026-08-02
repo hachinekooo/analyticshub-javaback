@@ -16,9 +16,8 @@ import java.util.Set;
 /**
  * Typed, allow-listed representation of a Counter event trigger.
  *
- * <p>The persisted API remains JSON for backward compatibility. Parsing it
- * into clauses here gives realtime projection and historical rebuild one
- * canonical rule model, so the two paths cannot drift apart.</p>
+ * <p>Rules reference stable semantic keys. Parsing JSON into clauses gives
+ * realtime projection and historical rebuild one canonical rule model.</p>
  */
 final class CounterEventTriggerRule {
 
@@ -30,9 +29,9 @@ final class CounterEventTriggerRule {
     static final int MAX_CONDITION_TEXT_LENGTH = 1_024;
 
     private static final Set<String> TOP_LEVEL_FIELDS = Set.of(
-            "event_type", "event_types", "conditions", "any_of"
+            "semantic_key", "semantic_keys", "conditions", "any_of"
     );
-    private static final Set<String> CLAUSE_FIELDS = Set.of("event_type", "conditions");
+    private static final Set<String> CLAUSE_FIELDS = Set.of("semantic_key", "conditions");
 
     private final ObjectNode normalizedJson;
     private final List<Clause> clauses;
@@ -49,24 +48,24 @@ final class CounterEventTriggerRule {
         requireOnlyFields(trigger, TOP_LEVEL_FIELDS, "eventTrigger");
 
         boolean hasAnyOf = trigger.has("any_of");
-        boolean hasSingleEventType = trigger.has("event_type");
-        boolean hasEventTypes = trigger.has("event_types");
+        boolean hasSingleSemanticKey = trigger.has("semantic_key");
+        boolean hasSemanticKeys = trigger.has("semantic_keys");
         boolean hasTopLevelConditions = trigger.has("conditions");
         ConditionBudget conditionBudget = new ConditionBudget();
 
         if (hasAnyOf) {
-            if (hasSingleEventType || hasEventTypes || hasTopLevelConditions) {
+            if (hasSingleSemanticKey || hasSemanticKeys || hasTopLevelConditions) {
                 throw invalid(
-                        "eventTrigger.any_of 不能与 event_type、event_types 或顶层 conditions 混用"
+                        "eventTrigger.any_of 不能与 semantic_key、semantic_keys 或顶层 conditions 混用"
                 );
             }
             return parseAnyOf(trigger.get("any_of"), conditionBudget);
         }
 
-        if (hasSingleEventType == hasEventTypes) {
-            throw invalid("eventTrigger 必须且只能配置 event_type、event_types 或 any_of");
+        if (hasSingleSemanticKey == hasSemanticKeys) {
+            throw invalid("eventTrigger 必须且只能配置 semantic_key、semantic_keys 或 any_of");
         }
-        return parseLegacy(trigger, hasSingleEventType, conditionBudget);
+        return parseDirect(trigger, hasSingleSemanticKey, conditionBudget);
     }
 
     JsonNode normalizedJson() {
@@ -77,9 +76,13 @@ final class CounterEventTriggerRule {
         return clauses;
     }
 
-    boolean matches(String eventType, JsonNode properties) {
+    List<String> semanticKeys() {
+        return clauses.stream().map(Clause::semanticKey).distinct().toList();
+    }
+
+    boolean matches(String semanticKey, JsonNode properties) {
         for (Clause clause : clauses) {
-            if (!clause.eventType().equals(eventType)) {
+            if (!clause.semanticKey().equals(semanticKey)) {
                 continue;
             }
             if (clause.conditions() == null) {
@@ -113,11 +116,14 @@ final class CounterEventTriggerRule {
                 throw invalid(path + " 必须是 JSON object");
             }
             requireOnlyFields(rawClause, CLAUSE_FIELDS, path);
-            if (!rawClause.has("event_type")) {
-                throw invalid(path + ".event_type 为必填非空字符串");
+            if (!rawClause.has("semantic_key")) {
+                throw invalid(path + ".semantic_key 为必填非空字符串");
             }
 
-            String eventType = requireEventType(rawClause.get("event_type"), path + ".event_type");
+            String semanticKey = requireSemanticKey(
+                    rawClause.get("semantic_key"),
+                    path + ".semantic_key"
+            );
             JsonNode conditions = normalizeConditions(
                     rawClause.get("conditions"),
                     rawClause.has("conditions"),
@@ -126,21 +132,21 @@ final class CounterEventTriggerRule {
             );
 
             ObjectNode normalizedClause = normalizedClauses.addObject();
-            normalizedClause.put("event_type", eventType);
+            normalizedClause.put("semantic_key", semanticKey);
             if (conditions != null) {
                 normalizedClause.set("conditions", conditions);
             }
             if (!uniqueClauses.add(normalizedClause)) {
                 throw invalid("eventTrigger.any_of 不能包含重复 clause");
             }
-            clauses.add(new Clause(eventType, conditions));
+            clauses.add(new Clause(semanticKey, conditions));
         }
         return new CounterEventTriggerRule(normalized, clauses);
     }
 
-    private static CounterEventTriggerRule parseLegacy(
+    private static CounterEventTriggerRule parseDirect(
             JsonNode trigger,
-            boolean hasSingleEventType,
+            boolean hasSingleSemanticKey,
             ConditionBudget conditionBudget
     ) {
         JsonNode conditions = normalizeConditions(
@@ -152,30 +158,33 @@ final class CounterEventTriggerRule {
         ObjectNode normalized = JsonNodeFactory.instance.objectNode();
         List<Clause> clauses = new ArrayList<>();
 
-        if (hasSingleEventType) {
-            String eventType = requireEventType(trigger.get("event_type"), "eventTrigger.event_type");
-            normalized.put("event_type", eventType);
-            clauses.add(new Clause(eventType, conditions));
+        if (hasSingleSemanticKey) {
+            String semanticKey = requireSemanticKey(
+                    trigger.get("semantic_key"),
+                    "eventTrigger.semantic_key"
+            );
+            normalized.put("semantic_key", semanticKey);
+            clauses.add(new Clause(semanticKey, conditions));
         } else {
-            JsonNode eventTypes = trigger.get("event_types");
-            if (eventTypes == null || !eventTypes.isArray()
-                    || eventTypes.isEmpty() || eventTypes.size() > MAX_CLAUSES) {
-                throw invalid("eventTrigger.event_types 必须包含 1 到 100 个事件 key");
+            JsonNode semanticKeys = trigger.get("semantic_keys");
+            if (semanticKeys == null || !semanticKeys.isArray()
+                    || semanticKeys.isEmpty() || semanticKeys.size() > MAX_CLAUSES) {
+                throw invalid("eventTrigger.semantic_keys 必须包含 1 到 100 个语义 Key");
             }
             LinkedHashSet<String> unique = new LinkedHashSet<>();
-            for (int index = 0; index < eventTypes.size(); index++) {
-                String eventType = requireEventType(
-                        eventTypes.get(index),
-                        "eventTrigger.event_types[" + index + "]"
+            for (int index = 0; index < semanticKeys.size(); index++) {
+                String semanticKey = requireSemanticKey(
+                        semanticKeys.get(index),
+                        "eventTrigger.semantic_keys[" + index + "]"
                 );
-                if (!unique.add(eventType)) {
-                    throw invalid("eventTrigger.event_types 不能包含重复 key");
+                if (!unique.add(semanticKey)) {
+                    throw invalid("eventTrigger.semantic_keys 不能包含重复 key");
                 }
             }
-            var normalizedEventTypes = normalized.putArray("event_types");
-            unique.forEach(eventType -> {
-                normalizedEventTypes.add(eventType);
-                clauses.add(new Clause(eventType, conditions));
+            var normalizedSemanticKeys = normalized.putArray("semantic_keys");
+            unique.forEach(semanticKey -> {
+                normalizedSemanticKeys.add(semanticKey);
+                clauses.add(new Clause(semanticKey, conditions));
             });
         }
         if (conditions != null) {
@@ -295,13 +304,16 @@ final class CounterEventTriggerRule {
         return actual.equals(expected);
     }
 
-    private static String requireEventType(JsonNode value, String path) {
+    private static String requireSemanticKey(JsonNode value, String path) {
         if (value == null || !value.isString()) {
             throw invalid(path + " 必须是非空字符串");
         }
         String normalized = value.asString().strip();
         if (normalized.isEmpty() || normalized.length() > 100) {
             throw invalid(path + " 长度必须为 1 到 100");
+        }
+        if (!normalized.matches("^[a-z0-9][a-z0-9._-]{0,99}$")) {
+            throw invalid(path + " 格式无效，应选择已维护的语义 Key");
         }
         return normalized;
     }
@@ -322,7 +334,7 @@ final class CounterEventTriggerRule {
         );
     }
 
-    record Clause(String eventType, JsonNode conditions) {}
+    record Clause(String semanticKey, JsonNode conditions) {}
 
     private static final class ConditionBudget {
         private int nodes;

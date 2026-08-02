@@ -110,7 +110,7 @@ class SemanticDictionaryServicePostgresIT {
 
         upsert(
                 "project_a",
-                "content.completed",
+                "custom.content.completed",
                 SemanticAliasUpdateMode.REPLACE,
                 List.of("item.completed.v1", "item.completed.v2", "item completed/完成"),
                 "Content completed"
@@ -122,9 +122,9 @@ class SemanticDictionaryServicePostgresIT {
         EventCatalogEntry diverseNaming = find(catalog, "item completed/完成");
         EventCatalogEntry unknown = find(catalog, "unknown.event");
 
-        assertThat(legacy.semanticKey()).isEqualTo("content.completed");
-        assertThat(current.semanticKey()).isEqualTo("content.completed");
-        assertThat(diverseNaming.semanticKey()).isEqualTo("content.completed");
+        assertThat(legacy.semanticKey()).isEqualTo("custom.content.completed");
+        assertThat(current.semanticKey()).isEqualTo("custom.content.completed");
+        assertThat(diverseNaming.semanticKey()).isEqualTo("custom.content.completed");
         assertThat(legacy.mapped()).isTrue();
         assertThat(current.mapped()).isTrue();
         assertThat(legacy.eventCount()).isEqualTo(2);
@@ -141,7 +141,7 @@ class SemanticDictionaryServicePostgresIT {
     void aliasOwnershipConflictReturns409AndRollsBackTheSecondDefinition() {
         upsert(
                 "project_a",
-                "content.completed",
+                "custom.content.completed",
                 SemanticAliasUpdateMode.REPLACE,
                 List.of("item.completed"),
                 "Content completed"
@@ -149,7 +149,7 @@ class SemanticDictionaryServicePostgresIT {
 
         assertThatThrownBy(() -> upsert(
                 "project_a",
-                "content.finished",
+                "custom.content.finished",
                 SemanticAliasUpdateMode.REPLACE,
                 List.of("item.completed"),
                 "Content finished"
@@ -160,7 +160,7 @@ class SemanticDictionaryServicePostgresIT {
 
         assertThat(service.listDefinitions("project_a", "EVENT_TYPE").items())
                 .extracting(definition -> definition.semanticKey())
-                .containsExactly("content.completed");
+                .containsExactly("custom.content.completed");
     }
 
     @Test
@@ -170,23 +170,23 @@ class SemanticDictionaryServicePostgresIT {
 
         upsert(
                 "project_a",
-                "content.completed",
+                "custom.content.completed",
                 SemanticAliasUpdateMode.REPLACE,
                 List.of("item.completed"),
                 "Content completed"
         );
         upsert(
                 "project_b",
-                "workflow.completed",
+                "custom.workflow.completed",
                 SemanticAliasUpdateMode.REPLACE,
                 List.of("item.completed"),
                 "Workflow completed"
         );
 
         assertThat(find(service.getEventCatalog("project_a", "EVENT_TYPE"), "item.completed").semanticKey())
-                .isEqualTo("content.completed");
+                .isEqualTo("custom.content.completed");
         assertThat(find(service.getEventCatalog("project_b", "EVENT_TYPE"), "item.completed").semanticKey())
-                .isEqualTo("workflow.completed");
+                .isEqualTo("custom.workflow.completed");
     }
 
     @Test
@@ -199,7 +199,7 @@ class SemanticDictionaryServicePostgresIT {
 
         upsert(
                 "project_a",
-                "content.completed",
+                "custom.content.completed",
                 SemanticAliasUpdateMode.REPLACE,
                 List.of("item.completed.v1", "item.completed.v2"),
                 "Content completed"
@@ -223,7 +223,7 @@ class SemanticDictionaryServicePostgresIT {
         assertThat(semantic.items())
                 .extracting(item -> Map.entry(item.eventType(), item.count()))
                 .containsExactly(
-                        Map.entry("content.completed", 3L),
+                        Map.entry("custom.content.completed", 3L),
                         Map.entry("unknown.event", 1L)
                 );
         assertThat(raw.items())
@@ -239,14 +239,14 @@ class SemanticDictionaryServicePostgresIT {
     void preserveAndReplaceHaveExplicitAliasSemantics() {
         upsert(
                 "project_a",
-                "content.completed",
+                "custom.content.completed",
                 SemanticAliasUpdateMode.REPLACE,
                 List.of("item.completed.v1"),
                 "Old display"
         );
         upsert(
                 "project_a",
-                "content.completed",
+                "custom.content.completed",
                 SemanticAliasUpdateMode.PRESERVE,
                 null,
                 "New display"
@@ -258,7 +258,7 @@ class SemanticDictionaryServicePostgresIT {
 
         upsert(
                 "project_a",
-                "content.completed",
+                "custom.content.completed",
                 SemanticAliasUpdateMode.REPLACE,
                 List.of(),
                 "New display"

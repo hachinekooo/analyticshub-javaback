@@ -18,12 +18,17 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 
 @Testcontainers
 class AdminProductAnalyticsServicePostgresIT {
@@ -70,7 +75,17 @@ class AdminProductAnalyticsServicePostgresIT {
         when(dataSourceManager.getDataSource(PROJECT_ID)).thenReturn(dataSource);
         when(dataSourceManager.getTableName(PROJECT_ID, "events")).thenReturn(quoted(PREFIX + "events"));
 
-        service = new AdminProductAnalyticsService(dataSourceManager, JsonMapper.builder().build());
+        SemanticDictionaryService semantics = mock(SemanticDictionaryService.class);
+        when(semantics.resolveActiveEventAliases(eq(PROJECT_ID), anyList())).thenAnswer(invocation -> {
+            Map<String, List<String>> result = new LinkedHashMap<>();
+            for (String key : invocation.<List<String>>getArgument(1)) result.put(key, List.of(key));
+            return result;
+        });
+        service = new AdminProductAnalyticsService(
+                dataSourceManager,
+                JsonMapper.builder().build(),
+                semantics
+        );
     }
 
     @Test

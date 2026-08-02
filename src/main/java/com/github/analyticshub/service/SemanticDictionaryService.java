@@ -8,6 +8,7 @@ import com.github.analyticshub.dto.EventCatalogEntry;
 import com.github.analyticshub.dto.EventCatalogResponse;
 import com.github.analyticshub.dto.SemanticAliasUpdateMode;
 import com.github.analyticshub.dto.SemanticDefinitionResponse;
+import com.github.analyticshub.dto.SemanticDefinitionOrigin;
 import com.github.analyticshub.dto.SemanticDefinitionUpsertRequest;
 import com.github.analyticshub.dto.SemanticDefinitionsResponse;
 import com.github.analyticshub.dto.SemanticDeleteResponse;
@@ -80,7 +81,7 @@ public class SemanticDictionaryService {
         Map<String, List<String>> aliases = loadAliases(normalizedProjectId, normalizedSourceKind);
         List<SemanticDefinitionResponse> items = systemJdbcTemplate.query(
                 """
-                SELECT semantic_key, display_name::text, category, description, is_active,
+                SELECT semantic_key, definition_origin, display_name::text, category, description, is_active,
                        created_at, updated_at
                   FROM analytics_semantic_definitions
                  WHERE project_id = ? AND source_kind = ?
@@ -90,6 +91,7 @@ public class SemanticDictionaryService {
                         normalizedProjectId,
                         normalizedSourceKind,
                         rs.getString("semantic_key"),
+                        SemanticDefinitionOrigin.valueOf(rs.getString("definition_origin")),
                         deserializeDisplayName(rs.getString("display_name")),
                         rs.getString("category"),
                         rs.getString("description"),
@@ -128,6 +130,18 @@ public class SemanticDictionaryService {
         ValidatedUpsert validated = validateUpsert(request);
         requireProject(normalizedProjectId, false);
 
+        List<SemanticDefinitionOrigin> existingOrigins = systemJdbcTemplate.query(
+                "SELECT definition_origin FROM analytics_semantic_definitions "
+                        + "WHERE project_id = ? AND source_kind = ? AND semantic_key = ?",
+                (rs, rowNum) -> SemanticDefinitionOrigin.valueOf(rs.getString("definition_origin")),
+                normalizedProjectId,
+                validated.sourceKind().name(),
+                normalizedSemanticKey
+        );
+        SemanticDefinitionOrigin origin = existingOrigins.isEmpty()
+                ? requireCustomNamespace(normalizedSemanticKey)
+                : existingOrigins.getFirst();
+
         if (validated.aliasMode() == SemanticAliasUpdateMode.REPLACE) {
             rejectAliasesOwnedByAnotherDefinition(
                     normalizedProjectId,
@@ -140,8 +154,9 @@ public class SemanticDictionaryService {
         systemJdbcTemplate.update(
                 """
                 INSERT INTO analytics_semantic_definitions
-                    (project_id, source_kind, semantic_key, display_name, category, description, is_active)
-                VALUES (?, ?, ?, ?::jsonb, ?, ?, ?)
+                    (project_id, source_kind, semantic_key, definition_origin,
+                     display_name, category, description, is_active)
+                VALUES (?, ?, ?, ?, ?::jsonb, ?, ?, ?)
                 ON CONFLICT (project_id, source_kind, semantic_key) DO UPDATE SET
                     display_name = EXCLUDED.display_name,
                     category = EXCLUDED.category,
@@ -151,6 +166,7 @@ public class SemanticDictionaryService {
                 normalizedProjectId,
                 validated.sourceKind().name(),
                 normalizedSemanticKey,
+                origin.name(),
                 serializeDisplayName(validated.displayName()),
                 validated.category(),
                 validated.description(),
@@ -175,6 +191,19 @@ public class SemanticDictionaryService {
         SemanticSourceKind normalizedSourceKind = parseSourceKind(sourceKind);
         String normalizedSemanticKey = validateSemanticKey(semanticKey);
         requireProject(normalizedProjectId, false);
+
+        SemanticDefinitionResponse definition = requireDefinition(
+                normalizedProjectId,
+                normalizedSourceKind,
+                normalizedSemanticKey
+        );
+        if (definition.origin() == SemanticDefinitionOrigin.OFFICIAL) {
+            throw new BusinessException(
+                    "OFFICIAL_SEMANTIC_DELETE_FORBIDDEN",
+                    "官方语义 Key 不能删除，可停用或清空其原始事件映射",
+                    HttpStatus.CONFLICT
+            );
+        }
 
         int deleted = systemJdbcTemplate.update(
                 """
@@ -258,6 +287,90 @@ public class SemanticDictionaryService {
         Map<String, String> result = new LinkedHashMap<>();
         resolutions.forEach((rawKey, resolution) -> result.put(rawKey, resolution.semanticKey()));
         return Collections.unmodifiableMap(result);
+    }
+
+    /**
+     * Resolves stable semantic keys to their raw event aliases.
+     *
+     * <p>An active definition with no aliases is valid and resolves to an empty list,
+     * which lets a newly initialized dashboard render a clear zero-data state.</p>
+     */
+    @Transactional(readOnly = true)
+    public Map<String, List<String>> resolveActiveEventAliases(
+            String projectId,
+            List<String> semanticKeys
+    ) {
+        String normalizedProjectId = normalizeProjectId(projectId);
+        requireProject(normalizedProjectId, false);
+        if (semanticKeys == null || semanticKeys.isEmpty()) {
+            throw invalidSemanticRequest("semanticKeys 不能为空");
+        }
+        LinkedHashSet<String> requested = new LinkedHashSet<>();
+        for (String key : semanticKeys) {
+            requested.add(validateSemanticKey(key));
+        }
+
+        String placeholders = String.join(",", Collections.nCopies(requested.size(), "?"));
+        List<Object> arguments = new ArrayList<>(2 + requested.size());
+        arguments.add(normalizedProjectId);
+        arguments.add(SemanticSourceKind.EVENT_TYPE.name());
+        arguments.addAll(requested);
+
+        Map<String, List<String>> aliases = new LinkedHashMap<>();
+        systemJdbcTemplate.query(
+                "SELECT semantic_key FROM analytics_semantic_definitions "
+                        + "WHERE project_id = ? AND source_kind = ? AND is_active = TRUE "
+                        + "AND semantic_key IN (" + placeholders + ")",
+                (org.springframework.jdbc.core.RowCallbackHandler) rs ->
+                        aliases.put(rs.getString("semantic_key"), new ArrayList<>()),
+                arguments.toArray()
+        );
+        if (aliases.size() != requested.size()) {
+            List<String> missing = requested.stream().filter(key -> !aliases.containsKey(key)).toList();
+            throw new BusinessException(
+                    "SEMANTIC_DEFINITION_UNAVAILABLE",
+                    "语义定义不存在或已停用: " + String.join(", ", missing),
+                    HttpStatus.CONFLICT
+            );
+        }
+        systemJdbcTemplate.query(
+                "SELECT semantic_key, raw_key FROM analytics_semantic_aliases "
+                        + "WHERE project_id = ? AND source_kind = ? "
+                        + "AND semantic_key IN (" + placeholders + ") ORDER BY semantic_key, raw_key",
+                (org.springframework.jdbc.core.RowCallbackHandler) rs -> aliases
+                        .get(rs.getString("semantic_key"))
+                        .add(rs.getString("raw_key")),
+                arguments.toArray()
+        );
+        Map<String, List<String>> result = new LinkedHashMap<>();
+        requested.forEach(key -> result.put(key, List.copyOf(aliases.get(key))));
+        return Collections.unmodifiableMap(result);
+    }
+
+    /** Resolves one collected raw event key to its active stable semantic key. */
+    @Transactional(readOnly = true)
+    public String resolveActiveEventSemanticKey(String projectId, String rawKey) {
+        String normalizedProjectId = normalizeProjectId(projectId);
+        requireProject(normalizedProjectId, false);
+        if (rawKey == null || rawKey.isBlank()) {
+            return null;
+        }
+        List<String> values = systemJdbcTemplate.queryForList(
+                """
+                SELECT d.semantic_key
+                  FROM analytics_semantic_aliases a
+                  JOIN analytics_semantic_definitions d
+                    ON d.project_id = a.project_id
+                   AND d.source_kind = a.source_kind
+                   AND d.semantic_key = a.semantic_key
+                 WHERE a.project_id = ? AND a.source_kind = 'EVENT_TYPE'
+                   AND a.raw_key = ? AND d.is_active = TRUE
+                """,
+                String.class,
+                normalizedProjectId,
+                rawKey
+        );
+        return values.isEmpty() ? null : values.getFirst();
     }
 
     private EventCatalogEntry mergeCatalogEntry(RawEventAggregate aggregate, SemanticResolution resolution) {
@@ -357,7 +470,8 @@ public class SemanticDictionaryService {
         );
         List<SemanticDefinitionResponse> definitions = systemJdbcTemplate.query(
                 """
-                SELECT display_name::text, category, description, is_active, created_at, updated_at
+                SELECT definition_origin, display_name::text, category, description, is_active,
+                       created_at, updated_at
                   FROM analytics_semantic_definitions
                  WHERE project_id = ? AND source_kind = ? AND semantic_key = ?
                 """,
@@ -365,6 +479,7 @@ public class SemanticDictionaryService {
                         projectId,
                         sourceKind,
                         semanticKey,
+                        SemanticDefinitionOrigin.valueOf(rs.getString("definition_origin")),
                         deserializeDisplayName(rs.getString("display_name")),
                         rs.getString("category"),
                         rs.getString("description"),
@@ -568,6 +683,13 @@ public class SemanticDictionaryService {
             throw invalidSemanticRequest("semanticKey 格式无效，应使用小写字母、数字、点、下划线或连字符");
         }
         return semanticKey;
+    }
+
+    private static SemanticDefinitionOrigin requireCustomNamespace(String semanticKey) {
+        if (!semanticKey.startsWith("custom.") || semanticKey.length() <= "custom.".length()) {
+            throw invalidSemanticRequest("自定义语义 Key 必须使用 custom.* 命名空间");
+        }
+        return SemanticDefinitionOrigin.CUSTOM;
     }
 
     private static String normalizeOptionalText(String value, int maxLength, String field) {

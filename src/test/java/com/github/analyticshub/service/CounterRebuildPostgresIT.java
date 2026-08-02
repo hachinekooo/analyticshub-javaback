@@ -24,6 +24,8 @@ import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.util.Map;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -34,6 +36,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 
 @Testcontainers
 class CounterRebuildPostgresIT {
@@ -55,6 +60,7 @@ class CounterRebuildPostgresIT {
     private JdbcTemplate jdbcTemplate;
     private CounterService counterService;
     private EventService eventService;
+    private SemanticDictionaryService semantics;
 
     @BeforeEach
     void setUp() {
@@ -92,9 +98,22 @@ class CounterRebuildPostgresIT {
                 .thenReturn(quoted(PREFIX + "idempotency_keys"));
 
         ProjectTransactionExecutor transactions = new ProjectTransactionExecutor();
-        counterService = new CounterService(dataSourceManager, objectMapper, transactions);
+        semantics = identitySemantics();
+        counterService = new CounterService(dataSourceManager, objectMapper, transactions, semantics);
         eventService = new EventService(dataSourceManager, objectMapper, counterService, transactions);
         RequestContext.set(requestContext());
+    }
+
+    private SemanticDictionaryService identitySemantics() {
+        SemanticDictionaryService semantics = mock(SemanticDictionaryService.class);
+        when(semantics.resolveActiveEventAliases(eq(PROJECT_ID), anyList())).thenAnswer(invocation -> {
+            Map<String, List<String>> result = new LinkedHashMap<>();
+            for (String key : invocation.<List<String>>getArgument(1)) result.put(key, List.of(key.strip()));
+            return result;
+        });
+        when(semantics.resolveActiveEventSemanticKey(eq(PROJECT_ID), anyString()))
+                .thenAnswer(invocation -> invocation.getArgument(1));
+        return semantics;
     }
 
     @AfterEach
@@ -111,7 +130,7 @@ class CounterRebuildPostgresIT {
                         99L,
                         null,
                         null,
-                        objectMapper.readTree("{\"event_type\":\"item_completed\"}"),
+                        objectMapper.readTree("{\"semantic_key\":\"item_completed\"}"),
                         false,
                         null
                 )
@@ -130,6 +149,17 @@ class CounterRebuildPostgresIT {
 
     @Test
     void rebuildAndRealtimeProjectionSupportRenamedEventKeys() throws Exception {
+        when(semantics.resolveActiveEventAliases(
+                PROJECT_ID,
+                List.of("core.action.completed")
+        )).thenReturn(Map.of(
+                "core.action.completed",
+                List.of("item_completed", "item_done_v2")
+        ));
+        when(semantics.resolveActiveEventSemanticKey(PROJECT_ID, "item_completed"))
+                .thenReturn("core.action.completed");
+        when(semantics.resolveActiveEventSemanticKey(PROJECT_ID, "item_done_v2"))
+                .thenReturn("core.action.completed");
         counterService.upsert(
                 PROJECT_ID,
                 "completed_items",
@@ -137,9 +167,7 @@ class CounterRebuildPostgresIT {
                         0L,
                         null,
                         null,
-                        objectMapper.readTree(
-                                "{\"event_types\":[\"item_completed\",\"item_done_v2\"]}"
-                        ),
+                        objectMapper.readTree("{\"semantic_key\":\"core.action.completed\"}"),
                         false,
                         null
                 )
@@ -172,13 +200,13 @@ class CounterRebuildPostgresIT {
                         objectMapper.readTree("""
                                 {
                                   "any_of": [
-                                    {"event_type": " item_completed ", "conditions": {}},
+                                    {"semantic_key": " item_completed ", "conditions": {}},
                                     {
-                                      "event_type": "item_done_v2",
+                                      "semantic_key": "item_done_v2",
                                       "conditions": {"status": "success"}
                                     },
                                     {
-                                      "event_type": "item_done_v2",
+                                      "semantic_key": "item_done_v2",
                                       "conditions": {"status": "recovered"}
                                     }
                                   ]
@@ -191,13 +219,13 @@ class CounterRebuildPostgresIT {
         assertThat(configured.eventTrigger()).isEqualTo(objectMapper.readTree("""
                 {
                   "any_of": [
-                    {"event_type": "item_completed"},
+                    {"semantic_key": "item_completed"},
                     {
-                      "event_type": "item_done_v2",
+                      "semantic_key": "item_done_v2",
                       "conditions": {"status": "success"}
                     },
                     {
-                      "event_type": "item_done_v2",
+                      "semantic_key": "item_done_v2",
                       "conditions": {"status": "recovered"}
                     }
                   ]
@@ -257,7 +285,7 @@ class CounterRebuildPostgresIT {
                         null,
                         objectMapper.readTree("""
                                 {
-                                  "event_type": "item_completed",
+                                  "semantic_key": "item_completed",
                                   "conditions": {
                                     "status": "done",
                                     "channel": {"kind": "api"},
@@ -309,27 +337,27 @@ class CounterRebuildPostgresIT {
     @Test
     void upsertRejectsMalformedOrAmbiguousEventRules() throws Exception {
         var unknownField = objectMapper.readTree(
-                "{\"event_type\":\"item_completed\",\"increment_by\":2}"
+                "{\"semantic_key\":\"item_completed\",\"increment_by\":2}"
         );
         var invalidConditions = objectMapper.readTree(
-                "{\"event_type\":\"item_completed\",\"conditions\":[\"done\"]}"
+                "{\"semantic_key\":\"item_completed\",\"conditions\":[\"done\"]}"
         );
-        var blankEventType = objectMapper.readTree("{\"event_type\":\"   \"}");
+        var blankEventType = objectMapper.readTree("{\"semantic_key\":\"   \"}");
         var mixedAnyOfAndLegacy = objectMapper.readTree("""
                 {
-                  "event_type": "item_completed",
-                  "any_of": [{"event_type": "item_done_v2"}]
+                  "semantic_key": "item_completed",
+                  "any_of": [{"semantic_key": "item_done_v2"}]
                 }
                 """);
         var emptyAnyOf = objectMapper.readTree("{\"any_of\":[]}");
         var clauseWithUnknownField = objectMapper.readTree("""
-                {"any_of":[{"event_type":"item_completed","increment_by":2}]}
+                {"any_of":[{"semantic_key":"item_completed","increment_by":2}]}
                 """);
         var clauseWithEventTypes = objectMapper.readTree("""
-                {"any_of":[{"event_types":["item_completed"]}]}
+                {"any_of":[{"semantic_keys":["item_completed"]}]}
                 """);
         var clauseWithInvalidConditions = objectMapper.readTree("""
-                {"any_of":[{"event_type":"item_completed","conditions":["done"]}]}
+                {"any_of":[{"semantic_key":"item_completed","conditions":["done"]}]}
                 """);
 
         for (var invalidRule : new tools.jackson.databind.JsonNode[]{
@@ -363,7 +391,7 @@ class CounterRebuildPostgresIT {
                         50L,
                         null,
                         null,
-                        objectMapper.readTree("{\"event_type\":\"item_completed\"}"),
+                        objectMapper.readTree("{\"semantic_key\":\"item_completed\"}"),
                         false,
                         null
                 )

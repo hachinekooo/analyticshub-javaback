@@ -73,7 +73,7 @@ class AnalyticshubJavabackApplicationIT {
 
         assertThat(currentSchema).isEqualTo("analytics");
         assertThat(projectsTableExists).isTrue();
-        assertThat(latestMigration).isEqualTo("6");
+        assertThat(latestMigration).isEqualTo("7");
         String analysisTemplate = jdbcTemplate.queryForObject(
                 "SELECT column_default FROM information_schema.columns " +
                         "WHERE table_schema = 'analytics' AND table_name = 'analytics_projects' " +

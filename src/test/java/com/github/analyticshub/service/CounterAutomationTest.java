@@ -23,16 +23,24 @@ class CounterAutomationTest {
     @Mock
     private MultiDataSourceManager dataSourceManager;
 
+    @Mock
+    private SemanticDictionaryService semanticDictionaryService;
+
     private ObjectMapper objectMapper = JsonMapper.builder().build();
 
     @BeforeEach
     void setUp() {
-        counterService = new CounterService(dataSourceManager, objectMapper, new ProjectTransactionExecutor());
+        counterService = new CounterService(
+                dataSourceManager,
+                objectMapper,
+                new ProjectTransactionExecutor(),
+                semanticDictionaryService
+        );
     }
 
     @Test
     void testIsMatch_Basic() throws Exception {
-        JsonNode trigger = objectMapper.readTree("{\"event_type\": \"task_completed\"}");
+        JsonNode trigger = objectMapper.readTree("{\"semantic_key\": \"task_completed\"}");
         
         assertTrue(counterService.isMatch(trigger, "task_completed", null));
         assertFalse(counterService.isMatch(trigger, "other_event", null));
@@ -41,7 +49,7 @@ class CounterAutomationTest {
     @Test
     void multipleHistoricalEventKeysCanFeedOneCounter() throws Exception {
         JsonNode trigger = objectMapper.readTree(
-                "{\"event_types\":[\"task_completed\",\"task_done_v2\"]}"
+                "{\"semantic_keys\":[\"task_completed\",\"task_done_v2\"]}"
         );
 
         assertTrue(counterService.isMatch(trigger, "task_completed", null));
@@ -54,9 +62,9 @@ class CounterAutomationTest {
         JsonNode trigger = objectMapper.readTree("""
                 {
                   "any_of": [
-                    {"event_type": "task_completed"},
+                    {"semantic_key": "task_completed"},
                     {
-                      "event_type": "task_done_v2",
+                      "semantic_key": "task_done_v2",
                       "conditions": {"status": "success"}
                     }
                   ]
@@ -82,8 +90,8 @@ class CounterAutomationTest {
         JsonNode trigger = objectMapper.readTree("""
                 {
                   "any_of": [
-                    {"event_type": "task_completed", "conditions": {"source": "api"}},
-                    {"event_type": "task_completed", "conditions": {"source": "import"}}
+                    {"semantic_key": "task_completed", "conditions": {"source": "api"}},
+                    {"semantic_key": "task_completed", "conditions": {"source": "import"}}
                   ]
                 }
                 """);
@@ -102,7 +110,7 @@ class CounterAutomationTest {
 
     @Test
     void testIsMatch_WithConditions() throws Exception {
-        JsonNode trigger = objectMapper.readTree("{\"event_type\": \"task_completed\", \"conditions\": {\"status\": \"success\"}}");
+        JsonNode trigger = objectMapper.readTree("{\"semantic_key\": \"task_completed\", \"conditions\": {\"status\": \"success\"}}");
         
         // Match: status is success
         assertTrue(counterService.isMatch(trigger, "task_completed", Map.of("status", "success")));
@@ -119,7 +127,7 @@ class CounterAutomationTest {
 
     @Test
     void testIsMatch_MultipleConditions() throws Exception {
-        JsonNode trigger = objectMapper.readTree("{\"event_type\": \"task_completed\", \"conditions\": {\"status\": \"success\", \"type\": \"quick\"}}");
+        JsonNode trigger = objectMapper.readTree("{\"semantic_key\": \"task_completed\", \"conditions\": {\"status\": \"success\", \"type\": \"quick\"}}");
         
         assertTrue(counterService.isMatch(trigger, "task_completed", Map.of("status", "success", "type", "quick")));
         assertFalse(counterService.isMatch(trigger, "task_completed", Map.of("status", "success", "type", "slow")));
@@ -128,7 +136,7 @@ class CounterAutomationTest {
     @Test
     void emptyConditionsBehaveLikeNoFilter() throws Exception {
         JsonNode trigger = objectMapper.readTree(
-                "{\"event_type\":\"task_completed\",\"conditions\":{}}"
+                "{\"semantic_key\":\"task_completed\",\"conditions\":{}}"
         );
 
         assertTrue(counterService.isMatch(trigger, "task_completed", null));
@@ -138,7 +146,7 @@ class CounterAutomationTest {
     void nestedConditionsUseJsonContainmentSemantics() throws Exception {
         JsonNode trigger = objectMapper.readTree("""
                 {
-                  "event_type": "task_completed",
+                  "semantic_key": "task_completed",
                   "conditions": {
                     "score": 1.0,
                     "context": {"channel": "api"},
@@ -161,7 +169,7 @@ class CounterAutomationTest {
     @Test
     void malformedRuleIsIgnoredWithoutBreakingEventCollection() throws Exception {
         JsonNode trigger = objectMapper.readTree(
-                "{\"event_type\":\"task_completed\",\"unsupported\":true}"
+                "{\"semantic_key\":\"task_completed\",\"unsupported\":true}"
         );
 
         assertFalse(counterService.isMatch(trigger, "task_completed", Map.of()));

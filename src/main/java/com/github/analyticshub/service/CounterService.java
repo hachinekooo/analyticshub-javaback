@@ -28,15 +28,18 @@ public class CounterService {
     private final MultiDataSourceManager dataSourceManager;
     private final ObjectMapper objectMapper;
     private final ProjectTransactionExecutor projectTransactions;
+    private final SemanticDictionaryService semanticDictionaryService;
 
     public CounterService(
             MultiDataSourceManager dataSourceManager,
             ObjectMapper objectMapper,
-            ProjectTransactionExecutor projectTransactions
+            ProjectTransactionExecutor projectTransactions,
+            SemanticDictionaryService semanticDictionaryService
     ) {
         this.dataSourceManager = dataSourceManager;
         this.objectMapper = objectMapper;
         this.projectTransactions = projectTransactions;
+        this.semanticDictionaryService = semanticDictionaryService;
     }
 
     public CountersResponse list(String projectId, boolean onlyPublic) {
@@ -81,6 +84,12 @@ public class CounterService {
         CounterEventTriggerRule normalizedTrigger = request == null
                 ? null
                 : validateAndNormalizeEventTrigger(request.eventTrigger());
+        if (normalizedTrigger != null) {
+            semanticDictionaryService.resolveActiveEventAliases(
+                    normalizedProjectId,
+                    normalizedTrigger.semanticKeys()
+            );
+        }
         boolean clearEventTrigger = request != null && Boolean.TRUE.equals(request.clearEventTrigger());
         if (clearEventTrigger && normalizedTrigger != null) {
             throw CounterEventTriggerRule.invalid(
@@ -194,27 +203,36 @@ public class CounterService {
             StringJoiner predicates = new StringJoiner(" OR ", "(", ")");
             List<Object> arguments = new ArrayList<>(1 + trigger.clauses().size() * 2);
             arguments.add(normalizedProjectId);
+            Map<String, List<String>> aliases = semanticDictionaryService.resolveActiveEventAliases(
+                    normalizedProjectId,
+                    trigger.semanticKeys()
+            );
             for (CounterEventTriggerRule.Clause clause : trigger.clauses()) {
-                if (clause.conditions() == null) {
-                    predicates.add("event_type = ?");
-                } else {
-                    predicates.add("(event_type = ? AND properties @> ?::jsonb)");
-                }
-                arguments.add(clause.eventType());
-                if (clause.conditions() != null) {
-                    arguments.add(toJsonString(clause.conditions()));
+                for (String rawKey : aliases.get(clause.semanticKey())) {
+                    if (clause.conditions() == null) {
+                        predicates.add("event_type = ?");
+                    } else {
+                        predicates.add("(event_type = ? AND properties @> ?::jsonb)");
+                    }
+                    arguments.add(rawKey);
+                    if (clause.conditions() != null) {
+                        arguments.add(toJsonString(clause.conditions()));
+                    }
                 }
             }
-            String countSql = String.format(
-                    "SELECT COUNT(*) FROM %s WHERE project_id = ? AND %s",
-                    eventTable,
-                    predicates
-            );
-            Long matchingEvents = jdbcTemplate.queryForObject(
-                    countSql,
-                    Long.class,
-                    arguments.toArray()
-            );
+            Long matchingEvents = 0L;
+            if (predicates.length() > 2) {
+                String countSql = String.format(
+                        "SELECT COUNT(*) FROM %s WHERE project_id = ? AND %s",
+                        eventTable,
+                        predicates
+                );
+                matchingEvents = jdbcTemplate.queryForObject(
+                        countSql,
+                        Long.class,
+                        arguments.toArray()
+                );
+            }
 
             long rebuiltValue = matchingEvents == null ? 0L : matchingEvents;
             Instant now = Instant.now();
@@ -254,6 +272,13 @@ public class CounterService {
      */
     public void processEventAutoIncrements(String projectId, String eventType, Map<String, Object> properties) {
         String normalizedProjectId = normalizeProjectId(projectId);
+        String semanticKey = semanticDictionaryService.resolveActiveEventSemanticKey(
+                normalizedProjectId,
+                eventType
+        );
+        if (semanticKey == null) {
+            return;
+        }
         ProjectContext context = requireProject(normalizedProjectId);
         String table = dataSourceManager.getTableName(normalizedProjectId, "counters");
 
@@ -261,13 +286,13 @@ public class CounterService {
             String sql = String.format(
                     "SELECT counter_key, event_trigger FROM %s " +
                     "WHERE project_id = ? AND event_trigger IS NOT NULL " +
-                            "AND (event_trigger->>'event_type' = ? " +
-                            "OR event_trigger->'event_types' @> to_jsonb(ARRAY[?]::text[]) " +
+                            "AND (event_trigger->>'semantic_key' = ? " +
+                            "OR event_trigger->'semantic_keys' @> to_jsonb(ARRAY[?]::text[]) " +
                             "OR event_trigger->'any_of' @> ?::jsonb) " +
                             "ORDER BY counter_key FOR UPDATE",
                     table
             );
-            String anyOfProbe = toJsonString(List.of(Map.of("event_type", eventType)));
+            String anyOfProbe = toJsonString(List.of(Map.of("semantic_key", semanticKey)));
             List<CounterRule> rules = jdbcTemplate.query(
                     sql,
                     (rs, rowNum) -> new CounterRule(
@@ -275,15 +300,15 @@ public class CounterService {
                             rs.getString("event_trigger")
                     ),
                     normalizedProjectId,
-                    eventType,
-                    eventType,
+                    semanticKey,
+                    semanticKey,
                     anyOfProbe
             );
 
             for (CounterRule rule : rules) {
                 JsonNode trigger = parseJson(rule.eventTriggerJson());
 
-                if (trigger != null && isMatch(trigger, eventType, properties)) {
+                if (trigger != null && isMatch(trigger, semanticKey, properties)) {
                     incrementValue(jdbcTemplate, table, normalizedProjectId, rule.counterKey(), 1L);
                 }
             }
@@ -291,7 +316,7 @@ public class CounterService {
         });
     }
 
-    boolean isMatch(JsonNode trigger, String eventType, Map<String, Object> properties) {
+    boolean isMatch(JsonNode trigger, String semanticKey, Map<String, Object> properties) {
         if (trigger == null) {
             return false;
         }
@@ -303,7 +328,7 @@ public class CounterService {
             return false;
         }
         JsonNode propertyNode = properties == null ? null : objectMapper.valueToTree(properties);
-        return normalizedTrigger.matches(eventType, propertyNode);
+        return normalizedTrigger.matches(semanticKey, propertyNode);
     }
 
     private CounterEventTriggerRule validateAndNormalizeEventTrigger(JsonNode trigger) {

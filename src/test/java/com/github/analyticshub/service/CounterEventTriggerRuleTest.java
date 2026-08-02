@@ -19,23 +19,23 @@ class CounterEventTriggerRuleTest {
     void legacyShapesRemainValidAndAreNormalizedIntoTypedClauses() throws Exception {
         CounterEventTriggerRule single = CounterEventTriggerRule.parse(objectMapper.readTree("""
                 {
-                  "event_type": " task_completed ",
+                  "semantic_key": " task_completed ",
                   "conditions": {}
                 }
                 """));
         CounterEventTriggerRule multiple = CounterEventTriggerRule.parse(objectMapper.readTree("""
                 {
-                  "event_types": ["task_completed", "task_done_v2"],
+                  "semantic_keys": ["task_completed", "task_done_v2"],
                   "conditions": {"status": "success"}
                 }
                 """));
 
         assertThat(single.normalizedJson()).isEqualTo(
-                objectMapper.readTree("{\"event_type\":\"task_completed\"}")
+                objectMapper.readTree("{\"semantic_key\":\"task_completed\"}")
         );
-        assertThat(single.clauses()).extracting(CounterEventTriggerRule.Clause::eventType)
+        assertThat(single.clauses()).extracting(CounterEventTriggerRule.Clause::semanticKey)
                 .containsExactly("task_completed");
-        assertThat(multiple.clauses()).extracting(CounterEventTriggerRule.Clause::eventType)
+        assertThat(multiple.clauses()).extracting(CounterEventTriggerRule.Clause::semanticKey)
                 .containsExactly("task_completed", "task_done_v2");
         assertThat(multiple.clauses()).allSatisfy(
                 clause -> assertThat(clause.conditions().path("status").asString())
@@ -48,9 +48,9 @@ class CounterEventTriggerRuleTest {
         CounterEventTriggerRule rule = CounterEventTriggerRule.parse(objectMapper.readTree("""
                 {
                   "any_of": [
-                    {"event_type": " task_completed ", "conditions": {}},
+                    {"semantic_key": " task_completed ", "conditions": {}},
                     {
-                      "event_type": "task_done_v2",
+                      "semantic_key": "task_done_v2",
                       "conditions": {
                         "status": "success",
                         "attempt": 1,
@@ -67,9 +67,9 @@ class CounterEventTriggerRuleTest {
         assertThat(rule.normalizedJson()).isEqualTo(objectMapper.readTree("""
                 {
                   "any_of": [
-                    {"event_type": "task_completed"},
+                    {"semantic_key": "task_completed"},
                     {
-                      "event_type": "task_done_v2",
+                      "semantic_key": "task_done_v2",
                       "conditions": {
                         "status": "success",
                         "attempt": 1,
@@ -86,24 +86,24 @@ class CounterEventTriggerRuleTest {
 
     @Test
     void selectorModesAndClauseFieldsAreStrictlyAllowListed() throws Exception {
-        assertInvalid("{}", "event_type、event_types 或 any_of");
+        assertInvalid("{}", "semantic_key、semantic_keys 或 any_of");
         assertInvalid(
-                "{\"event_type\":\"task_completed\",\"event_types\":[\"task_completed\"]}",
-                "event_type、event_types 或 any_of"
+                "{\"semantic_key\":\"task_completed\",\"semantic_keys\":[\"task_completed\"]}",
+                "semantic_key、semantic_keys 或 any_of"
         );
         assertInvalid(
-                "{\"event_type\":\"task_completed\",\"any_of\":[{\"event_type\":\"task_done\"}]}",
+                "{\"semantic_key\":\"task_completed\",\"any_of\":[{\"semantic_key\":\"task_done\"}]}",
                 "不能与"
         );
         assertInvalid("{\"any_of\":[]}", "1 到 100");
         assertInvalid("{\"any_of\":[\"task_completed\"]}", "必须是 JSON object");
-        assertInvalid("{\"any_of\":[{}]}", "event_type 为必填");
+        assertInvalid("{\"any_of\":[{}]}", "semantic_key 为必填");
         assertInvalid(
-                "{\"any_of\":[{\"event_type\":\"task_completed\",\"increment_by\":2}]}",
+                "{\"any_of\":[{\"semantic_key\":\"task_completed\",\"increment_by\":2}]}",
                 "不支持的字段"
         );
         assertInvalid(
-                "{\"any_of\":[{\"event_type\":\"task_completed\",\"conditions\":[]}]}",
+                "{\"any_of\":[{\"semantic_key\":\"task_completed\",\"conditions\":[]}]}",
                 "必须是 JSON object"
         );
     }
@@ -113,7 +113,7 @@ class CounterEventTriggerRuleTest {
         ObjectNode tooManyClauses = objectMapper.createObjectNode();
         var clauses = tooManyClauses.putArray("any_of");
         for (int index = 0; index <= CounterEventTriggerRule.MAX_CLAUSES; index++) {
-            clauses.addObject().put("event_type", "event_" + index);
+            clauses.addObject().put("semantic_key", "event_" + index);
         }
         assertInvalid(tooManyClauses, "1 到 100");
 
@@ -146,7 +146,7 @@ class CounterEventTriggerRuleTest {
         var clauses = tooManyNodes.putArray("any_of");
         for (int clauseIndex = 0; clauseIndex < 10; clauseIndex++) {
             ObjectNode conditions = clauses.addObject()
-                    .put("event_type", "event_" + clauseIndex)
+                    .put("semantic_key", "event_" + clauseIndex)
                     .putObject("conditions");
             var values = conditions.putArray("values");
             for (int valueIndex = 0; valueIndex < 100; valueIndex++) {
@@ -185,11 +185,11 @@ class CounterEventTriggerRuleTest {
                 {
                   "any_of": [
                     {
-                      "event_type": "task_completed",
+                      "semantic_key": "task_completed",
                       "conditions": {"source": "api", "status": "success"}
                     },
                     {
-                      "event_type": "task_completed",
+                      "semantic_key": "task_completed",
                       "conditions": {"status": "success", "source": "api"}
                     }
                   ]
@@ -199,8 +199,8 @@ class CounterEventTriggerRuleTest {
         CounterEventTriggerRule rule = CounterEventTriggerRule.parse(objectMapper.readTree("""
                 {
                   "any_of": [
-                    {"event_type": "task_completed", "conditions": {"source": "api"}},
-                    {"event_type": "task_completed", "conditions": {"source": "import"}}
+                    {"semantic_key": "task_completed", "conditions": {"source": "api"}},
+                    {"semantic_key": "task_completed", "conditions": {"source": "import"}}
                   ]
                 }
                 """));
@@ -211,7 +211,7 @@ class CounterEventTriggerRuleTest {
         ObjectNode trigger = objectMapper.createObjectNode();
         trigger.putArray("any_of")
                 .addObject()
-                .put("event_type", "task_completed")
+                .put("semantic_key", "task_completed")
                 .putObject("conditions");
         return trigger;
     }

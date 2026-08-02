@@ -2,6 +2,8 @@ package com.github.analyticshub.service;
 
 import com.github.analyticshub.config.MultiDataSourceManager;
 import com.github.analyticshub.database.project.ProjectSchemaMigrator;
+import com.github.analyticshub.dto.AdminProjectUpdateRequest;
+import com.github.analyticshub.dto.ProjectAnalysisTemplate;
 import com.github.analyticshub.entity.AnalyticsProject;
 import com.github.analyticshub.mapper.AnalyticsProjectMapper;
 import com.github.analyticshub.security.ProjectCredentialCipher;
@@ -34,6 +36,9 @@ class AdminProjectServiceTest {
 
     @Mock
     private ProjectCredentialCipher credentialCipher;
+
+    @Mock
+    private SemanticTemplateService semanticTemplateService;
 
     @AfterEach
     void clearTransactionState() {
@@ -70,12 +75,35 @@ class AdminProjectServiceTest {
         verify(dataSourceManager).reloadProject("project_one");
     }
 
+    @Test
+    void changingTemplateInitializesOfficialSemanticDefinitions() {
+        AnalyticsProject project = project();
+        project.setAnalysisTemplate(ProjectAnalysisTemplate.BLANK);
+        when(projectMapper.selectById(1L)).thenReturn(project);
+
+        service().updateProject(1L, new AdminProjectUpdateRequest(
+                null,
+                ProjectAnalysisTemplate.APP,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        ));
+
+        verify(semanticTemplateService).initialize("project_one", ProjectAnalysisTemplate.APP);
+    }
+
     private AdminProjectService service() {
         return new AdminProjectService(
                 projectMapper,
                 dataSourceManager,
                 projectSchemaMigrator,
-                credentialCipher
+                credentialCipher,
+                semanticTemplateService
         );
     }
 
