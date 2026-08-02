@@ -443,34 +443,34 @@ GET /api/admin/traffic-metrics/top-referrers?projectId=your-project-id&limit=10
   "displayName": {"zh": "累计完成任务", "en": "Completed Tasks"},
   "unit": {"zh": "项", "en": "Tasks"},
   "eventTrigger": {
-    "event_type": "task_completed",
+    "semantic_key": "core.action.completed",
     "conditions": {"status": "success"}
   },
   "isPublic": true
 }
 ```
 
-**效果**：当采集 API 监听到 `task_completed` 且属性中 `status == "success"` 时，该计数器自动 +1。
+**效果**：当采集 API 收到一个映射到 `core.action.completed`、且属性中 `status == "success"` 的事件时，该计数器自动 +1。raw event key 的调整只需维护语义字典，不需要修改 Counter。
 
-埋点改名后，可以使用多 raw key 规则继续累计同一个 Counter：
+一个 Counter 也可以监听多个稳定语义：
 
 ```json
 {
   "eventTrigger": {
-    "event_types": ["task_completed", "task_done_v2"]
+    "semantic_keys": ["core.action.completed", "custom.content.shared"]
   }
 }
 ```
 
-这时顶层 `conditions` 会同时作用于 `event_types` 中的所有事件。如果历史和当前埋点的判断条件不同，应使用 `any_of` 为每个 alias 配置独立 clause（分支）：
+这时顶层 `conditions` 会同时作用于所有语义。不同语义需要不同条件时，使用 `any_of`：
 
 ```json
 {
   "eventTrigger": {
     "any_of": [
-      {"event_type": "task_completed"},
+      {"semantic_key": "core.action.completed"},
       {
-        "event_type": "task_done_v2",
+        "semantic_key": "custom.content.shared",
         "conditions": {"status": "success"}
       }
     ]
@@ -478,17 +478,17 @@ GET /api/admin/traffic-metrics/top-referrers?projectId=your-project-id&limit=10
 }
 ```
 
-以上规则表示 `(task_completed) OR (task_done_v2 AND status == success)`；实时累计和历史 rebuild 使用同一语义。`any_of` 也允许同一个 `event_type` 出现在多个不同条件的 clause 中，适合表达同一事件的多个有效分支；完全重复的 clause 会被拒绝。
+以上规则表示 `(core.action.completed) OR (custom.content.shared AND status == success)`；实时累计和历史 rebuild 使用同一份解析规则。完全重复的 clause 会被拒绝。
 
-`event_type`、`event_types` 与 `any_of` 是三种互斥形态：
+`semantic_key`、`semantic_keys` 与 `any_of` 是三种互斥形态：
 
-- `event_type`：单个事件 key，可带一组顶层 `conditions`，兼容 1.0.0。
-- `event_types`：1–100 个不重复事件 key，共享一组可选的顶层 `conditions`。
-- `any_of`：1–100 个 clause；每个 clause 只允许一个 `event_type` 和可选 `conditions`，不能再配置顶层 `conditions`。
+- `semantic_key`：单个语义 Key，可带一组顶层 `conditions`。
+- `semantic_keys`：1–100 个不重复语义 Key，共享一组可选的顶层 `conditions`。
+- `any_of`：1–100 个 clause；每个 clause 只允许一个 `semantic_key` 和可选 `conditions`，不能再配置顶层 `conditions`。
 
 规则使用 allow-list validation（白名单校验）。`conditions` 必须是 JSON object；允许嵌套 object、array、string、number、boolean 和 `null`。最大嵌套深度为 8，每个 object/array 最多 100 项，字段名长度 1–100，字符串值最长 1024，整条规则的 condition 节点总数最多 1000。非法规则返回 HTTP 400 `INVALID_COUNTER_EVENT_TRIGGER`。
 
-语义字典不会隐式修改 Counter 触发规则，历史 aliases 必须明确写进规则。更新后调用 rebuild 即可按新规则重算。若要把已有 Counter 改成纯手工模式，发送 `{"clearEventTrigger": true}`；不能同时传 `eventTrigger`。
+保存规则时会校验引用的语义定义存在且启用。语义 aliases 更新后调用 rebuild 即可按新映射重算。若要把已有 Counter 改成纯手工模式，发送 `{"clearEventTrigger": true}`；不能同时传 `eventTrigger`。
 
 #### 管理端操作接口
 
@@ -496,7 +496,6 @@ GET /api/admin/traffic-metrics/top-referrers?projectId=your-project-id&limit=10
 
 ```http
 GET    /api/admin/counters?projectId=...
-GET    /api/admin/counters/metadata/event-types?projectId=... # 获取已有事件名建议
 GET    /api/admin/counters/{key}?projectId=...     # 获取单个计数器详情
 PUT    /api/admin/counters/{key}?projectId=...     # 创建或更新规则/元数据
 POST   /api/admin/counters/{key}/increment?projectId=... # 手动累加（偏移操作）
@@ -516,7 +515,7 @@ DELETE /api/admin/counters/{key}?projectId=...     # 删除计数器配置
     "unit": {"zh": "项", "en": "Tasks"},
     "isPublic": true,
     "eventTrigger": {
-      "event_type": "task_completed",
+      "semantic_key": "core.action.completed",
       "conditions": {"status": "success"}
     },
     "updatedAt": "2026-02-12T10:00:00Z",
@@ -669,7 +668,7 @@ POST /api/admin/privacy/requests/outbox/deliver?projectId=your_project&batchSize
 
 ### 12. 项目语义字典
 
-语义字典保存在 system database，原始事件仍保存在项目数据库。一个项目内多个历史/当前 raw key 可以映射到一个稳定 semantic key。
+语义字典保存在 system database，原始事件仍保存在项目数据库。一个项目内多个历史/当前 raw key 可以映射到一个稳定 semantic key，历史事件事实不会被重写。
 
 ```http
 GET    /api/admin/projects/{projectId}/event-catalog
@@ -696,6 +695,8 @@ PUT 示例：
 - `REPLACE`：`aliases` 必填，完整替换；传 `[]` 明确清空。
 - `PRESERVE`：必须省略 `aliases`，保留现有映射。
 - 同一 raw key 在同一项目/类型中只能属于一个 semantic key；冲突返回 409。
+- `app` / `webapp` 项目自动初始化四个 `core.*` 官方语义；官方定义不能删除。
+- 新增项目自定义语义必须使用 `custom.*`；右侧 semantic key 创建后不提供改名操作，展示名称和左侧 aliases 可以继续维护。
 
 ### 13. 项目 Dashboard 定义
 

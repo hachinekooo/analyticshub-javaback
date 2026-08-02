@@ -161,13 +161,13 @@ export const dashboardWidgetExtensions: readonly DashboardWidgetExtension[] =
 - project database：设备、事件、会话、流量、Counter、隐私工单和 outbox。
 - raw analytics 数据不复制进 system database；需要组合时由服务层分别查询后合并，避免 cross-database JOIN。
 
-## 埋点改名与 Counter 规则
+## 语义 Key、原始埋点与 Counter
 
-语义字典以 `(projectId, sourceKind, rawKey)` 保证一个 raw key 只有一个归属，同时允许多个 raw key 指向同一个 semantic key。例如 `task_completed` 与后续的 `task_done_v2` 可以继续显示为同一个“完成任务”。
+Dashboard 和 Counter 只依赖稳定的 semantic key（语义 Key），采集端继续上报自己的 raw event key（原始埋点）。语义字典以 `(projectId, sourceKind, rawKey)` 保证一个 raw key 只有一个归属，同时允许多个 raw key 指向同一个 semantic key。例如 `task_completed` 与后续的 `task_done_v2` 都可以映射到 `core.action.completed`。
 
-未映射事件自动显示 raw key；inactive definition 不参与页面解析。这样先采集、后补字典也不会丢数据。
+`app` 和 `webapp` 模板会预置 `core.activation.completed`、`core.action.completed`、`core.paywall.opened`、`core.purchase.completed`。这些 official definitions（官方定义）的 Key 不允许删除；项目可以修改显示名、维护 aliases、停用暂时不用的定义。项目新增定义必须使用 `custom.*` 命名空间，Key 创建后作为稳定引用不再改名；需要替换时应新建定义并迁移组件配置。
 
-语义字典只负责展示语义，不会静默改写累计口径。若多个 aliases 都是无条件等价事件，Counter 可以使用 `event_types`；若旧事件无条件、而新事件还需属性过滤，则使用 `any_of` 为每个事件配置独立 `conditions`。这些项目专属 alias 和条件属于下游配置，不应写进开源底座源码。规则 contract 与安全边界见 [管理端 API](API_MANAGEMENT.md#9-运营累计统计counters配置与管理)。
+原始事件事实不会被修改。查询时按 `Raw Event → Semantic Key → Widget/Counter` 解析，所以修正 alias 后，历史事实仍可重新聚合或 rebuild（回算）。未映射事件仍保留在事件目录中，但不会误算进依赖语义 Key 的组件。项目专属 alias 和条件属于部署方配置，不写进开源底座源码。规则 contract 与安全边界见 [管理端 API](API_MANAGEMENT.md#9-运营累计统计counters配置与管理)。
 
 ## 扩展一个新内置 Widget
 

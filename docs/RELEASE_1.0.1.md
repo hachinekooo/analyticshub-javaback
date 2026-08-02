@@ -72,15 +72,15 @@ system database：
 
 ## Counter 与语义字典
 
-Counter 的 `eventTrigger` 支持三种互斥形态，并继续兼容已有 JSON：
+Counter 的 `eventTrigger` 只引用稳定语义 Key，支持三种互斥形态：
 
-- `event_type`：只匹配一个 raw event key，兼容 1.0.0。
-- `event_types`：多个历史/当前 raw event keys 共享同一组可选条件。
-- `any_of`：1–100 个 typed clauses（类型化分支），每个分支包含一个 `event_type` 和可选 `conditions`，用于表达不同 alias 各自的过滤条件。
+- `semantic_key`：匹配一个语义 Key。
+- `semantic_keys`：多个语义 Key 共享一组可选条件。
+- `any_of`：1–100 个 typed clauses（类型化分支），每个分支包含一个 `semantic_key` 和可选 `conditions`。
 
 实时投影与历史 rebuild 共用同一份 allow-listed rule model（白名单规则模型）。`conditions` 对嵌套深度、容器大小、字段名、字符串值和总节点数设有边界；非法或混合形态返回 `INVALID_COUNTER_EVENT_TRIGGER`。该能力沿用现有 `event_trigger JSONB`，无需新增或改写项目库迁移。
 
-语义字典负责展示和聚合层的 many-to-one mapping（多对一映射），不会隐式改写 Counter 触发规则。无条件 aliases 可写入 `event_types`；若新旧 aliases 条件不同，使用 `any_of`，然后执行 rebuild 将存量事件重算为累计值。完整 contract 见 [管理端 API](API_MANAGEMENT.md#9-运营累计统计counters配置与管理)。
+语义字典负责 raw event 到 semantic key 的 many-to-one mapping（多对一映射）。`app` / `webapp` 模板自动初始化四个 `core.*` 官方语义，新建自定义语义必须使用 `custom.*`。调整 aliases 后执行 rebuild，即可按新映射重算存量事件；事件事实不会被重写。完整 contract 见 [管理端 API](API_MANAGEMENT.md#9-运营累计统计counters配置与管理)。
 
 ## Dashboard 定制边界
 
