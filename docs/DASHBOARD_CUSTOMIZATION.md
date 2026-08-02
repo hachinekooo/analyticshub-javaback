@@ -32,6 +32,19 @@ AnalyticsHub 定位为公司自行部署的 internal operations center（内部�
 
 这层适合绝大多数日常调整，并且可以安全地由非开发人员使用。
 
+#### 分析模板与工作区
+
+项目的 `analysisTemplate` 负责初始化工作区，不用 PV/UV 等网站概念冒充 App 运营指标：
+
+| 模板 | 默认工作区 | 默认重点 |
+| --- | --- | --- |
+| `app` | `app`、`details` | 产品行为、事件趋势、核心动作和明细 |
+| `website` | `website`、`details` | 页面访问趋势、页面排行和明细 |
+| `webapp` | `product`、`website`、`details` | 产品行为与网站流量并列，互不混算 |
+| `blank` | `custom`、`details` | 空白编排区与通用明细 |
+
+工作区 key 是 Dashboard API 和扩展组件暴露的稳定标识。V6 migration 将旧的 `operations` / `technical` 分别迁移到模板对应工作区和 `details`；迁移只修正关联 key，不重写管理员已经保存的 widget definition。新代码不再维护旧 key 的运行时 fallback。
+
 ### 3. 可信 build-time extension
 
 当某个项目需要独有图表、交互或视觉风格时，在该公司的私有下游工程中开发 Vue component/page，并在 build time（构建期）注册到受信任的组件 registry。开源底座只提供 extension contract（扩展契约），不包含下游源码和业务配置。
@@ -117,7 +130,7 @@ type ScoreConfig = Readonly<{ threshold: number }>
 const exampleScoreWidget = {
   type: 'custom.example.score',
   displayName: { 'zh-CN': '示例评分', en: 'Example score' },
-  spaces: ['operations'],
+  spaces: ['app', 'product'],
   component: ExampleScoreWidget,
   defaultLayout: { w: 6, h: 8, minW: 4, minH: 4 },
   defaultConfig: { threshold: 80 },
@@ -132,7 +145,7 @@ export const dashboardWidgetExtensions: readonly DashboardWidgetExtension[] =
   Object.freeze([exampleScoreWidget])
 ```
 
-`spaces` 是 base admin UI 的 placement scope（放置范围），当前支持 `operations` 和 `technical`。前端在 palette、载入、渲染和保存阶段都会校验该范围；后端仍对 type/config 做最终权威校验。Config 只能包含 JSON value，不能包含函数、`BigInt`、循环对象、`NaN`、class instance 或超过 256 KiB 的内容。
+`spaces` 是 base admin UI 的 placement scope（放置范围），支持 `app`、`website`、`product`、`details` 和 `custom`。前端在组件库、载入、渲染和保存阶段都会校验该范围；后端仍对 type/config 做最终权威校验。Config 只能包含 JSON value，不能包含函数、`BigInt`、循环对象、`NaN`、class instance 或超过 256 KiB 的内容。
 
 ### 发布与兼容规则
 

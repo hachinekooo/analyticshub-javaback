@@ -73,7 +73,7 @@ class AnalyticshubJavabackApplicationIT {
 
         assertThat(currentSchema).isEqualTo("analytics");
         assertThat(projectsTableExists).isTrue();
-        assertThat(latestMigration).isEqualTo("5");
+        assertThat(latestMigration).isEqualTo("6");
         String analysisTemplate = jdbcTemplate.queryForObject(
                 "SELECT column_default FROM information_schema.columns " +
                         "WHERE table_schema = 'analytics' AND table_name = 'analytics_projects' " +
@@ -101,6 +101,12 @@ class AnalyticshubJavabackApplicationIT {
                     (project_id, project_name, db_host, db_name, db_user)
                 VALUES (?, ?, ?, ?, ?)
                 """, "existing_app", "Existing App", "localhost", "existing_app", "existing_app");
+        upgradeDatabase.update("""
+                INSERT INTO analytics_upgrade_v4.analytics_dashboards
+                    (project_id, dashboard_key, display_name, schema_version, definition, is_default)
+                VALUES (?, 'operations', '{"en":"Operations"}'::jsonb, 1,
+                    '{"schemaVersion":1,"widgets":[]}'::jsonb, TRUE)
+                """, "existing_app");
 
         Flyway.configure()
                 .dataSource(v4.getConfiguration().getDataSource())
@@ -120,6 +126,11 @@ class AnalyticshubJavabackApplicationIT {
                 String.class,
                 "existing_app"
         )).isEqualTo("Existing App");
+        assertThat(upgradeDatabase.queryForObject(
+                "SELECT dashboard_key FROM analytics_upgrade_v4.analytics_dashboards WHERE project_id = ?",
+                String.class,
+                "existing_app"
+        )).isEqualTo("app");
     }
 
     @Test
