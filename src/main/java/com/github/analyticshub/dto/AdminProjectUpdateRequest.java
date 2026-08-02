@@ -11,6 +11,7 @@ import jakarta.validation.constraints.Size;
 public record AdminProjectUpdateRequest(
         @Size(max = 100, message = "projectName 长度不能超过 100")
         String projectName,
+        ProjectAnalysisTemplate analysisTemplate,
         String dbHost,
         @Min(value = 1, message = "dbPort 不能小于 1")
         @Max(value = 65535, message = "dbPort 不能大于 65535")

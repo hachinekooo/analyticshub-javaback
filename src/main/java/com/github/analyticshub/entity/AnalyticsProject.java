@@ -2,6 +2,7 @@ package com.github.analyticshub.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.github.analyticshub.dto.ProjectAnalysisTemplate;
 
 import java.time.Instant;
 
@@ -20,6 +21,9 @@ public class AnalyticsProject {
 
     @TableField("project_name")
     private String projectName;
+
+    @TableField("analysis_template")
+    private ProjectAnalysisTemplate analysisTemplate = ProjectAnalysisTemplate.APP;
 
     // 数据库配置
     @TableField("db_host")
@@ -61,12 +65,14 @@ public class AnalyticsProject {
     }
 
     // 全参构造函数
-    public AnalyticsProject(Long id, String projectId, String projectName, String dbHost,
+    public AnalyticsProject(Long id, String projectId, String projectName,
+                           ProjectAnalysisTemplate analysisTemplate, String dbHost,
                            Integer dbPort, String dbName, String dbSchema, String dbUser, String dbPasswordEncrypted,
                            String tablePrefix, Boolean isActive, Instant createdAt, Instant updatedAt) {
         this.id = id;
         this.projectId = projectId;
         this.projectName = projectName;
+        this.analysisTemplate = analysisTemplate;
         this.dbHost = dbHost;
         this.dbPort = dbPort;
         this.dbName = dbName;
@@ -102,6 +108,14 @@ public class AnalyticsProject {
 
     public void setProjectName(String projectName) {
         this.projectName = projectName;
+    }
+
+    public ProjectAnalysisTemplate getAnalysisTemplate() {
+        return analysisTemplate;
+    }
+
+    public void setAnalysisTemplate(ProjectAnalysisTemplate analysisTemplate) {
+        this.analysisTemplate = analysisTemplate;
     }
 
     public String getDbHost() {

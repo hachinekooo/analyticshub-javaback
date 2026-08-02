@@ -64,6 +64,15 @@ X-Admin-Token: your_admin_token
 
 每个业务项目都应使用自己独立的目标数据库和 schema；管理端创建项目**不会自动创建数据库/用户**，只会保存连接信息。`dbSchema` 为空时默认使用 `analytics`，初始化项目时会创建该 schema 并创建采集表。为某个项目配置了 `dbName/dbSchema/dbUser/dbPassword` 后，需要你提前在 PostgreSQL 里创建对应的数据库与用户。
 
+`analysisTemplate` 是项目工作台的稳定初始化模板，新建项目必填：
+
+- `app`：App 产品运营；
+- `website`：展示型网站；
+- `webapp`：WebApp / SaaS；
+- `blank`：空白工作台。
+
+模板决定默认分析空间和组件，不限制后续维护语义、Dashboard 或 Counter。历史项目在 system migration V5 中迁移为 `app`，之后可以通过更新项目 API 调整。
+
 ```http
 GET    /api/admin/projects
 POST   /api/admin/projects
@@ -72,6 +81,23 @@ DELETE /api/admin/projects/{id}
 POST   /api/admin/projects/{id}/test   # 测试数据库连接
 POST   /api/admin/projects/{id}/init   # 初始化项目表结构
 GET    /api/admin/projects/{id}/health # 检查项目健康状态
+```
+
+**创建请求示例：**
+
+```json
+{
+  "projectId": "your_project",
+  "projectName": "Your Project",
+  "analysisTemplate": "app",
+  "dbHost": "postgres.example.internal",
+  "dbPort": 5432,
+  "dbName": "your_project",
+  "dbSchema": "analytics",
+  "dbUser": "your_project",
+  "dbPassword": "replace-with-server-side-secret",
+  "tablePrefix": "analytics_"
+}
 ```
 
 **响应示例 (GET /projects)：**
@@ -84,14 +110,22 @@ GET    /api/admin/projects/{id}/health # 检查项目健康状态
       "id": 1,
       "projectId": "your_project",
       "projectName": "Your Project",
+      "analysisTemplate": "app",
+      "dbHost": "postgres.example.internal",
+      "dbPort": 5432,
       "dbName": "your_project",
       "dbSchema": "analytics",
+      "dbUser": "your_project",
+      "tablePrefix": "analytics_",
+      "isActive": true,
       "createdAt": "2026-01-01T10:00:00Z"
     }
   ],
   "timestamp": "2026-02-12T10:00:00.000Z"
 }
 ```
+
+响应使用专用 DTO，不返回 `dbPassword` 或 `dbPasswordEncrypted`。删除项目只删除 system database 中的项目配置，不删除项目业务库数据；`POST /init` 才会显式执行项目库 migration。
 
 ### 4. 设备管理与凭据恢复
 

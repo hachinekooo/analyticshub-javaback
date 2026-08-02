@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -58,5 +59,30 @@ class ProjectDatabaseContractTest {
         assertThat(json.path("schemaVersion").asString()).isEqualTo("2");
         assertThat(json.path("migrationsExecuted").asInt()).isEqualTo(1);
         assertThat(json.path("legacyBaselineApplied").asBoolean()).isTrue();
+    }
+
+    @Test
+    void projectResponseUsesStableTemplateCodesAndDoesNotExposeCredentials() {
+        AdminProjectResponse response = new AdminProjectResponse(
+                7L,
+                "sample_app",
+                "Sample App",
+                ProjectAnalysisTemplate.WEB_APP,
+                "db.internal",
+                5432,
+                "sample",
+                "analytics",
+                "analytics_user",
+                "analytics_",
+                true,
+                Instant.parse("2026-08-02T00:00:00Z"),
+                Instant.parse("2026-08-02T00:00:00Z")
+        );
+
+        JsonNode json = objectMapper.valueToTree(response);
+
+        assertThat(json.path("analysisTemplate").asString()).isEqualTo("webapp");
+        assertThat(json.has("dbPassword")).isFalse();
+        assertThat(json.has("dbPasswordEncrypted")).isFalse();
     }
 }

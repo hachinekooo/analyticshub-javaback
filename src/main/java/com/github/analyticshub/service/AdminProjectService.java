@@ -87,6 +87,7 @@ public class AdminProjectService {
         AnalyticsProject project = new AnalyticsProject();
         project.setProjectId(projectId);
         project.setProjectName(request.projectName());
+        project.setAnalysisTemplate(request.analysisTemplate());
         project.setDbHost(request.dbHost());
         project.setDbPort(dbPort);
         project.setDbName(dbName);
@@ -109,6 +110,9 @@ public class AdminProjectService {
 
         if (request.projectName() != null) {
             project.setProjectName(request.projectName());
+        }
+        if (request.analysisTemplate() != null) {
+            project.setAnalysisTemplate(request.analysisTemplate());
         }
         if (request.dbHost() != null) {
             project.setDbHost(request.dbHost());

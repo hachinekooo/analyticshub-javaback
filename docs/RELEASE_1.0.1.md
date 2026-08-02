@@ -17,7 +17,7 @@ agent_notes: 发布或升级 1.0.1 前读取；真实凭据和私有项目名不
 - Flyway 固定为 12.11.0，使应用与 migration runtime 都使用 Jackson 3 namespace；本项目未使用 Flyway 12 移除的 Code Analysis、旧 plugin namespace 或 MongoDB JDBC 能力。
 - Jackson 使用 3.1 LTS 的 3.1.5 security patch。应用、Spring MVC converter 和 Flyway 不再加载 Jackson 2 databind；`com.fasterxml.jackson.annotation` 仍是 Jackson 3 官方共享的 annotation artifact，不代表存在第二套 mapper。
 
-升级组合已覆盖空 system schema 的 V1–V4、空 project schema 的 V1–V5，以及模拟 1.0.0 project V1 fingerprint 后继续执行 V2–V5。生产升级仍必须按本文的备份、单实例迁移和逐项目 health 流程执行。
+升级组合已覆盖空 system schema 的 V1–V5、空 project schema 的 V1–V5，以及模拟 1.0.0 project V1 fingerprint 后继续执行 V2–V5。生产升级仍必须按本文的备份、单实例迁移和逐项目 health 流程执行。
 
 ## 数据库版本
 
@@ -25,6 +25,7 @@ system database：
 
 - V3：project-scoped semantic definitions 与多对一 aliases。
 - V4：project-scoped Dashboard definitions、default uniqueness 和 revision。
+- V5：项目 `analysis_template`，历史项目默认迁移为 `app`。
 
 已经发布的 system V2 曾创建 `analytics_idempotency_keys`。1.0.1 不再读写这张 legacy table（遗留表）；事件幂等状态由每个 project database 的 V2 表负责。升级过程不会自动 `DROP` 该表，以免在没有独立备份和数据保留决策时执行破坏性清理。它的保留不代表业务采集数据仍会写入 system database。
 

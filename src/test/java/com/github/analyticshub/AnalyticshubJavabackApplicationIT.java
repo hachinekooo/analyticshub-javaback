@@ -13,6 +13,8 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
+import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 
 import java.util.Map;
 import java.net.URI;
@@ -71,7 +73,53 @@ class AnalyticshubJavabackApplicationIT {
 
         assertThat(currentSchema).isEqualTo("analytics");
         assertThat(projectsTableExists).isTrue();
-        assertThat(latestMigration).isEqualTo("4");
+        assertThat(latestMigration).isEqualTo("5");
+        String analysisTemplate = jdbcTemplate.queryForObject(
+                "SELECT column_default FROM information_schema.columns " +
+                        "WHERE table_schema = 'analytics' AND table_name = 'analytics_projects' " +
+                        "AND column_name = 'analysis_template'",
+                String.class
+        );
+        assertThat(analysisTemplate).contains("app");
+    }
+
+    @Test
+    void upgradesExistingV4ProjectsToTheAppTemplateWithoutDataLoss() {
+        String schema = "analytics_upgrade_v4";
+        Flyway v4 = Flyway.configure()
+                .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .schemas(schema)
+                .defaultSchema(schema)
+                .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("4"))
+                .load();
+        v4.migrate();
+
+        JdbcTemplate upgradeDatabase = new JdbcTemplate(v4.getConfiguration().getDataSource());
+        upgradeDatabase.update("""
+                INSERT INTO analytics_upgrade_v4.analytics_projects
+                    (project_id, project_name, db_host, db_name, db_user)
+                VALUES (?, ?, ?, ?, ?)
+                """, "existing_app", "Existing App", "localhost", "existing_app", "existing_app");
+
+        Flyway.configure()
+                .dataSource(v4.getConfiguration().getDataSource())
+                .schemas(schema)
+                .defaultSchema(schema)
+                .locations("classpath:db/migration")
+                .load()
+                .migrate();
+
+        assertThat(upgradeDatabase.queryForObject(
+                "SELECT analysis_template FROM analytics_upgrade_v4.analytics_projects WHERE project_id = ?",
+                String.class,
+                "existing_app"
+        )).isEqualTo("app");
+        assertThat(upgradeDatabase.queryForObject(
+                "SELECT project_name FROM analytics_upgrade_v4.analytics_projects WHERE project_id = ?",
+                String.class,
+                "existing_app"
+        )).isEqualTo("Existing App");
     }
 
     @Test

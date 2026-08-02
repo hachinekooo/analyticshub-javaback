@@ -3,6 +3,7 @@ package com.github.analyticshub.dto;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
@@ -17,6 +18,8 @@ public record AdminProjectCreateRequest(
         @NotBlank(message = "projectName 不能为空")
         @Size(max = 100, message = "projectName 长度不能超过 100")
         String projectName,
+        @NotNull(message = "analysisTemplate 不能为空")
+        ProjectAnalysisTemplate analysisTemplate,
         @NotBlank(message = "dbHost 不能为空")
         String dbHost,
         @Min(value = 1, message = "dbPort 不能小于 1")

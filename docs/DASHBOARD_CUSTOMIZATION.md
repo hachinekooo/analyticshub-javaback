@@ -28,6 +28,8 @@ AnalyticsHub 定位为公司自行部署的 internal operations center（内部�
 - 不允许 HTML、JavaScript、SQL、任意 URL、`eval` 或 dynamic import；
 - 使用 revision 做并发更新保护。
 
+布局编辑采用单一事务式交互：进入调整模式时建立 working copy（工作副本），拖拽、缩放、增删和配置只修改工作副本；点击“完成”后一次写入服务端并立即生效，点击“取消”则丢弃工作副本。正式页面不引入草稿、预览、发布或额外版本状态，也不使用 localStorage 作为第二套持久化来源。
+
 这层适合绝大多数日常调整，并且可以安全地由非开发人员使用。
 
 ### 3. 可信 build-time extension
