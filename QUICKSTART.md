@@ -60,12 +60,12 @@ export ADMIN_TOKEN=replace-with-at-least-32-random-characters
 export PROJECT_CREDENTIAL_ENCRYPTION_KEY="$(openssl rand -base64 32)"
 ```
 
-也可以直接编辑 `src/main/resources/application.yml`，但不要提交真实密码、Token 或生产配置。
+也可以复制 `.env.dev.example` 维护本地环境文件；不要修改并提交带有真实密码、Token 的共享配置。
 
 ## 4. 构建并启动
 
 ```bash
-./scripts/mvn-project clean install -DskipTests
+./scripts/mvn-project -DskipTests compile
 ./scripts/mvn-project spring-boot:run
 ```
 
@@ -109,20 +109,8 @@ psql -U postgres -d analytics -c "DROP SCHEMA analytics CASCADE; CREATE SCHEMA a
 ./scripts/mvn-project spring-boot:run
 ```
 
-## 生产部署入口
+## 下一步
 
-```bash
-sudo bash ops/analyticshub bootstrap
-sudo -E env DOMAIN=analytics.example.com CERTBOT_EMAIL=admin@example.com ISSUE_CERT=true bash ops/analyticshub web
-sudo bash ops/analyticshub deploy
-```
-
-上传 JAR、编辑 `/etc/analyticshub/analyticshub.env` 后：
-
-```bash
-sudo systemctl restart analyticshub
-sudo bash ops/analyticshub check
-sudo -E env BASE_URL=https://analytics.example.com bash ops/analyticshub check-public
-```
-
-详细说明见 [ops/README.md](ops/README.md)。
+- 创建和初始化接入项目：查看 [管理端 API](docs/API_MANAGEMENT.md#3-项目管理)。
+- 启动管理前端：查看前端仓库 README。
+- 生产部署：转到 [部署指南](docs/运维/DEPLOYMENT_GUIDE.md)，不要沿用本地配置。

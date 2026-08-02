@@ -106,20 +106,7 @@ sequenceDiagram
   end
 ```
 
-示例请求：
-
-```http
-POST /api/v1/auth/register
-Content-Type: application/json
-X-Project-ID: your-project-id
-
-{
-  "deviceId": "550e8400-e29b-41d4-a716-446655440000",
-  "deviceModel": "iPhone15,2",
-  "osVersion": "iOS 26.0",
-  "appVersion": "1.0.0"
-}
-```
+请求字段和响应见 [采集端 API：设备注册](API_COLLECTION.md#1-设备注册)。
 
 ### 2. 事件上报（HMAC 签名）
 
@@ -152,26 +139,7 @@ method|path|timestamp|deviceId|userId|body
 
 说明：`body` 使用原始请求体字符串；没有请求体时为空字符串。客户端签名格式必须与 `CryptoUtils.buildSignatureData` 保持一致。
 
-示例请求：
-
-```http
-POST /api/v1/events/track
-Content-Type: application/json
-X-Project-ID: your-project-id
-X-API-Key: ak_xxxxxxxxxxxxx
-X-Device-ID: 550e8400-e29b-41d4-a716-446655440000
-X-User-ID: 00112233445566778899aabbccddeeff
-X-Timestamp: 1700000000000
-X-Signature: hmac_signature_here
-
-{
-  "eventType": "button_click",
-  "timestamp": 1700000000000,
-  "properties": {
-    "button_name": "submit"
-  }
-}
-```
+请求字段和响应见 [采集端 API：事件追踪](API_COLLECTION.md#2-事件追踪)。
 
 ### 3. 管理端 Token 校验
 
@@ -192,12 +160,7 @@ sequenceDiagram
   end
 ```
 
-示例请求：
-
-```http
-POST /api/v1/auth/admin-token/verify
-X-Admin-Token: your_admin_token
-```
+请求字段和响应见 [管理端 API：Token 校验](API_MANAGEMENT.md#2-管理端-token-校验)。
 
 ### 4. 管理端项目管理
 
@@ -216,25 +179,7 @@ sequenceDiagram
   API-->>Admin: 返回项目详情
 ```
 
-示例请求：
-
-```http
-POST /api/admin/projects
-X-Admin-Token: your_admin_token
-Content-Type: application/json
-
-{
-  "projectId": "new-project",
-  "projectName": "New Project",
-  "dbHost": "localhost",
-  "dbPort": 5432,
-  "dbName": "new_project",
-  "dbSchema": "analytics",
-  "dbUser": "new_project_user",
-  "dbPassword": "replace-with-project-password",
-  "tablePrefix": "analytics_"
-}
-```
+请求字段和响应见 [管理端 API：项目管理](API_MANAGEMENT.md#3-项目管理)。
 
 ## 数据源与项目隔离
 

@@ -1,15 +1,17 @@
 ---
-title: 告警邮件 SMTP 配置
+title: 邮件与工单通知配置
 type: configuration
 status: current
 audience: operator, backend
-scope: 安全告警邮件的 SMTP 环境变量、TLS 端口和验证方式
+scope: 安全告警、隐私工单提醒和用户通知的 SMTP 配置与验证
 agent_notes: 只覆盖邮件配置；生产部署流程见 docs/运维/DEPLOYMENT_GUIDE.md
 ---
 
-# 告警邮件 SMTP 配置
+# 邮件与工单通知配置
 
-AnalyticsHub 使用 Spring Mail 发送安全告警邮件。邮件能力是可选项；不配置时，安全告警只会写入服务日志。
+AnalyticsHub 使用同一套 Spring Mail 配置处理三类邮件：安全告警、隐私工单提交提醒，以及 transactional outbox（事务发件箱）中的用户通知。
+
+邮件能力是可选项。不配置时，安全告警只写日志，工单用户通知保留在 outbox 中等待后续投递，不会被当作已发送。
 
 ## 配置项
 
@@ -55,7 +57,9 @@ ALERT_EMAIL=admin@example.com
 sudo bash ops/analyticshub check
 ```
 
-3. 触发管理端 Token 失败保护后，确认日志中没有 SMTP 认证或连接错误，并确认 `ALERT_EMAIL` 收到邮件。
+3. 触发管理端 Token 失败保护后，确认 `ALERT_EMAIL` 收到安全告警。
+4. 创建测试隐私工单，确认管理员收到建单提醒。
+5. 从后台发送测试通知，确认 outbox 最终产生 `NOTIFICATION_SENT` 活动；接口返回 `QUEUED` 本身不代表已送达。
 
 ## 安全要求
 

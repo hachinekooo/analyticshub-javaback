@@ -137,7 +137,7 @@ GET /api/admin/devices?projectId=your_project&page=1&pageSize=20
 当设备已经丢失本地凭据、无法通过 HMAC rotate endpoint 自助轮换时，可以由管理员执行受控恢复：
 
 ```http
-POST /api/admin/projects/your_project/devices/550e8400-e29b-41d4-a716-446655440000/credentials/reset
+POST /api/admin/projects/{projectId}/devices/{deviceId}/credentials/reset
 X-Admin-Token: your_admin_token
 ```
 
@@ -531,7 +531,7 @@ GET /api/admin/security/2fa/setup  # 首次绑定时生成临时 Secret；已启
 #### 1) 工单列表
 
 ```http
-GET /api/admin/privacy/requests?projectId=your_project&page=1&pageSize=20&status=SUBMITTED&processor=POSTHOG
+GET /api/admin/privacy/requests?projectId=your_project&page=1&pageSize=20&status=SUBMITTED&processor=ANALYTICSHUB
 ```
 
 筛选参数（可选）：
@@ -631,27 +631,9 @@ POST /api/admin/privacy/requests/outbox/deliver?projectId=your_project&batchSize
 
 正常情况下由内置 scheduler 自动投递；该接口用于人工或外部调度补偿。邮件未配置时 scheduler 不消费队列。
 
-### 12. 隐私工单数据库参考
+完整状态机、客服页面操作、去标识化字段和审计保留口径见 [隐私工单处理流程](PRIVACY_WORKFLOW.md)。本 API 文档只维护接口契约。
 
-每个项目在其自身数据库的 `dbSchema` 内创建 `{{PREFIX}}privacy_requests` 表（例如 `analytics.analytics_privacy_requests`）。
-
-核心字段说明：
-- `request_id`: 工单号（`prv_` 前缀）
-- `request_type`: `EXPORT / DELETE`
-- `processor`: `ANALYTICSHUB / POSTHOG`
-- `status`: `SUBMITTED / IN_PROGRESS / COMPLETED / REJECTED / CANCELLED`
-- `result_payload`: 人工处理结果快照（JSON）
-
-### 13. 隐私处理推荐流程
-
-1. **发起**：App 侧通过 [采集端 API](API_COLLECTION.md) 发起导出/删除请求。
-2. **建单**：后端只落库工单并触发内部通知，不在 App 请求中自动处理数据。
-3. **客服核验**：客服在管理后台核对项目、用户、设备、请求类型和备注。
-4. **手动执行**：导出请求生成并下载 JSON；删除请求经工单号二次确认后执行匿名化和凭据撤销。
-5. **审计闭环**：处理摘要写入工单，不可变活动流记录操作人、状态和影响数量。
-6. **通知用户**：客服通过通知接口发送处理结果；部署企业按自己的 retention policy（留存策略）管理工单、邮件 outbox、日志和备份。
-
-### 14. 项目语义字典
+### 12. 项目语义字典
 
 语义字典保存在 system database，原始事件仍保存在项目数据库。一个项目内多个历史/当前 raw key 可以映射到一个稳定 semantic key。
 
@@ -681,7 +663,7 @@ PUT 示例：
 - `PRESERVE`：必须省略 `aliases`，保留现有映射。
 - 同一 raw key 在同一项目/类型中只能属于一个 semantic key；冲突返回 409。
 
-### 15. 项目 Dashboard 定义
+### 13. 项目 Dashboard 定义
 
 Dashboard 定义保存在 system database，只接受 allow-list 内置组件和声明式参数，不接受 HTML、JavaScript、SQL、URL 或 dynamic import。
 

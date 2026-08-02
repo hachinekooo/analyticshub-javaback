@@ -2,56 +2,79 @@
 title: AnalyticsHub 文档索引
 type: documentation-index
 status: current
-audience: maintainer, agent, contributor
-scope: 文档目录、阅读入口和归档边界
-agent_notes: 用于选择要阅读的文档；不要替代具体 API 或运维文档
+audience: maintainer, agent, contributor, operator
+scope: 文档职责、阅读路径、事实来源和归档边界
+agent_notes: 先按任务选择目标文档；索引不替代具体文档
 ---
 
-# 文档索引
+# AnalyticsHub 文档索引
 
-本目录按使用场景组织文档。优先阅读与当前任务直接相关的文档，避免一次性加载长篇参考文档。
+文档按问题类型分工。入口文档保持简短，参考文档允许较长，但必须便于按标题或 API 路径检索。一个事实只选择一个主要维护位置，其他文档只给摘要和链接。
+
+## 从哪里开始
+
+| 你的问题 | 首选文档 |
+| --- | --- |
+| 这个项目解决什么问题 | [项目 README](../README.md) |
+| 如何在本地启动后端 | [快速启动](../QUICKSTART.md) |
+| 系统库、项目库和认证如何协作 | [架构与认证链路](ARCHITECTURE.md) |
+| App/官网怎样采集数据 | [采集端 API](API_COLLECTION.md) |
+| 管理后台怎样调用接口 | [管理端 API](API_MANAGEMENT.md) |
+| 怎样处理隐私工单 | [隐私工单处理流程](PRIVACY_WORKFLOW.md) |
+| 怎样做项目专属 Dashboard | [Dashboard 与项目定制](DASHBOARD_CUSTOMIZATION.md) |
+| 怎样部署到生产服务器 | [生产部署指南](运维/DEPLOYMENT_GUIDE.md) |
+| 如何从 1.0.0 升级到 1.0.1 | [1.0.1 升级说明](RELEASE_1.0.1.md) |
+
+## 文档职责
+
+### 入口与设计
+
+- [项目 README](../README.md)：产品定位、开源边界、能力概览和导航；不保存完整配置或部署步骤。
+- [快速启动](../QUICKSTART.md)：本地数据库、环境变量、启动和健康检查；不覆盖生产部署。
+- [架构与认证链路](ARCHITECTURE.md)：模块关系、认证时序和数据隔离；不重复所有接口字段。
+- [Dashboard 与项目定制](DASHBOARD_CUSTOMIZATION.md)：声明式布局与可信源码扩展契约；不包含私有项目配置。
+
+### 接口与业务流程
+
+- [采集端 API](API_COLLECTION.md)：`/api/v1/**` 和 `/api/public/**` 的 endpoint reference（端点参考）。
+- [管理端 API](API_MANAGEMENT.md)：`/api/admin/**` 的 endpoint reference。
+- [隐私工单处理流程](PRIVACY_WORKFLOW.md)：状态机、客服操作、导出/去标识化和审计口径；HTTP 字段仍以 API 文档为准。
+
+API 文档较长是因为它们承担完整接口参考职责。处理单个接口时，应按 URL 或小节检索，不要把整篇当作入门材料。
+
+### 安全、部署与运行
+
+- [安全配置](SECURITY_SETUP.md)：敏感信息边界、认证原则和密钥轮换入口。
+- [邮件与工单通知](EMAIL_SETUP.md)：SMTP 参数、安全告警和工单 outbox 验证，不负责完整部署。
+- [前端 2FA 对接](FRONTEND_2FA_GUIDE.md)：管理端 2FA challenge 与请求重试契约。
+- [生产部署指南](运维/DEPLOYMENT_GUIDE.md)：面向服务器管理员的端到端部署顺序。
+- [运维脚本](../ops/README.md)：`ops/analyticshub` 命令、参数和脚本维护边界。
+- [PostgreSQL 常用命令](数据库操作/PostgreSQL常用命令.md)：人工排障参考，不替代部署脚本。
+
+### 版本、本地环境与历史
+
+- [1.0.1 升级说明](RELEASE_1.0.1.md)：只服务 1.0.0 → 1.0.1 升级和回滚判断。
+- [维护者 Docker PostgreSQL](本地开发/DOCKER_POSTGRES.md)：维护者本机事实，不代表通用或生产配置。
+- [JDK 25 / Spring Boot 4 迁移记录](归档/JDK25-SpringBoot4-Guide.md)：历史排障材料，不作为当前事实来源。
+- [联系与支持](SUPPORT.md)：社区联系和赞赏，不属于技术文档入口。
+
+## 事实来源优先级
+
+文档与实现不一致时，按以下顺序核对并修正文档：
+
+1. Controller、Service、DTO、migration 和当前配置代码；
+2. `ops/analyticshub` 及其脚本；
+3. API/运维/业务专题文档；
+4. 根 README 和其他摘要；
+5. `归档/` 内容。
+
+已发布 migration 不因文档表述而改写。涉及真实生产环境时，还应以服务器当前配置、数据库备份和已部署 artifact 为准。
 
 ## 目录约定
 
-- 根目录文档：当前项目通用说明、API、架构、安全和集成文档。
-- `运维/`：生产部署、Nginx、systemd、备份和密钥轮换。
-- `数据库操作/`：PostgreSQL 手动操作和排障参考。
-- `本地开发/`：维护者本机环境说明，不代表生产口径。
-- `归档/`：人工背景阅读材料，不作为当前规约或 Agent 默认上下文。
+- `运维/`：生产部署流程。
+- `数据库操作/`：人工数据库命令与排障。
+- `本地开发/`：维护者本机说明。
+- `归档/`：非当前口径的历史材料。
 
-## 入门与架构
-
-- 本地启动：[../QUICKSTART.md](../QUICKSTART.md)
-- 项目总览：[../README.md](../README.md)
-- 架构与认证链路：[ARCHITECTURE.md](ARCHITECTURE.md)
-- Dashboard 与项目定制：[DASHBOARD_CUSTOMIZATION.md](DASHBOARD_CUSTOMIZATION.md)
-- 1.0.1 升级说明：[RELEASE_1.0.1.md](RELEASE_1.0.1.md)
-
-## API 参考
-
-- 采集端与公开接口：[API_COLLECTION.md](API_COLLECTION.md)
-- 管理端接口：[API_MANAGEMENT.md](API_MANAGEMENT.md)
-
-API 文档是 endpoint reference（端点参考）。处理某个接口时，按路径或标题搜索对应小节，不要整篇作为默认上下文。
-
-## 部署与运维
-
-- 生产部署指南：[运维/DEPLOYMENT_GUIDE.md](运维/DEPLOYMENT_GUIDE.md)
-- 运维脚本说明：[../ops/README.md](../ops/README.md)
-- PostgreSQL 常用命令：[数据库操作/PostgreSQL常用命令.md](数据库操作/PostgreSQL常用命令.md)
-
-## 安全与集成
-
-- 安全配置：[SECURITY_SETUP.md](SECURITY_SETUP.md)
-- 告警邮件 SMTP 配置：[EMAIL_SETUP.md](EMAIL_SETUP.md)
-- 前端 2FA 对接：[FRONTEND_2FA_GUIDE.md](FRONTEND_2FA_GUIDE.md)
-
-## 本地开发
-
-- 维护者本机 Docker PostgreSQL：[本地开发/DOCKER_POSTGRES.md](本地开发/DOCKER_POSTGRES.md)
-
-## 归档材料
-
-- JDK 25 / Spring Boot 4 踩坑记录：[归档/JDK25-SpringBoot4-Guide.md](归档/JDK25-SpringBoot4-Guide.md)
-
-归档材料面向人工排障和背景阅读，不作为当前项目规约或 Agent 默认上下文。
+新增文档前先判断是否可以补入已有职责明确的专题。不要为了减少单文件行数，把一个连续流程机械拆成多份难以导航的小文档。

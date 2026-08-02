@@ -2,293 +2,99 @@
 title: AnalyticsHub Java Backend
 type: project-readme
 status: current
-audience: contributor, operator, backend
-scope: 项目总览、快速开始、核心特性、文档入口和基础开发说明
-agent_notes: 项目入口概览；具体 API、部署或安全任务应转到 docs/README.md 中对应文档
+audience: contributor, operator, integrator
+scope: 产品定位、能力边界、快速入口和文档导航
+agent_notes: 入口概览；实现、API、安全和运维细节按 docs/README.md 路由
 ---
 
 # AnalyticsHub Java Backend
 
-多项目分析系统后端服务，采用 Spring Boot 4 + JDK 25 构建。
+AnalyticsHub 是一个可自行部署的多项目运营分析底座。它连接企业自己的项目数据库，提供数据采集、运营分析、语义映射、Dashboard、累计 Counter 和隐私工单闭环。
 
-## 技术栈
+它不是公共托管 SaaS，也不包含任何下游私有项目的事件命名、业务指标、域名或 Dashboard 配置。开源仓库提供通用能力和定制扩展契约，部署方负责自己的数据、配置与私有实现。
 
-- **JDK**: 25
-- **Spring Boot**: 4.0.7
-- **Spring Security**: 7.x（由 Spring Boot 4 管理）
-- **Database**: PostgreSQL 15+
-- **Connection Pool**: HikariCP
-- **Database Migration**: Flyway
-- **Persistence**: MyBatis Plus
-- **Build Tool**: Maven
+## 核心能力
 
-## 核心特性
+- 多项目管理：一个 Hub 管理多个项目，每个项目使用独立 database/schema。
+- 数据采集：设备、事件、会话、App 流量和官网流量。
+- 运营分析：基础指标、趋势、事件排行、漏斗和留存。
+- 业务语义：多个历史或当前 raw key 可映射到一个稳定语义。
+- 项目 Dashboard：内置组件可编排，并支持可信的 build-time extension（构建期扩展）。
+- 累计 Counter：支持实时投影、历史回算和公开只读展示。
+- 隐私工单：客服人工核验、导出或去标识化、审计和通知闭环。
+- 安全与运维：Admin Token、API Key + HMAC、可选 2FA、Flyway 和统一部署脚本。
 
-### 1. 多项目支持
-- 支持多个项目共享一个后端服务
-- 每个项目可配置独立数据库
-### 2. 安全认证与防护
-- 采集端接口：API Key + Secret Key 双密钥机制 + HMAC-SHA256 签名
-- 管理端接口：Admin Token（`X-Admin-Token` / `Authorization: Bearer <token>`），不使用 HMAC
-- **双因素认证 (2FA)**：
-  - 基于 TOTP (Google/Microsoft Authenticator)
-  - 针对异常 IP / 新设备强制校验
-  - 支持 24 小时信任白名单
-- **暴力破解防护**：
-  - 基于 IP 的限流机制（5 次失败封禁 15 分钟）
-  - 防时序攻击的常量时间比较
-  - 自动邮件告警（达到封禁阈值时通知管理员）
-- 防重放攻击（时间戳验证）
-- 设备级认证和封禁管理
+## 数据边界
 
-### 3. 数据库管理
-- 使用 Flyway 进行版本化数据库迁移
-- 系统库迁移由 Flyway 管理
-- 接入项目的采集表通过管理端初始化接口创建或更新
-- 支持按项目配置独立数据库、schema 与连接池
+AnalyticsHub 使用两类数据库：
 
-### 4. 高性能设计
-- HikariCP 连接池管理
-- 连接池缓存和复用
-- 事件采集、会话上传、流量指标与计数器写入走独立业务服务
+- system database：只保存项目连接配置、语义字典和 Dashboard 定义等平台元数据。
+- project database：保存该项目的设备、事件、会话、流量、Counter 和隐私工单。
 
-## 项目总览
+管理端新增项目只登记连接信息，不会静默创建外部数据库或用户。项目库初始化和升级通过管理端项目初始化接口执行。
 
-- 采集端 API（`/api/v1/**`）：设备注册、事件上报、会话上传；使用 API Key + HMAC 签名认证
-- 管理端 API（`/api/admin/**`）：项目管理、数据查询与配置；使用 Admin Token 认证
-- 管理端 Token 校验（`/api/v1/auth/admin-token/verify`）：用于管理端登录态/Token 有效性探测
-- 多项目多数据源：每个项目独立数据库与连接池，按项目动态切换
-- 1.0.1 运行时只向系统数据库（spring.datasource）写入平台元数据；业务采集事实保存在各 project database
-- 运行状态：`/api/health` 公开；`/actuator/**` 生产环境需要 Admin Token
-- 架构与时序文档：`docs/ARCHITECTURE.md`
+## 技术基线
 
-## 文档入口
+- JDK 25、Spring Boot 4.0.7、Spring Security 7.x
+- PostgreSQL 15+、Flyway、MyBatis Plus、HikariCP
+- Maven；仓库统一通过 `./scripts/mvn-project` 运行
+- 默认后端端口 `3001`
 
-- 完整索引：[docs/README.md](docs/README.md)
-- 本地启动：[QUICKSTART.md](QUICKSTART.md)
-- 生产部署：[docs/运维/DEPLOYMENT_GUIDE.md](docs/运维/DEPLOYMENT_GUIDE.md)
-- 运维脚本：[ops/README.md](ops/README.md)
-- 架构说明：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+## 本地启动
 
-## 快速开始
-
-本地启动的完整步骤见 [QUICKSTART.md](QUICKSTART.md)。最短路径如下：
+完整步骤见 [QUICKSTART.md](QUICKSTART.md)。准备 PostgreSQL 与必要环境变量后：
 
 ```bash
-export DB_HOST=127.0.0.1
-export DB_PORT=5432
-export DB_NAME=analytics
-export DB_SCHEMA=analytics
-export DB_USER=analytic
-export DB_PASSWORD=replace-with-local-analytic-password
-export ADMIN_TOKEN=replace-with-at-least-32-random-characters
-export PROJECT_CREDENTIAL_ENCRYPTION_KEY="$(openssl rand -base64 32)"
-
-./scripts/mvn-project clean install -DskipTests
+./scripts/mvn-project -DskipTests compile
 ./scripts/mvn-project spring-boot:run
-```
-
-健康检查：
-
-```bash
 curl http://localhost:3001/api/health
 ```
 
-1.0.1 运行时只向系统数据库（`spring.datasource`）写入平台元数据，不把业务采集事实写入其中。管理端创建项目不会自动创建数据库或用户，接入项目的目标数据库和账号需要提前准备：
+## 接口与认证
 
-```sql
-CREATE ROLE your_project_user LOGIN PASSWORD 'replace-with-project-password';
-CREATE DATABASE your_project OWNER your_project_user;
-\c your_project
-CREATE SCHEMA IF NOT EXISTS analytics AUTHORIZATION your_project_user;
-GRANT USAGE, CREATE ON SCHEMA analytics TO your_project_user;
-```
+| 范围 | 用途 | 认证 |
+| --- | --- | --- |
+| `/api/v1/**` | App/SDK 采集 | 按接口使用 API Key + HMAC |
+| `/api/admin/**` | 管理后台 | `X-Admin-Token` 或 Bearer Token |
+| `/api/public/**` | 官网流量与公开 Counter | 默认公开；功能可配置专用 Token |
+| `/api/health` | 健康检查 | 公开 |
 
-## 环境变量配置
+具体请求、字段和响应以 API 文档为准，不在 README 重复维护。
 
-**必需配置：**
-```bash
-export ADMIN_TOKEN=replace-with-at-least-32-random-characters
-export DB_PASSWORD=your_db_password
-export PROJECT_CREDENTIAL_ENCRYPTION_KEY=base64_encoded_32_byte_key
-```
+## 文档导航
 
-**邮件告警配置（可选）：**
-```bash
-export MAIL_ENABLED=true
-export MAIL_HOST=smtpdm.aliyun.com
-export MAIL_PORT=465
-export MAIL_USERNAME=notify@mail.yourdomain.com
-export MAIL_PASSWORD=your_smtp_password
-export ALERT_EMAIL=admin@yourdomain.com
-# Optional tuning; the scheduler only consumes the outbox when mail is configured.
-export WORK_ORDER_OUTBOX_SCHEDULER_ENABLED=true
-```
+文档的职责、读者和事实来源统一记录在 [docs/README.md](docs/README.md)。常用入口：
 
-**双因素认证 (2FA) 配置（可选）：**
-```bash
-export APP_SECURITY_2FA_ENABLED=true
-export APP_SECURITY_2FA_SECRET=your_totp_secret_key
-```
+- [本地快速启动](QUICKSTART.md)
+- [架构与数据边界](docs/ARCHITECTURE.md)
+- [采集端 API](docs/API_COLLECTION.md)
+- [管理端 API](docs/API_MANAGEMENT.md)
+- [Dashboard 与项目定制](docs/DASHBOARD_CUSTOMIZATION.md)
+- [隐私工单处理](docs/PRIVACY_WORKFLOW.md)
+- [生产部署](docs/运维/DEPLOYMENT_GUIDE.md)
+- [1.0.1 升级说明](docs/RELEASE_1.0.1.md)
 
-详细配置指南见：[docs/EMAIL_SETUP.md](docs/EMAIL_SETUP.md)
-
-## 生产部署与运维
-
-本仓库提供 AnalyticsHub 自身的运维脚本闭环，入口是：
+## 开发验证
 
 ```bash
-sudo bash ops/analyticshub <command>
+./scripts/mvn-project test
 ```
 
-常用命令：
+修改运维脚本后，再运行：
 
 ```bash
-# 初始化主机依赖、PostgreSQL、swap、journald 和 AnalyticsHub 数据库
-sudo bash ops/analyticshub bootstrap
-
-# 安装/检查证书并写入 /analyticshub/ Nginx 路由片段
-sudo -E env DOMAIN=analytics.example.com CERTBOT_EMAIL=admin@example.com ISSUE_CERT=true bash ops/analyticshub web
-
-# 创建 AnalyticsHub systemd、env、日志目录和运行用户
-sudo bash ops/analyticshub deploy
-
-# 本地检查和公网检查
-sudo bash ops/analyticshub check
-sudo -E env BASE_URL=https://analytics.example.com bash ops/analyticshub check-public
-
-# 定期维护
-sudo bash ops/analyticshub backup-db
-sudo bash ops/analyticshub rotate-secrets
+bash ops/tests/run.sh
+bash -n ops/analyticshub
+bash ops/analyticshub help
 ```
 
-完整说明见 [ops/README.md](ops/README.md) 和 [部署指南](docs/运维/DEPLOYMENT_GUIDE.md)。
-
-## API 文档
-
-详细的 API 接口文档已拆分为两个独立文档：
-
-- **[采集端 API 文档](docs/API_COLLECTION.md)**：包含设备注册、事件上报、会话上传、公开流量与计数等面向客户端的接口。
-- **[管理端 API 文档](docs/API_MANAGEMENT.md)**：包含项目管理、健康检查、流量分析、运营配置等面向管理员的接口。
-
-
-## 认证机制
-
-- 管理端接口：`X-Admin-Token` 或 `Authorization: Bearer <token>`，不走 HMAC
-- 采集端接口：API Key + HMAC 签名 + 时间戳校验
-- 官网流量采集：`/api/public/traffic/**` 不走 HMAC；可选 `X-Traffic-Token`
-- 详细流程与时序说明见 `docs/ARCHITECTURE.md`
-
-## 数据库迁移
-
-使用 Flyway 进行数据库版本管理。AnalyticsHub 有两条互相独立的 migration stream（迁移链）：
-
-- `src/main/resources/db/migration/`：AnalyticsHub system database，只保存项目配置、语义字典和 Dashboard 定义等平台元数据；应用启动时自动迁移。
-- `src/main/resources/db/project-migration/`：每个接入项目自己的数据库/schema，保存设备、事件、会话、Counter 和工单；通过项目初始化/升级接口逐项目迁移。
-
-已发布的 system V2 遗留 `analytics_idempotency_keys` 表在 1.0.1 中不再读写；升级时为避免破坏性清理会保留该表。当前事件幂等状态只保存在 project database V2 表中，详见 [1.0.1 升级说明](docs/RELEASE_1.0.1.md)。
-
-不要使用 system database 的 `./scripts/mvn-project flyway:*` 命令替代项目库迁移。
-
-### 创建新迁移
-
-根据数据归属，在上述对应目录创建新的 SQL 文件：
-
-```
-V3__add_new_feature.sql
-```
-
-文件名格式：`V{version}__{description}.sql`
-
-### 迁移状态
-
-system database：
-
-```bash
-./scripts/mvn-project flyway:info
-```
-
-project database：调用 `GET /api/admin/projects/{id}/health` 查看 `schemaVersion`、`pendingMigrations` 和 `schemaCurrent`。
-
-### 手动迁移
-
-system database：
-
-```bash
-./scripts/mvn-project flyway:migrate
-```
-
-project database：调用 `POST /api/admin/projects/{id}/init`。该接口是幂等升级入口，不会重建业务项目数据库。
-
-从 1.0.0 升级到 1.0.1 前，请阅读 [1.0.1 升级说明](docs/RELEASE_1.0.1.md)。
-
-## 配置说明
-
-### 应用配置
-
-主要配置项在 `application.yml`:
-
-- `server.port`: 服务端口（默认 3001）
-- `server.address`: `prod` 默认绑定 `127.0.0.1`，通过 Nginx 对外服务
-- `spring.datasource.*`: 数据库连接配置
-- `spring.flyway.*`: Flyway 迁移配置
-- `app.rate-limit.*`: 匿名公开入口的单实例基础限流配置；多实例还应在共享网关限流
-- `app.security.*`: 安全配置
-- `app.traffic.*`: 官网流量采集配置（Token、IP 哈希盐）
-
-### 环境配置
-
-- **开发环境**: `spring.profiles.active=dev`
-- **生产环境**: `spring.profiles.active=prod`
-
-## 开发指南
-
-### 添加新的端点
-
-1. 在 `dto/` 创建请求和响应 DTO
-2. 在 `service/` 实现业务逻辑
-3. 在 `controller/` 创建 REST 端点
-4. 在 `SecurityConfig` 配置认证规则（如需要）
-
-### 添加新的项目
-
-推荐通过管理端 API 或管理界面创建项目。接入项目的目标数据库和账号需要提前准备：
-
-```sql
-CREATE ROLE your_project_user LOGIN PASSWORD 'replace-with-project-password';
-CREATE DATABASE your_project OWNER your_project_user;
-\c your_project
-CREATE SCHEMA IF NOT EXISTS analytics AUTHORIZATION your_project_user;
-```
-
-## 许可证
+## License
 
 [MIT License](LICENSE)
 
-## 📧 联系作者
+## 联系与支持
 
-- **Email**: hachineko@yeah.net
-- **GitHub**: [@hachinekooo](https://github.com/hachinekooo)
+- Email: hachineko@yeah.net
+- GitHub: [@hachinekooo](https://github.com/hachinekooo)
 
-欢迎交流和反馈！
-
----
-
-## ☕ 请我喝杯咖啡
-
-如果这个项目对你有帮助，可以请我喝杯咖啡 😊
-
-欢迎扫码支持，你的支持是我持续更新的动力！
-
-<div align="center">
-  <img src="./docs/img/wechat-pay.jpg" alt="微信赞赏码" width="200"/>
-  <img src="./docs/img/alipay.jpg" alt="支付宝收款码" width="200"/>
-  
-  <p><i>微信 & 支付宝</i></p>
-</div>
-
-<div align="center">
-  <img src="./docs/img/wechat-qr.jpg" alt="个人微信" width="200"/>
-  
-  <p><i>添加微信 | 技术交流</i></p>
-</div>
+如果项目对你有帮助，可以通过 [赞赏与交流方式](docs/SUPPORT.md) 支持后续维护。
