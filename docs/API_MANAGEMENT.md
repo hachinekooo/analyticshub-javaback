@@ -430,7 +430,7 @@ GET /api/admin/traffic-metrics/top-referrers?projectId=your-project-id&limit=10
 
 通过配置 `event_trigger`，计数器会在事件上报时**全自动维护**，无需手动代码累加。
 
-管理前端的“运营数据 → 累计统计”组件已经提供新建、编辑、删除、手动递增和历史回算入口。常规运营配置应使用管理页面或以下管理 API，不要直接修改项目数据库表。新建带 `eventTrigger` 的 Counter 后，点击“按历史事件回算”即可用同一规则重算存量事件；后续匹配事件会自动累计。
+管理前端的“计数器”页面提供新建、编辑、删除、人工递增和按累计口径回算入口。常规运营配置应使用管理页面或以下管理 API，不要直接修改项目数据库表。新建带 `eventTrigger` 的 Counter，或修改它的规则、历史范围、基础调整值时，管理前端会在保存后自动调用 rebuild；后续匹配事件会自动累计。单独调用 `PUT` 只保存配置，不隐式执行可能较重的历史扫描。
 
 #### 配置化自动触发
 
@@ -446,6 +446,8 @@ GET /api/admin/traffic-metrics/top-referrers?projectId=your-project-id&limit=10
     "semantic_key": "core.action.completed",
     "conditions": {"status": "success"}
   },
+  "historyMode": "INCLUDE_EXISTING",
+  "rebuildOffset": 12,
   "isPublic": true
 }
 ```
@@ -490,6 +492,16 @@ GET /api/admin/traffic-metrics/top-referrers?projectId=your-project-id&limit=10
 
 保存规则时会校验引用的语义定义存在且启用。语义 aliases 更新后调用 rebuild 即可按新映射重算。若要把已有 Counter 改成纯手工模式，发送 `{"clearEventTrigger": true}`；不能同时传 `eventTrigger`。
 
+#### 首次统计口径与基础调整值
+
+事件驱动 Counter 必须明确已有事件是否纳入累计：
+
+- `historyMode=INCLUDE_EXISTING`：默认值；rebuild 统计全部匹配的历史事件。
+- `historyMode=START_FROM_NOW`：首次选择该口径时由数据库记录服务端起算时间；rebuild 只统计该边界之后接收的匹配事件。以后重复 rebuild 不会把边界移动到新的“现在”。
+- `rebuildOffset`：持久化的基础调整值，可为正数、零或负数。它用于补入埋点接入前已有的业务累计量，或扣除已确认的异常数据。
+
+最终值始终按 `匹配事件数 + rebuildOffset` 计算，`lastRebuildEventCount` 只记录匹配事件数，不包含调整值。自动 Counter 的临时人工 `increment` 会在下次 rebuild 时被公式覆盖；需要永久修正时应编辑 `rebuildOffset`。纯手工 Counter 不使用历史范围和 rebuild offset。
+
 #### 管理端操作接口
 
 用于管理配置或手动同步数据：
@@ -498,8 +510,8 @@ GET /api/admin/traffic-metrics/top-referrers?projectId=your-project-id&limit=10
 GET    /api/admin/counters?projectId=...
 GET    /api/admin/counters/{key}?projectId=...     # 获取单个计数器详情
 PUT    /api/admin/counters/{key}?projectId=...     # 创建或更新规则/元数据
-POST   /api/admin/counters/{key}/increment?projectId=... # 手动累加（偏移操作）
-POST   /api/admin/counters/{key}/rebuild?projectId=... # 按 eventTrigger 回算全部历史事件
+POST   /api/admin/counters/{key}/increment?projectId=... # 手动增减当前值；不修改持久化基础调整值
+POST   /api/admin/counters/{key}/rebuild?projectId=... # 按已保存的规则、范围和调整值回算
 DELETE /api/admin/counters/{key}?projectId=...     # 删除计数器配置
 ```
 
@@ -518,9 +530,12 @@ DELETE /api/admin/counters/{key}?projectId=...     # 删除计数器配置
       "semantic_key": "core.action.completed",
       "conditions": {"status": "success"}
     },
+    "historyMode": "INCLUDE_EXISTING",
+    "rebuildOffset": 12,
+    "eventCountStartAt": null,
     "updatedAt": "2026-02-12T10:00:00Z",
     "lastRebuiltAt": "2026-02-12T10:00:00Z",
-    "lastRebuildEventCount": 100
+    "lastRebuildEventCount": 88
   }
 }
 ```

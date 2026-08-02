@@ -38,8 +38,9 @@ system database：
 - V3：Counter 历史回算 metadata 与查询索引。
 - V4：工单 version、不可变 activity log、transactional notification outbox。
 - V5：设备凭据轮换 grace window（宽限窗口），支持响应丢失后的安全幂等重试。
+- V6：Counter 持久化历史范围和基础调整值，确保重复回算保持同一业务口径。
 
-已投产的 V1（1.0.0）项目 schema 会先做严格 fingerprint 检查，再 baseline 到 V1 并只执行 V2–V5；不会删除或重建已有事件数据。部分缺表、列类型漂移、缺关键 constraint/index 或用 view 冒充 table 时会 fail closed（拒绝猜测修复）。
+已投产的 V1（1.0.0）项目 schema 会先做严格 fingerprint 检查，再 baseline 到 V1 并只执行 V2–V6；不会删除或重建已有事件数据。部分缺表、列类型漂移、缺关键 constraint/index 或用 view 冒充 table 时会 fail closed（拒绝猜测修复）。
 
 ## 升级步骤
 
@@ -78,7 +79,7 @@ Counter 的 `eventTrigger` 只引用稳定语义 Key，支持三种互斥形态�
 - `semantic_keys`：多个语义 Key 共享一组可选条件。
 - `any_of`：1–100 个 typed clauses（类型化分支），每个分支包含一个 `semantic_key` 和可选 `conditions`。
 
-实时投影与历史 rebuild 共用同一份 allow-listed rule model（白名单规则模型）。`conditions` 对嵌套深度、容器大小、字段名、字符串值和总节点数设有边界；非法或混合形态返回 `INVALID_COUNTER_EVENT_TRIGGER`。该能力沿用现有 `event_trigger JSONB`，无需新增或改写项目库迁移。
+实时投影与历史 rebuild 共用同一份 allow-listed rule model（白名单规则模型）。`conditions` 对嵌套深度、容器大小、字段名、字符串值和总节点数设有边界；非法或混合形态返回 `INVALID_COUNTER_EVENT_TRIGGER`。规则继续保存在 `event_trigger JSONB`；V6 另行保存是否纳入历史、固定起算边界和可正可负的基础调整值。
 
 语义字典负责 raw event 到 semantic key 的 many-to-one mapping（多对一映射）。`app` / `webapp` 模板自动初始化四个 `core.*` 官方语义，新建自定义语义必须使用 `custom.*`。调整 aliases 后执行 rebuild，即可按新映射重算存量事件；事件事实不会被重写。完整 contract 见 [管理端 API](API_MANAGEMENT.md#9-运营累计统计counters配置与管理)。
 

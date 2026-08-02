@@ -43,7 +43,7 @@ public class AdminCounterController {
         return ApiResponse.success(counterService.get(projectId, key, false));
     }
 
-    /** 创建或更新计数器元数据；不会自动重算历史事件。 */
+    /** 创建或更新计数器元数据和累计口径；接口本身不会自动执行回算。 */
     @PutMapping("/{key}")
     public ApiResponse<CounterRecord> upsert(@RequestParam("projectId") String projectId,
                                              @PathVariable("key") String key,
@@ -68,7 +68,7 @@ public class AdminCounterController {
         return ApiResponse.success(counterService.increment(projectId, key, delta));
     }
 
-    /** 按已保存的事件触发规则重新扫描历史事件并覆盖累计值。 */
+    /** 按已保存的事件规则、起算边界和基础调整值重建累计值。 */
     @PostMapping("/{key}/rebuild")
     public ApiResponse<CounterRecord> rebuild(@RequestParam("projectId") String projectId,
                                               @PathVariable("key") String key) {

@@ -3,6 +3,7 @@ package com.github.analyticshub.service;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import com.github.analyticshub.config.MultiDataSourceManager;
+import com.github.analyticshub.dto.CounterHistoryMode;
 import com.github.analyticshub.dto.CounterRecord;
 import com.github.analyticshub.dto.CounterUpsertRequest;
 import com.github.analyticshub.dto.CountersResponse;
@@ -50,7 +51,7 @@ public class CounterService {
 
         String sql = String.format(
                 "SELECT counter_key, counter_value, display_name, unit, event_trigger, is_public, description, " +
-                        "updated_at, last_rebuilt_at, last_rebuild_event_count " +
+                        "updated_at, last_rebuilt_at, last_rebuild_event_count, rebuild_offset, event_count_start_at " +
                         "FROM %s WHERE project_id = ? %s ORDER BY updated_at DESC",
                 table,
                 onlyPublic ? "AND is_public = TRUE" : ""
@@ -100,13 +101,20 @@ public class CounterService {
                 ? null
                 : toJsonString(normalizedTrigger.normalizedJson());
         String description = request == null ? null : request.description();
-        boolean resetRebuildMetadata = value != null || eventTrigger != null || clearEventTrigger;
+        Long rebuildOffset = request == null ? null : request.rebuildOffset();
+        CounterHistoryMode historyMode = request == null ? null : request.historyMode();
+        boolean historyModeProvided = historyMode != null;
+        boolean includeExisting = historyMode == CounterHistoryMode.INCLUDE_EXISTING;
+        boolean resetRebuildMetadata = value != null || eventTrigger != null || clearEventTrigger
+                || rebuildOffset != null || historyModeProvided;
 
         return projectTransactions.execute(context.dataSource(), jdbcTemplate -> {
             Instant now = Instant.now();
             String upsertSql = String.format(
-                    "INSERT INTO %s (counter_key, counter_value, display_name, unit, event_trigger, is_public, description, project_id, created_at, updated_at) " +
-                            "VALUES (?, COALESCE(?, 0), ?::jsonb, ?::jsonb, ?::jsonb, COALESCE(?, FALSE), ?, ?, ?, ?) " +
+                    "INSERT INTO %s (counter_key, counter_value, display_name, unit, event_trigger, is_public, description, " +
+                            "project_id, rebuild_offset, event_count_start_at, created_at, updated_at) " +
+                            "VALUES (?, COALESCE(?, 0), ?::jsonb, ?::jsonb, ?::jsonb, COALESCE(?, FALSE), ?, ?, " +
+                            "COALESCE(?, 0), CASE WHEN ? THEN statement_timestamp() ELSE NULL END, ?, ?) " +
                             "ON CONFLICT (project_id, counter_key) DO UPDATE SET " +
                             "counter_value = COALESCE(?, %s.counter_value), " +
                             "display_name = COALESCE(EXCLUDED.display_name, %s.display_name), " +
@@ -115,12 +123,18 @@ public class CounterService {
                             "ELSE COALESCE(EXCLUDED.event_trigger, %s.event_trigger) END, " +
                             "is_public = COALESCE(?, %s.is_public), " +
                             "description = COALESCE(EXCLUDED.description, %s.description), " +
+                            "rebuild_offset = COALESCE(?, %s.rebuild_offset), " +
+                            "event_count_start_at = CASE " +
+                            "WHEN NOT ? THEN %s.event_count_start_at " +
+                            "WHEN ? THEN NULL " +
+                            "WHEN %s.event_count_start_at IS NULL THEN EXCLUDED.event_count_start_at " +
+                            "ELSE %s.event_count_start_at END, " +
                             "last_rebuilt_at = CASE WHEN ? " +
                             "THEN NULL ELSE %s.last_rebuilt_at END, " +
                             "last_rebuild_event_count = CASE WHEN ? " +
                             "THEN NULL ELSE %s.last_rebuild_event_count END, " +
                             "updated_at = EXCLUDED.updated_at",
-                    table, table, table, table, table, table, table, table, table
+                    table, table, table, table, table, table, table, table, table, table, table, table, table
             );
 
             jdbcTemplate.update(
@@ -133,11 +147,16 @@ public class CounterService {
                     isPublic,
                     description,
                     normalizedProjectId,
+                    rebuildOffset,
+                    historyMode == CounterHistoryMode.START_FROM_NOW,
                     Timestamp.from(now),
                     Timestamp.from(now),
                     value,
                     clearEventTrigger,
                     isPublic,
+                    rebuildOffset,
+                    historyModeProvided,
+                    includeExisting,
                     resetRebuildMetadata,
                     resetRebuildMetadata
             );
@@ -158,7 +177,7 @@ public class CounterService {
     }
 
     /**
-     * Rebuilds an event-driven counter from the complete event fact table.
+     * Rebuilds an event-driven counter from its persisted history policy.
      *
      * <p>The counter row is locked before the historical count starts. Live
      * event projection takes the same row lock, so a concurrent event is
@@ -174,16 +193,21 @@ public class CounterService {
 
         return projectTransactions.execute(context.dataSource(), jdbcTemplate -> {
             String lockSql = String.format(
-                    "SELECT event_trigger FROM %s WHERE project_id = ? AND counter_key = ? FOR UPDATE",
+                    "SELECT event_trigger, rebuild_offset, event_count_start_at " +
+                            "FROM %s WHERE project_id = ? AND counter_key = ? FOR UPDATE",
                     counterTable
             );
-            List<String> storedTriggers = jdbcTemplate.query(
+            List<CounterRebuildPolicy> storedPolicies = jdbcTemplate.query(
                     lockSql,
-                    (rs, rowNum) -> rs.getString("event_trigger"),
+                    (rs, rowNum) -> new CounterRebuildPolicy(
+                            rs.getString("event_trigger"),
+                            rs.getLong("rebuild_offset"),
+                            rs.getTimestamp("event_count_start_at")
+                    ),
                     normalizedProjectId,
                     normalizedKey
             );
-            if (storedTriggers.isEmpty()) {
+            if (storedPolicies.isEmpty()) {
                 throw new BusinessException(
                         "COUNTER_NOT_FOUND",
                         "计数器不存在",
@@ -191,7 +215,8 @@ public class CounterService {
                 );
             }
 
-            JsonNode storedTrigger = parseJson(storedTriggers.getFirst());
+            CounterRebuildPolicy policy = storedPolicies.getFirst();
+            JsonNode storedTrigger = parseJson(policy.eventTriggerJson());
             if (storedTrigger == null || storedTrigger.isNull()) {
                 throw new BusinessException(
                         "COUNTER_REBUILD_RULE_REQUIRED",
@@ -203,6 +228,9 @@ public class CounterService {
             StringJoiner predicates = new StringJoiner(" OR ", "(", ")");
             List<Object> arguments = new ArrayList<>(1 + trigger.clauses().size() * 2);
             arguments.add(normalizedProjectId);
+            if (policy.eventCountStartAt() != null) {
+                arguments.add(policy.eventCountStartAt());
+            }
             Map<String, List<String>> aliases = semanticDictionaryService.resolveActiveEventAliases(
                     normalizedProjectId,
                     trigger.semanticKeys()
@@ -223,8 +251,9 @@ public class CounterService {
             Long matchingEvents = 0L;
             if (predicates.length() > 2) {
                 String countSql = String.format(
-                        "SELECT COUNT(*) FROM %s WHERE project_id = ? AND %s",
+                        "SELECT COUNT(*) FROM %s WHERE project_id = ? %s AND %s",
                         eventTable,
+                        policy.eventCountStartAt() == null ? "" : "AND created_at >= ?",
                         predicates
                 );
                 matchingEvents = jdbcTemplate.queryForObject(
@@ -234,7 +263,17 @@ public class CounterService {
                 );
             }
 
-            long rebuiltValue = matchingEvents == null ? 0L : matchingEvents;
+            long matchedEventCount = matchingEvents == null ? 0L : matchingEvents;
+            long rebuiltValue;
+            try {
+                rebuiltValue = Math.addExact(matchedEventCount, policy.rebuildOffset());
+            } catch (ArithmeticException exception) {
+                throw new BusinessException(
+                        "COUNTER_VALUE_OVERFLOW",
+                        "历史事件数与基础调整值相加后超出 BIGINT 范围",
+                        HttpStatus.BAD_REQUEST
+                );
+            }
             Instant now = Instant.now();
             String updateSql = String.format(
                     "UPDATE %s SET counter_value = ?, last_rebuilt_at = ?, " +
@@ -246,7 +285,7 @@ public class CounterService {
                     updateSql,
                     rebuiltValue,
                     Timestamp.from(now),
-                    rebuiltValue,
+                    matchedEventCount,
                     Timestamp.from(now),
                     normalizedProjectId,
                     normalizedKey
@@ -365,7 +404,7 @@ public class CounterService {
     ) {
         String sql = String.format(
                 "SELECT counter_key, counter_value, display_name, unit, event_trigger, is_public, description, " +
-                        "updated_at, last_rebuilt_at, last_rebuild_event_count " +
+                        "updated_at, last_rebuilt_at, last_rebuild_event_count, rebuild_offset, event_count_start_at " +
                         "FROM %s WHERE project_id = ? AND counter_key = ? %s",
                 table,
                 onlyPublic ? "AND is_public = TRUE" : ""
@@ -382,6 +421,7 @@ public class CounterService {
     private CounterRecord mapCounter(ResultSet rs) throws SQLException {
         Timestamp updatedAt = rs.getTimestamp("updated_at");
         Timestamp lastRebuiltAt = rs.getTimestamp("last_rebuilt_at");
+        Timestamp eventCountStartAt = rs.getTimestamp("event_count_start_at");
         Number lastRebuildEventCount = (Number) rs.getObject("last_rebuild_event_count");
         return new CounterRecord(
                 rs.getString("counter_key"),
@@ -393,7 +433,12 @@ public class CounterService {
                 rs.getString("description"),
                 updatedAt == null ? null : updatedAt.toInstant().toString(),
                 lastRebuiltAt == null ? null : lastRebuiltAt.toInstant().toString(),
-                lastRebuildEventCount == null ? null : lastRebuildEventCount.longValue()
+                lastRebuildEventCount == null ? null : lastRebuildEventCount.longValue(),
+                rs.getLong("rebuild_offset"),
+                eventCountStartAt == null
+                        ? CounterHistoryMode.INCLUDE_EXISTING
+                        : CounterHistoryMode.START_FROM_NOW,
+                eventCountStartAt == null ? null : eventCountStartAt.toInstant().toString()
         );
     }
 
@@ -428,6 +473,12 @@ public class CounterService {
     private record ProjectContext(MultiDataSourceManager.ProjectConfig config, DataSource dataSource) {}
 
     private record CounterRule(String counterKey, String eventTriggerJson) {}
+
+    private record CounterRebuildPolicy(
+            String eventTriggerJson,
+            long rebuildOffset,
+            Timestamp eventCountStartAt
+    ) {}
 
     private static String normalizeProjectId(String projectId) {
         return projectId == null ? "" : projectId.strip();

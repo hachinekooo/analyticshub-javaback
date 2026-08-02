@@ -4,6 +4,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 import com.github.analyticshub.config.MultiDataSourceManager;
 import com.github.analyticshub.database.project.ProjectSchemaMigrator;
+import com.github.analyticshub.dto.CounterHistoryMode;
 import com.github.analyticshub.dto.CounterRecord;
 import com.github.analyticshub.dto.CounterUpsertRequest;
 import com.github.analyticshub.dto.EventTrackRequest;
@@ -145,6 +146,63 @@ class CounterRebuildPostgresIT {
         assertThat(rebuilt.value()).isEqualTo(2);
         assertThat(rebuilt.lastRebuiltAt()).isNotBlank();
         assertThat(rebuilt.lastRebuildEventCount()).isEqualTo(2);
+    }
+
+    @Test
+    void rebuildAddsPersistentBusinessOffsetToHistoricalEvents() throws Exception {
+        insertEvent(PROJECT_ID, "item_completed", "{}");
+        insertEvent(PROJECT_ID, "item_completed", "{}");
+        counterService.upsert(
+                PROJECT_ID,
+                "migrated_total",
+                new CounterUpsertRequest(
+                        null,
+                        null,
+                        null,
+                        objectMapper.readTree("{\"semantic_key\":\"item_completed\"}"),
+                        false,
+                        false,
+                        null,
+                        10L,
+                        CounterHistoryMode.INCLUDE_EXISTING
+                )
+        );
+
+        CounterRecord rebuilt = counterService.rebuild(PROJECT_ID, "migrated_total");
+
+        assertThat(rebuilt.value()).isEqualTo(12L);
+        assertThat(rebuilt.lastRebuildEventCount()).isEqualTo(2L);
+        assertThat(rebuilt.rebuildOffset()).isEqualTo(10L);
+        assertThat(rebuilt.historyMode()).isEqualTo(CounterHistoryMode.INCLUDE_EXISTING);
+    }
+
+    @Test
+    void startFromNowExcludesEarlierEventsAndKeepsOffsetOnRebuild() throws Exception {
+        insertEvent(PROJECT_ID, "item_completed", "{\"phase\":\"before\"}");
+        CounterRecord configured = counterService.upsert(
+                PROJECT_ID,
+                "new_install_total",
+                new CounterUpsertRequest(
+                        null,
+                        null,
+                        null,
+                        objectMapper.readTree("{\"semantic_key\":\"item_completed\"}"),
+                        false,
+                        false,
+                        null,
+                        5L,
+                        CounterHistoryMode.START_FROM_NOW
+                )
+        );
+        insertEvent(PROJECT_ID, "item_completed", "{\"phase\":\"after\"}");
+
+        CounterRecord rebuilt = counterService.rebuild(PROJECT_ID, "new_install_total");
+
+        assertThat(configured.eventCountStartAt()).isNotBlank();
+        assertThat(rebuilt.value()).isEqualTo(6L);
+        assertThat(rebuilt.lastRebuildEventCount()).isOne();
+        assertThat(rebuilt.rebuildOffset()).isEqualTo(5L);
+        assertThat(rebuilt.historyMode()).isEqualTo(CounterHistoryMode.START_FROM_NOW);
     }
 
     @Test

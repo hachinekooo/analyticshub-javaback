@@ -9,7 +9,9 @@ public record CounterUpsertRequest(
         JsonNode eventTrigger,
         Boolean clearEventTrigger,
         Boolean isPublic,
-        String description
+        String description,
+        Long rebuildOffset,
+        CounterHistoryMode historyMode
 ) {
     public CounterUpsertRequest(
             Long value,
@@ -19,6 +21,18 @@ public record CounterUpsertRequest(
             Boolean isPublic,
             String description
     ) {
-        this(value, displayName, unit, eventTrigger, false, isPublic, description);
+        this(value, displayName, unit, eventTrigger, false, isPublic, description, null, null);
+    }
+
+    public CounterUpsertRequest(
+            Long value,
+            JsonNode displayName,
+            JsonNode unit,
+            JsonNode eventTrigger,
+            Boolean clearEventTrigger,
+            Boolean isPublic,
+            String description
+    ) {
+        this(value, displayName, unit, eventTrigger, clearEventTrigger, isPublic, description, null, null);
     }
 }
