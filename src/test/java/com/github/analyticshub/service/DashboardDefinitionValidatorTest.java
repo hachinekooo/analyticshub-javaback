@@ -38,6 +38,17 @@ class DashboardDefinitionValidatorTest {
                       "type": "core.topEvents",
                       "layout": {"x": 0, "y": 4, "w": 6, "h": 8},
                       "config": {"aggregation": "semantic", "limit": 10}
+                    },
+                    {
+                      "id": "traffic-overview",
+                      "type": "core.trafficOverview",
+                      "layout": {"x": 6, "y": 4, "w": 6, "h": 4}
+                    },
+                    {
+                      "id": "top-referrers",
+                      "type": "core.topReferrers",
+                      "layout": {"x": 6, "y": 8, "w": 6, "h": 4},
+                      "config": {"limit": 8}
                     }
                   ]
                 }

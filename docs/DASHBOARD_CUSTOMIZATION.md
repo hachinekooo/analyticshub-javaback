@@ -39,8 +39,8 @@ AnalyticsHub 定位为公司自行部署的 internal operations center（内部�
 | 模板 | `overview` 数据大屏 | `details` 明细数据 |
 | --- | --- | --- |
 | `app` | 产品行为、事件趋势、核心动作 | 事件、设备、会话；不默认展示网站 PV/UV |
-| `website` | 页面访问趋势、访客和页面排行 | 页面访问记录；不提供 App 切换 |
-| `webapp` | 产品行为与页面访问组件 | 业务事件、页面访问、设备和会话 |
+| `website` | PV、UV、人均访问、访问趋势、页面与来源排行 | 页面访问记录；不提供 App 切换 |
+| `webapp` | 产品行为与完整网站流量组件 | 业务事件、页面访问、设备和会话 |
 | `blank` | 空白编排区 | 空白数据集，按接入能力扩展 |
 
 工作区 key 是 Dashboard API 和扩展组件暴露的稳定标识。system V5 migration 将旧的 `operations` / `technical` 分别迁移为 `overview` / `details`，并从历史 App 明细布局中移除误放的网站流量组件；其他已保存布局保持不变。新代码不再维护旧 key 的运行时 fallback。

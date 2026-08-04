@@ -377,7 +377,7 @@ GET /api/admin/traffic-metrics/top-referrers?projectId=your-project-id&limit=10
 ```
 
 **接口说明**：
-- `summary`：返回核心计数（PV、UV），自动排除机器人流量。
+- `summary`：返回核心计数（PV、UV），自动排除机器人流量；未传 `from` / `to` 时与运营趋势、排行统一使用最近 7 天。
 - `trends`：返回时间维度的访问趋势，参数 `granularity` 支持 `hour`, `day`, `week`, `month`, `year`。
 - `top-pages`：返回访问量最高的页面路径排行。
 - `top-referrers`：返回流量来源站点的排行。

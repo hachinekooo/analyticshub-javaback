@@ -24,8 +24,20 @@ public class TrafficMetricStatsService {
     }
 
     public TrafficMetricSummaryResponse getSummary(String projectId, String from, String to) {
+        return querySummary(projectId, resolveSummaryRange(from, to));
+    }
+
+    /**
+     * Returns an operations-dashboard summary using the same default range as
+     * trends and rankings. Public cumulative summaries intentionally use
+     * {@link #getSummary(String, String, String)} instead.
+     */
+    public TrafficMetricSummaryResponse getAdminSummary(String projectId, String from, String to) {
+        return querySummary(projectId, AdminQueryUtils.resolveRange(from, to));
+    }
+
+    private TrafficMetricSummaryResponse querySummary(String projectId, AdminQueryUtils.Range range) {
         String normalizedProjectId = normalizeProjectId(projectId);
-        AdminQueryUtils.Range range = resolveSummaryRange(from, to);
         ProjectContext context = requireProject(normalizedProjectId);
         JdbcTemplate jdbcTemplate = new JdbcTemplate(context.dataSource());
 

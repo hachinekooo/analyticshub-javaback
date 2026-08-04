@@ -2,6 +2,7 @@ package com.github.analyticshub.controller;
 
 import com.github.analyticshub.common.dto.ApiResponse;
 import com.github.analyticshub.dto.TrafficMetricTopResponse;
+import com.github.analyticshub.dto.TrafficMetricSummaryResponse;
 import com.github.analyticshub.dto.TrafficMetricTrendResponse;
 import com.github.analyticshub.service.TrafficMetricStatsService;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,6 +39,22 @@ class AdminTrafficMetricControllerTest {
 
         assertNotNull(apiResponse);
         verify(trafficMetricStatsService).getTrends(eq("p-123"), any(), any(), any());
+    }
+
+    @Test
+    void summaryUsesTheAdminRangeContract() {
+        TrafficMetricSummaryResponse response = new TrafficMetricSummaryResponse(
+                "p-123", "2026-01-01T00:00:00Z", "2026-01-08T00:00:00Z", 120, 45
+        );
+        when(trafficMetricStatsService.getAdminSummary(eq("p-123"), isNull(), isNull()))
+                .thenReturn(response);
+
+        ApiResponse<TrafficMetricSummaryResponse> apiResponse = controller.summary("p-123", null, null);
+
+        assertEquals(120, apiResponse.data().pageViews());
+        assertEquals(45, apiResponse.data().visitors());
+        verify(trafficMetricStatsService).getAdminSummary("p-123", null, null);
+        verify(trafficMetricStatsService, never()).getSummary(anyString(), any(), any());
     }
 
     @Test

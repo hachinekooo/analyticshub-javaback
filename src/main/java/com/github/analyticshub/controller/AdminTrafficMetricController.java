@@ -49,7 +49,7 @@ public class AdminTrafficMetricController {
             @RequestParam("projectId") String projectId,
             @RequestParam(value = "from", required = false) String from,
             @RequestParam(value = "to", required = false) String to) {
-        return ApiResponse.success(trafficMetricStatsService.getSummary(projectId, from, to));
+        return ApiResponse.success(trafficMetricStatsService.getAdminSummary(projectId, from, to));
     }
 
     @GetMapping("/trends")

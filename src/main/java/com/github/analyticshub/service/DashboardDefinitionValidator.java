@@ -55,8 +55,10 @@ public class DashboardDefinitionValidator {
             "core.topEvents",
             "core.productFunnel",
             "core.retention",
+            "core.trafficOverview",
             "core.trafficTrends",
             "core.topPages",
+            "core.topReferrers",
             "core.counters",
             "core.events",
             "core.devices",
@@ -70,8 +72,10 @@ public class DashboardDefinitionValidator {
             Map.entry("core.topEvents", Set.of("aggregation", "limit")),
             Map.entry("core.productFunnel", Set.of("steps", "groupBy")),
             Map.entry("core.retention", Set.of("cohortEvent", "returnEvent", "days")),
+            Map.entry("core.trafficOverview", Set.of()),
             Map.entry("core.trafficTrends", Set.of("granularity")),
             Map.entry("core.topPages", Set.of("limit")),
+            Map.entry("core.topReferrers", Set.of("limit")),
             Map.entry("core.counters", Set.of("keys")),
             Map.entry("core.events", Set.of("eventType", "pageSize")),
             Map.entry("core.devices", Set.of("pageSize")),
@@ -296,7 +300,8 @@ public class DashboardDefinitionValidator {
             }
             case "core.productFunnel" -> validateFunnelConfig(config, path);
             case "core.retention" -> validateRetentionConfig(config, path);
-            case "core.topPages" -> validateOptionalInteger(config, "limit", 1, 100, path);
+            case "core.topPages", "core.topReferrers" ->
+                    validateOptionalInteger(config, "limit", 1, 100, path);
             case "core.counters" -> {
                 if (config.has("keys")) {
                     validateStringArray(config.get("keys"), 1, 20, path + ".keys");

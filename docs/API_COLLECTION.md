@@ -276,6 +276,7 @@ await fetch('https://analytics.example.com/api/public/traffic/track', {
 GET /api/public/traffic/summary?projectId=your-project-id&from=2026-01-01&to=2026-12-31
 ```
 - 自动过滤机器人数据。
+- 未传 `from` / `to` 时返回累计全部历史；该公开口径用于官网展示累计值，与管理后台默认最近 7 天的运营窗口相互独立。
 
 **响应示例：**
 
