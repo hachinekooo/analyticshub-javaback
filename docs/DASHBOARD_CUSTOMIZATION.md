@@ -36,14 +36,16 @@ AnalyticsHub 定位为公司自行部署的 internal operations center（内部�
 
 项目的 `analysisTemplate` 负责初始化工作区，不用 PV/UV 等网站概念冒充 App 运营指标：
 
-| 模板 | 默认工作区 | 默认重点 |
+| 模板 | `overview` 数据大屏 | `details` 明细数据 |
 | --- | --- | --- |
-| `app` | `app`、`details` | 产品行为、事件趋势、核心动作和明细 |
-| `website` | `website`、`details` | 页面访问趋势、页面排行和明细 |
-| `webapp` | `product`、`website`、`details` | 产品行为与网站流量并列，互不混算 |
-| `blank` | `custom`、`details` | 空白编排区与通用明细 |
+| `app` | 产品行为、事件趋势、核心动作 | 事件、设备、会话；不默认展示网站 PV/UV |
+| `website` | 页面访问趋势、访客和页面排行 | 页面访问记录；不提供 App 切换 |
+| `webapp` | 产品行为与页面访问组件 | 业务事件、页面访问、设备和会话 |
+| `blank` | 空白编排区 | 空白数据集，按接入能力扩展 |
 
-工作区 key 是 Dashboard API 和扩展组件暴露的稳定标识。V6 migration 将旧的 `operations` / `technical` 分别迁移到模板对应工作区和 `details`；迁移只修正关联 key，不重写管理员已经保存的 widget definition。新代码不再维护旧 key 的运行时 fallback。
+工作区 key 是 Dashboard API 和扩展组件暴露的稳定标识。system V5 migration 将旧的 `operations` / `technical` 分别迁移为 `overview` / `details`，并从历史 App 明细布局中移除误放的网站流量组件；其他已保存布局保持不变。新代码不再维护旧 key 的运行时 fallback。
+
+两个空间中的分析事实都只读。`overview` 允许调整组件布局与显示配置，但组件不能创建或修改业务数据；`details` 只负责筛选和查看模板支持的原始数据集。语义映射和 Counter 维护分别收口到顶部导航的“指标字典”和“计数器”。
 
 ### 3. 可信 build-time extension
 
@@ -130,7 +132,7 @@ type ScoreConfig = Readonly<{ threshold: number }>
 const exampleScoreWidget = {
   type: 'custom.example.score',
   displayName: { 'zh-CN': '示例评分', en: 'Example score' },
-  spaces: ['app', 'product'],
+  spaces: ['overview'],
   component: ExampleScoreWidget,
   defaultLayout: { w: 6, h: 8, minW: 4, minH: 4 },
   defaultConfig: { threshold: 80 },
@@ -145,7 +147,7 @@ export const dashboardWidgetExtensions: readonly DashboardWidgetExtension[] =
   Object.freeze([exampleScoreWidget])
 ```
 
-`spaces` 是 base admin UI 的 placement scope（放置范围），支持 `app`、`website`、`product`、`details` 和 `custom`。前端在组件库、载入、渲染和保存阶段都会校验该范围；后端仍对 type/config 做最终权威校验。Config 只能包含 JSON value，不能包含函数、`BigInt`、循环对象、`NaN`、class instance 或超过 256 KiB 的内容。
+`spaces` 是 base admin UI 的 placement scope（放置范围），只支持 `overview` 和 `details`。前端在组件库、载入、渲染和保存阶段都会校验该范围；后端仍对 type/config 做最终权威校验。Config 只能包含 JSON value，不能包含函数、`BigInt`、循环对象、`NaN`、class instance 或超过 256 KiB 的内容。
 
 ### 发布与兼容规则
 

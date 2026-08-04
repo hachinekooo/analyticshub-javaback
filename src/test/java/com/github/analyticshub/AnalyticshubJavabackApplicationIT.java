@@ -107,6 +107,15 @@ class AnalyticshubJavabackApplicationIT {
                 VALUES (?, 'operations', '{"en":"Operations"}'::jsonb, 1,
                     '{"schemaVersion":1,"widgets":[]}'::jsonb, TRUE)
                 """, "existing_app");
+        upgradeDatabase.update("""
+                INSERT INTO analytics_upgrade_v4.analytics_dashboards
+                    (project_id, dashboard_key, display_name, schema_version, definition, is_default)
+                VALUES (?, 'technical', '{"en":"Details"}'::jsonb, 1,
+                    '{"schemaVersion":1,"widgets":[
+                        {"id":"events","type":"core.events","layout":{"x":0,"y":0,"w":6,"h":8}},
+                        {"id":"traffic","type":"core.traffic","layout":{"x":6,"y":0,"w":6,"h":8}}
+                    ]}'::jsonb, FALSE)
+                """, "existing_app");
 
         Flyway.configure()
                 .dataSource(v4.getConfiguration().getDataSource())
@@ -127,10 +136,19 @@ class AnalyticshubJavabackApplicationIT {
                 "existing_app"
         )).isEqualTo("Existing App");
         assertThat(upgradeDatabase.queryForObject(
-                "SELECT dashboard_key FROM analytics_upgrade_v4.analytics_dashboards WHERE project_id = ?",
+                "SELECT dashboard_key FROM analytics_upgrade_v4.analytics_dashboards " +
+                        "WHERE project_id = ? AND display_name ->> 'en' = 'Operations'",
                 String.class,
                 "existing_app"
-        )).isEqualTo("app");
+        )).isEqualTo("overview");
+        assertThat(upgradeDatabase.queryForObject(
+                "SELECT COUNT(*) FROM analytics_upgrade_v4.analytics_dashboards d " +
+                        "CROSS JOIN LATERAL jsonb_array_elements(d.definition -> 'widgets') widget " +
+                        "WHERE d.project_id = ? AND d.dashboard_key = 'details' " +
+                        "AND widget ->> 'type' = 'core.traffic'",
+                Integer.class,
+                "existing_app"
+        )).isZero();
         assertThat(upgradeDatabase.queryForObject(
                 "SELECT definition_origin FROM analytics_upgrade_v4.analytics_semantic_definitions " +
                         "WHERE project_id = ? AND source_kind = 'EVENT_TYPE' AND semantic_key = ?",

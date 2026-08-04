@@ -12,23 +12,35 @@ ALTER TABLE analytics_projects
 COMMENT ON COLUMN analytics_projects.analysis_template IS
     '项目工作台初始化模板：app、website、webapp 或 blank';
 
--- Replace retired generic workspace keys while preserving dashboard definitions.
-UPDATE analytics_dashboards AS dashboard
-SET dashboard_key = CASE project.analysis_template
-        WHEN 'website' THEN 'website'
-        WHEN 'webapp' THEN 'product'
-        WHEN 'blank' THEN 'custom'
-        ELSE 'app'
-    END,
-    revision = dashboard.revision + 1
-FROM analytics_projects AS project
-WHERE dashboard.project_id = project.project_id
-  AND dashboard.dashboard_key = 'operations';
+-- Workspace purpose is stable across templates; templates only select its widgets.
+UPDATE analytics_dashboards
+SET dashboard_key = 'overview',
+    revision = revision + 1
+WHERE dashboard_key = 'operations';
 
 UPDATE analytics_dashboards
 SET dashboard_key = 'details',
     revision = revision + 1
 WHERE dashboard_key = 'technical';
+
+-- Historical projects were App projects. Their retired generic details layout
+-- included a website traffic table, which is not part of the App data scope.
+UPDATE analytics_dashboards AS dashboard
+SET definition = jsonb_set(
+        dashboard.definition,
+        '{widgets}',
+        COALESCE((
+            SELECT jsonb_agg(widget)
+            FROM jsonb_array_elements(dashboard.definition -> 'widgets') AS widget
+            WHERE widget ->> 'type' <> 'core.traffic'
+        ), '[]'::jsonb)
+    ),
+    revision = dashboard.revision + 1
+FROM analytics_projects AS project
+WHERE dashboard.project_id = project.project_id
+  AND project.analysis_template = 'app'
+  AND dashboard.dashboard_key = 'details'
+  AND jsonb_typeof(dashboard.definition -> 'widgets') = 'array';
 
 -- Semantic definitions are stable contracts; raw event facts remain unchanged aliases.
 ALTER TABLE analytics_semantic_definitions
