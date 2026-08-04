@@ -17,6 +17,7 @@ agent_notes: 先按任务选择目标文档；索引不替代具体文档
 | --- | --- |
 | 这个项目解决什么问题 | [项目 README](../README.md) |
 | 如何在本地启动后端 | [快速启动](../QUICKSTART.md) |
+| 如何加载三种模板的演示数据 | [三模板演示数据](../examples/demo-data/README.md) |
 | 系统库、项目库和认证如何协作 | [架构与认证链路](ARCHITECTURE.md) |
 | App/官网怎样采集数据 | [采集端 API](API_COLLECTION.md) |
 | 管理后台怎样调用接口 | [管理端 API](API_MANAGEMENT.md) |
