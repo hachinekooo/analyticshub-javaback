@@ -66,6 +66,7 @@ curl http://localhost:3001/api/health
 文档的职责、读者和事实来源统一记录在 [docs/README.md](docs/README.md)。常用入口：
 
 - [本地快速启动](QUICKSTART.md)
+- [三模板演示数据](examples/demo-data/README.md)
 - [架构与数据边界](docs/ARCHITECTURE.md)
 - [采集端 API](docs/API_COLLECTION.md)
 - [管理端 API](docs/API_MANAGEMENT.md)

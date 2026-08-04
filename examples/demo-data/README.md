@@ -21,20 +21,18 @@ agent_notes: 仅操作固定 demo_* 项目；不得改成生产数据初始化�
 
 ## 执行
 
-先启动 AnalyticsHub 后端，然后配置本地参数：
+先按照 [快速启动指南](../../QUICKSTART.md) 启动 AnalyticsHub 后端，然后在新终端加载同一份本地配置：
 
 ```bash
-export ADMIN_TOKEN=replace-with-local-admin-token
-export DB_HOST=127.0.0.1
-export DB_PORT=5432
-export DB_NAME=analytics
-export DB_USER=analytic
-export DB_PASSWORD=replace-with-local-database-password
-
+set -a
+source ./.env.dev
+set +a
 bash examples/demo-data/seed.sh
 ```
 
 依赖 `curl`、`jq` 和 PostgreSQL `psql`。如果本机没有 `psql`，也可以设置 `POSTGRES_CONTAINER`，通过正在运行的 PostgreSQL Docker 容器执行。后端连接 PostgreSQL 使用不同地址时，可额外设置 `PROJECT_DB_HOST`；脚本传给项目配置的地址必须从后端进程所在环境可达。
+
+脚本结束时会打印三个项目的 Dashboard 地址。启动管理前端后，打开 `http://127.0.0.1:5173/analyticshub/`，使用与后端相同的 `ADMIN_TOKEN` 登录，即可在项目首页进入三种模板。前端启动命令也收录在 [快速启动指南](../../QUICKSTART.md#6-加载演示数据并查看完整页面可选)。
 
 ## 边界
 

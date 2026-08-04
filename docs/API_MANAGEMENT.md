@@ -749,3 +749,5 @@ DELETE /api/admin/projects/{projectId}/dashboards/{dashboardKey}?expectedRevisio
 ```
 
 创建时 `expectedRevision` 为 `0`；更新和删除必须传当前 revision，过期返回 409。
+
+`definition.defaultRange` 仅接受 `24h`、`7d`、`30d`、`90d`、`custom`；`custom` 表示不预置日期。它是项目 Dashboard 的初始查询范围，不是用户每次在页面选择日期后都会更新的临时状态。
