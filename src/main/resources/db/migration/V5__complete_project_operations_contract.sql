@@ -1,5 +1,36 @@
--- Semantic definitions are stable contracts consumed by dashboards and counters.
--- Raw event keys remain aliases and event facts are never rewritten.
+-- Complete the first post-production project operations contract in one release migration.
+-- Production 1.0.1 artifacts contain system migrations only through V4.
+
+-- Projects declare the analysis template that owns their initial workspace layout.
+ALTER TABLE analytics_projects
+    ADD COLUMN analysis_template VARCHAR(24) NOT NULL DEFAULT 'app';
+
+ALTER TABLE analytics_projects
+    ADD CONSTRAINT ck_project_analysis_template
+        CHECK (analysis_template IN ('app', 'website', 'webapp', 'blank'));
+
+COMMENT ON COLUMN analytics_projects.analysis_template IS
+    '项目工作台初始化模板：app、website、webapp 或 blank';
+
+-- Replace retired generic workspace keys while preserving dashboard definitions.
+UPDATE analytics_dashboards AS dashboard
+SET dashboard_key = CASE project.analysis_template
+        WHEN 'website' THEN 'website'
+        WHEN 'webapp' THEN 'product'
+        WHEN 'blank' THEN 'custom'
+        ELSE 'app'
+    END,
+    revision = dashboard.revision + 1
+FROM analytics_projects AS project
+WHERE dashboard.project_id = project.project_id
+  AND dashboard.dashboard_key = 'operations';
+
+UPDATE analytics_dashboards
+SET dashboard_key = 'details',
+    revision = revision + 1
+WHERE dashboard_key = 'technical';
+
+-- Semantic definitions are stable contracts; raw event facts remain unchanged aliases.
 ALTER TABLE analytics_semantic_definitions
     ADD COLUMN definition_origin VARCHAR(16) NOT NULL DEFAULT 'CUSTOM';
 
@@ -10,7 +41,7 @@ ALTER TABLE analytics_semantic_definitions
 COMMENT ON COLUMN analytics_semantic_definitions.definition_origin IS
     'OFFICIAL definitions are template-owned stable contracts; CUSTOM definitions are project-owned contracts';
 
--- Existing projects receive the same official contracts as newly created projects.
+-- Existing app-like projects receive the same official contracts as newly created projects.
 INSERT INTO analytics_semantic_definitions
     (project_id, source_kind, semantic_key, definition_origin, display_name, category, description, is_active)
 SELECT project_id, 'EVENT_TYPE', preset.semantic_key, 'OFFICIAL', preset.display_name,

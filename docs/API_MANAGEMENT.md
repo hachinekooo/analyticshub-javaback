@@ -71,7 +71,7 @@ X-Admin-Token: your_admin_token
 - `webapp`：WebApp / SaaS；
 - `blank`：空白工作台。
 
-模板决定默认分析空间和组件，不限制后续维护语义、Dashboard 或 Counter。历史项目在 system migration V5 中迁移为 `app`；V6 将旧 Dashboard 的 `operations` / `technical` key 迁移到新工作区 key。之后可以通过更新项目 API 调整模板。
+模板决定默认分析空间和组件，不限制后续维护语义、Dashboard 或 Counter。历史项目在 system migration V5 中迁移为 `app`，同一 migration 会将旧 Dashboard 的 `operations` / `technical` key 迁移到新工作区 key。之后可以通过更新项目 API 调整模板。
 
 ```http
 GET    /api/admin/projects
