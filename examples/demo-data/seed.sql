@@ -119,6 +119,52 @@ SELECT 'app-event-' || lpad(n::text, 6, '0'),
        'demo_app', occurred_at
 FROM facts;
 
+-- Purpose-built actor journeys make funnel and retention examples meaningful.
+-- Generic volume above provides realistic rankings and trends; these rows preserve
+-- the event ordering required by actor-based product analytics.
+WITH actors AS (
+    SELECT n,
+           now() - (15 + n % 14) * interval '1 day' - interval '12 hours' AS activated_at
+    FROM generate_series(1, 100) AS series(n)
+), journey_events AS (
+    SELECT n, 'activation' AS stage, 'app_opened' AS event_type, activated_at AS occurred_at
+    FROM actors
+    UNION ALL
+    SELECT n, 'action', 'letter_save', activated_at + interval '10 minutes'
+    FROM actors WHERE n <= 82
+    UNION ALL
+    SELECT n, 'purchase', 'purchase_completed', activated_at + interval '20 minutes'
+    FROM actors WHERE n <= 38
+    UNION ALL
+    SELECT n, 'return-d1', 'letter_saved', activated_at + interval '1 day 5 minutes'
+    FROM actors WHERE n <= 70
+    UNION ALL
+    SELECT n, 'return-d7', 'letter_saved', activated_at + interval '7 days 5 minutes'
+    FROM actors WHERE n <= 50
+    UNION ALL
+    SELECT n, 'return-d14', 'letter_saved', activated_at + interval '14 days 5 minutes'
+    FROM actors WHERE n <= 30
+)
+INSERT INTO demo_app.analytics_events (
+    event_id, device_id, user_id, session_id, event_type, event_timestamp,
+    properties, project_id, created_at
+)
+SELECT 'app-journey-' || lpad(n::text, 4, '0') || '-' || stage,
+       md5('app-device-' || (1 + n % 160))::uuid,
+       'app_journey_' || lpad(n::text, 4, '0'),
+       md5('app-session-' || (1 + n % 1800))::uuid,
+       event_type,
+       floor(extract(epoch FROM occurred_at) * 1000)::bigint,
+       jsonb_build_object(
+         'result', 'success',
+         'source', 'guided_journey',
+         'platform', 'ios',
+         'app_version', (ARRAY['1.0.0','1.0.1','1.1.0'])[1 + n % 3],
+         'plan', (ARRAY['free','monthly','annual'])[1 + n % 3]
+       ),
+       'demo_app', occurred_at
+FROM journey_events;
+
 -- Marketing Website: enough page views, visitors, campaigns and bot traffic to show real ratios.
 WITH facts AS (
     SELECT n,
@@ -218,6 +264,48 @@ SELECT 'webapp-event-' || lpad(n::text, 6, '0'),
        ),
        'demo_webapp', occurred_at
 FROM facts;
+
+WITH actors AS (
+    SELECT n,
+           now() - (15 + n % 14) * interval '1 day' - interval '12 hours' AS activated_at
+    FROM generate_series(1, 120) AS series(n)
+), journey_events AS (
+    SELECT n, 'activation' AS stage, 'account_created' AS event_type, activated_at AS occurred_at
+    FROM actors
+    UNION ALL
+    SELECT n, 'action', 'task_completed', activated_at + interval '15 minutes'
+    FROM actors WHERE n <= 96
+    UNION ALL
+    SELECT n, 'purchase', 'purchase_completed', activated_at + interval '30 minutes'
+    FROM actors WHERE n <= 48
+    UNION ALL
+    SELECT n, 'return-d1', 'task_completed', activated_at + interval '1 day 10 minutes'
+    FROM actors WHERE n <= 84
+    UNION ALL
+    SELECT n, 'return-d7', 'task_completed', activated_at + interval '7 days 10 minutes'
+    FROM actors WHERE n <= 60
+    UNION ALL
+    SELECT n, 'return-d14', 'task_completed', activated_at + interval '14 days 10 minutes'
+    FROM actors WHERE n <= 36
+)
+INSERT INTO demo_webapp.analytics_events (
+    event_id, device_id, user_id, session_id, event_type, event_timestamp,
+    properties, project_id, created_at
+)
+SELECT 'webapp-journey-' || lpad(n::text, 4, '0') || '-' || stage,
+       md5('webapp-device-' || (1 + n % 220))::uuid,
+       'team_journey_' || lpad(n::text, 4, '0'),
+       md5('webapp-session-' || (1 + n % 2600))::uuid,
+       event_type,
+       floor(extract(epoch FROM occurred_at) * 1000)::bigint,
+       jsonb_build_object(
+         'result', 'success',
+         'plan', (ARRAY['free','pro','business'])[1 + n % 3],
+         'role', (ARRAY['owner','admin','member'])[1 + n % 3],
+         'workspace_size', 3 + n % 38
+       ),
+       'demo_webapp', occurred_at
+FROM journey_events;
 
 WITH facts AS (
     SELECT n,
@@ -354,7 +442,7 @@ INSERT INTO analytics.analytics_dashboards (
       {"id":"trends_demo","type":"core.trends","layout":{"x":0,"y":5,"w":7,"h":10,"minW":4,"minH":6},"config":{"granularity":"day"}},
       {"id":"top_events_demo","type":"core.topEvents","layout":{"x":7,"y":5,"w":5,"h":10,"minW":4,"minH":6},"config":{"aggregation":"semantic","limit":10}},
       {"id":"funnel_demo","type":"core.productFunnel","layout":{"x":0,"y":15,"w":12,"h":9,"minW":6,"minH":6},"config":{"steps":["core.activation.completed","core.action.completed","core.purchase.completed"]}},
-      {"id":"retention_demo","type":"core.retention","layout":{"x":0,"y":24,"w":7,"h":9,"minW":4,"minH":6},"config":{"cohortEvent":"core.activation.completed","returnEvent":"core.action.completed","days":[1,7,14,30]}},
+      {"id":"retention_demo","type":"core.retention","layout":{"x":0,"y":24,"w":7,"h":9,"minW":4,"minH":6},"config":{"cohortEvent":"core.activation.completed","returnEvent":"core.action.completed","days":[1,7,14]}},
       {"id":"counters_demo","type":"core.counters","layout":{"x":7,"y":24,"w":5,"h":9,"minW":4,"minH":4},"config":{"keys":["letters_completed","beautification_uses","shares_completed"]}}
     ]}',1,TRUE,TRUE),
   ('demo_website','overview','{"zh-CN":"数据大屏","en":"Dashboard"}','Marketing website traffic example',1,
@@ -371,7 +459,7 @@ INSERT INTO analytics.analytics_dashboards (
       {"id":"trends_demo","type":"core.trends","layout":{"x":0,"y":5,"w":7,"h":10,"minW":4,"minH":6},"config":{"granularity":"day"}},
       {"id":"top_events_demo","type":"core.topEvents","layout":{"x":7,"y":5,"w":5,"h":10,"minW":4,"minH":6},"config":{"aggregation":"semantic","limit":10}},
       {"id":"funnel_demo","type":"core.productFunnel","layout":{"x":0,"y":15,"w":12,"h":9,"minW":6,"minH":6},"config":{"steps":["core.activation.completed","core.action.completed","core.purchase.completed"],"groupBy":"plan"}},
-      {"id":"retention_demo","type":"core.retention","layout":{"x":0,"y":24,"w":7,"h":9,"minW":4,"minH":6},"config":{"cohortEvent":"core.activation.completed","returnEvent":"core.action.completed","days":[1,7,14,30]}},
+      {"id":"retention_demo","type":"core.retention","layout":{"x":0,"y":24,"w":7,"h":9,"minW":4,"minH":6},"config":{"cohortEvent":"core.activation.completed","returnEvent":"core.action.completed","days":[1,7,14]}},
       {"id":"counters_demo","type":"core.counters","layout":{"x":7,"y":24,"w":5,"h":9,"minW":4,"minH":4},"config":{"keys":["tasks_completed","workspaces_created","subscriptions_started"]}},
       {"id":"traffic_overview_demo","type":"core.trafficOverview","layout":{"x":0,"y":33,"w":12,"h":5,"minW":6,"minH":4}},
       {"id":"traffic_trends_demo","type":"core.trafficTrends","layout":{"x":0,"y":38,"w":7,"h":10,"minW":4,"minH":6},"config":{"granularity":"day"}},
