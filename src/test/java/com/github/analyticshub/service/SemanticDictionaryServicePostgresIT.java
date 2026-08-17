@@ -322,6 +322,7 @@ class SemanticDictionaryServicePostgresIT {
                     event_id VARCHAR(64) PRIMARY KEY,
                     project_id VARCHAR(50) NOT NULL,
                     event_type VARCHAR(100) NOT NULL,
+                    event_timestamp BIGINT NOT NULL,
                     created_at TIMESTAMPTZ NOT NULL
                 )
                 """);
@@ -334,10 +335,12 @@ class SemanticDictionaryServicePostgresIT {
             Instant createdAt
     ) {
         jdbcTemplate.update(
-                "INSERT INTO events (event_id, project_id, event_type, created_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO events (event_id, project_id, event_type, event_timestamp, created_at) " +
+                        "VALUES (?, ?, ?, ?, ?)",
                 java.util.UUID.randomUUID().toString(),
                 projectId,
                 rawKey,
+                createdAt.toEpochMilli(),
                 Timestamp.from(createdAt)
         );
     }

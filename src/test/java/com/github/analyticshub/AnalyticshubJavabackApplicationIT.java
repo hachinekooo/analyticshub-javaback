@@ -177,7 +177,7 @@ class AnalyticshubJavabackApplicationIT {
         Map<String, Object> body = healthController.health().getBody();
 
         assertThat(body).isNotNull();
-        assertThat(body.get("version")).isEqualTo("1.0.1");
+        assertThat(body.get("version")).isEqualTo("1.1.0");
     }
 
     @Test

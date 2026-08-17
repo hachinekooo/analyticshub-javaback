@@ -33,7 +33,7 @@ GET /api/health
   "status": "UP",
   "service": "analyticshub-javaback",
   "timestamp": "2026-01-12T10:00:00.000Z",
-  "version": "1.0.1"
+  "version": "1.1.0"
 }
 ```
 
