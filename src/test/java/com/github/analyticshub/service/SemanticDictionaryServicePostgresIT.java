@@ -93,7 +93,7 @@ class SemanticDictionaryServicePostgresIT {
         when(dataSourceManager.getTableName("project_b", "events")).thenReturn("events");
 
         service = new SemanticDictionaryService(systemJdbcTemplate, dataSourceManager, JsonMapper.builder().build());
-        adminMetricsService = new AdminMetricsService(dataSourceManager, service);
+        adminMetricsService = new AdminMetricsService(dataSourceManager, service, new ActorIdentityResolver());
         systemTransaction = new TransactionTemplate(new DataSourceTransactionManager(systemDataSource));
     }
 

@@ -34,13 +34,16 @@ public class AdminMetricsService {
 
     private final MultiDataSourceManager dataSourceManager;
     private final SemanticDictionaryService semanticDictionaryService;
+    private final ActorIdentityResolver actorIdentityResolver;
 
     public AdminMetricsService(
             MultiDataSourceManager dataSourceManager,
-            SemanticDictionaryService semanticDictionaryService
+            SemanticDictionaryService semanticDictionaryService,
+            ActorIdentityResolver actorIdentityResolver
     ) {
         this.dataSourceManager = dataSourceManager;
         this.semanticDictionaryService = semanticDictionaryService;
+        this.actorIdentityResolver = actorIdentityResolver;
     }
 
     public AdminMetricsOverviewResponse getOverview(String projectId, String from, String to) {
@@ -52,6 +55,7 @@ public class AdminMetricsService {
         String devicesTable = dataSourceManager.getTableName(normalizedProjectId, "devices");
         String sessionsTable = dataSourceManager.getTableName(normalizedProjectId, "sessions");
         String eventsTable = dataSourceManager.getTableName(normalizedProjectId, "events");
+        String actorLinksTable = dataSourceManager.getTableName(normalizedProjectId, "actor_identity_links");
 
         Timestamp start = Timestamp.from(range.start());
         Timestamp end = Timestamp.from(range.end());
@@ -59,18 +63,37 @@ public class AdminMetricsService {
         long devicesTotal = queryCount(jdbcTemplate,
                 "SELECT COUNT(*) FROM %s WHERE project_id = ?",
                 devicesTable, normalizedProjectId);
+        // 活跃设备由区间内真实事件决定；注册/凭据轮换时间不能代替使用行为。
         long devicesActive = queryCount(jdbcTemplate,
-                "SELECT COUNT(*) FROM %s WHERE project_id = ? AND last_active_at >= ? AND last_active_at < ?",
-                devicesTable, normalizedProjectId, start, end);
+                "SELECT COUNT(DISTINCT device_id) FROM %s "
+                        + "WHERE project_id = ? AND created_at >= ? AND created_at < ?",
+                eventsTable, normalizedProjectId, start, end);
         long sessionsTotal = queryCount(jdbcTemplate,
                 "SELECT COUNT(*) FROM %s WHERE project_id = ? AND session_start_time >= ? AND session_start_time < ?",
                 sessionsTable, normalizedProjectId, start, end);
         long eventsTotal = queryCount(jdbcTemplate,
                 "SELECT COUNT(*) FROM %s WHERE project_id = ? AND created_at >= ? AND created_at < ?",
                 eventsTable, normalizedProjectId, start, end);
-        long usersActive = queryCount(jdbcTemplate,
-                "SELECT COUNT(DISTINCT user_id) FROM %s WHERE project_id = ? AND created_at >= ? AND created_at < ?",
-                eventsTable, normalizedProjectId, start, end);
+        List<String> activeActorIds = jdbcTemplate.query(
+                String.format(
+                        "SELECT DISTINCT user_id FROM %s WHERE project_id = ? AND created_at >= ? AND created_at < ?",
+                        eventsTable
+                ),
+                (resultSet, rowNumber) -> resultSet.getString(1),
+                normalizedProjectId,
+                start,
+                end
+        );
+        long usersActive = actorIdentityResolver.resolveCanonicalActors(
+                        jdbcTemplate,
+                        actorLinksTable,
+                        normalizedProjectId,
+                        activeActorIds
+                )
+                .values()
+                .stream()
+                .distinct()
+                .count();
 
         double avgDuration = queryAvg(jdbcTemplate,
                 "SELECT COALESCE(AVG(session_duration_ms), 0) FROM %s WHERE project_id = ? AND session_start_time >= ? AND session_start_time < ?",
@@ -245,7 +268,10 @@ public class AdminMetricsService {
     }
 
     private long queryCount(JdbcTemplate jdbcTemplate, String template, String table, Object... args) {
-        String sql = String.format(template, table);
+        return queryCountSql(jdbcTemplate, String.format(template, table), args);
+    }
+
+    private long queryCountSql(JdbcTemplate jdbcTemplate, String sql, Object... args) {
         Long result = jdbcTemplate.queryForObject(sql, Long.class, args);
         return result == null ? 0L : result;
     }

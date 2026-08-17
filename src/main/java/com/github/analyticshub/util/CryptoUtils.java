@@ -84,12 +84,18 @@ public final class CryptoUtils {
     }
 
     public static String sha256Hex(String data) {
-        if (data == null) {
-            data = "";
-        }
+        return sha256Hex(data == null ? new byte[0] : data.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Computes a digest from the received bytes without applying any charset
+     * decoding or normalization. This is required when the digest is part of
+     * an HTTP message authentication contract.
+     */
+    public static String sha256Hex(byte[] data) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] bytes = digest.digest(data.getBytes(StandardCharsets.UTF_8));
+            byte[] bytes = digest.digest(data == null ? new byte[0] : data);
             return Hex.encodeHexString(bytes);
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException("SHA-256 unavailable", e);

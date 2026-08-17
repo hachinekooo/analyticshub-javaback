@@ -56,6 +56,8 @@ public class ProjectSchemaMigrator {
             "counters",
             "privacy_requests",
             "idempotency_keys",
+            "actor_identity_links",
+            "actor_suppressions",
             "work_order_activities",
             "work_order_outbox"
     );

@@ -6,6 +6,7 @@ import com.github.analyticshub.config.MultiDataSourceManager;
 import com.github.analyticshub.database.project.ProjectSchemaMigrator;
 import com.github.analyticshub.dto.AdminFunnelGroupResult;
 import com.github.analyticshub.dto.AdminFunnelResponse;
+import com.github.analyticshub.dto.AdminMetricsOverviewResponse;
 import com.github.analyticshub.dto.AdminRetentionResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,7 +26,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
@@ -44,7 +49,10 @@ class AdminProductAnalyticsServicePostgresIT {
             .withPassword("product_test_password");
 
     private JdbcTemplate jdbcTemplate;
+    private MultiDataSourceManager dataSourceManager;
     private AdminProductAnalyticsService service;
+    private AdminMetricsService metricsService;
+    private ActorIdentityResolver actorIdentityResolver;
 
     @BeforeEach
     void setUp() {
@@ -58,7 +66,7 @@ class AdminProductAnalyticsServicePostgresIT {
 
         new ProjectSchemaMigrator().migrate(dataSource, schema, PREFIX);
 
-        MultiDataSourceManager dataSourceManager = mock(MultiDataSourceManager.class);
+        dataSourceManager = mock(MultiDataSourceManager.class);
         MultiDataSourceManager.ProjectConfig projectConfig = new MultiDataSourceManager.ProjectConfig(
                 PROJECT_ID,
                 "Product Analytics Test",
@@ -74,6 +82,10 @@ class AdminProductAnalyticsServicePostgresIT {
         when(dataSourceManager.getProjectConfig(PROJECT_ID)).thenReturn(projectConfig);
         when(dataSourceManager.getDataSource(PROJECT_ID)).thenReturn(dataSource);
         when(dataSourceManager.getTableName(PROJECT_ID, "events")).thenReturn(quoted(PREFIX + "events"));
+        when(dataSourceManager.getTableName(PROJECT_ID, "devices")).thenReturn(quoted(PREFIX + "devices"));
+        when(dataSourceManager.getTableName(PROJECT_ID, "sessions")).thenReturn(quoted(PREFIX + "sessions"));
+        when(dataSourceManager.getTableName(PROJECT_ID, "actor_identity_links"))
+                .thenReturn(quoted(PREFIX + "actor_identity_links"));
 
         SemanticDictionaryService semantics = mock(SemanticDictionaryService.class);
         when(semantics.resolveActiveEventAliases(eq(PROJECT_ID), anyList())).thenAnswer(invocation -> {
@@ -81,11 +93,14 @@ class AdminProductAnalyticsServicePostgresIT {
             for (String key : invocation.<List<String>>getArgument(1)) result.put(key, List.of(key));
             return result;
         });
+        actorIdentityResolver = new ActorIdentityResolver();
         service = new AdminProductAnalyticsService(
                 dataSourceManager,
                 JsonMapper.builder().build(),
-                semantics
+                semantics,
+                actorIdentityResolver
         );
+        metricsService = new AdminMetricsService(dataSourceManager, semantics, actorIdentityResolver);
     }
 
     @Test
@@ -132,6 +147,188 @@ class AdminProductAnalyticsServicePostgresIT {
     }
 
     @Test
+    void funnelAndRetentionResolveAnonymousAliasesToTheCloudActor() {
+        UUID anonymousActor = UUID.randomUUID();
+        UUID cloudActor = UUID.randomUUID();
+        UUID bindingId = UUID.randomUUID();
+        jdbcTemplate.update(
+                String.format(
+                        "INSERT INTO %s (binding_id, project_id, source_actor_id, canonical_actor_id, linked_at) "
+                                + "VALUES (?::uuid, ?, ?::uuid, ?::uuid, ?)",
+                        quoted(PREFIX + "actor_identity_links")
+                ),
+                bindingId.toString(),
+                PROJECT_ID,
+                anonymousActor.toString(),
+                cloudActor.toString(),
+                Timestamp.from(Instant.parse("2026-01-01T00:30:00Z"))
+        );
+
+        insertEvent(anonymousActor, "landing", "2026-01-01T01:00:00Z", null);
+        insertEvent(cloudActor, "purchase", "2026-01-01T01:10:00Z", null);
+        insertEvent(cloudActor, "return", "2026-01-02T02:00:00Z", null);
+
+        AdminFunnelResponse funnel = service.getFunnel(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                "landing,purchase",
+                null
+        );
+        assertThat(funnel.groups().getFirst().steps())
+                .extracting(step -> step.users())
+                .containsExactly(1L, 1L);
+
+        AdminRetentionResponse retention = service.getRetention(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                "landing",
+                "return",
+                "1"
+        );
+        assertThat(retention.cohortUsers()).isEqualTo(1L);
+        assertThat(retention.buckets().getFirst().retainedUsers()).isEqualTo(1L);
+    }
+
+    @Test
+    void overviewCountsLinkedAnonymousPhasesAsOneActiveUser() {
+        UUID firstAnonymousActor = UUID.randomUUID();
+        UUID secondAnonymousActor = UUID.randomUUID();
+        UUID cloudActor = UUID.randomUUID();
+        insertLink(firstAnonymousActor, cloudActor, "2026-01-01T00:30:00Z");
+        insertLink(secondAnonymousActor, cloudActor, "2026-01-01T02:30:00Z");
+
+        insertEvent(firstAnonymousActor, "open", "2026-01-01T01:00:00Z", null);
+        insertEvent(cloudActor, "open", "2026-01-01T02:00:00Z", null);
+        insertEvent(secondAnonymousActor, "open", "2026-01-01T03:00:00Z", null);
+
+        AdminMetricsOverviewResponse overview = metricsService.getOverview(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z"
+        );
+
+        assertThat(overview.usersActive()).isEqualTo(1);
+        assertThat(overview.eventsTotal()).isEqualTo(3);
+    }
+
+    @Test
+    void overviewCountsDistinctDevicesWithEventsInTheRequestedRange() {
+        UUID actor = UUID.randomUUID();
+        UUID firstDevice = UUID.randomUUID();
+        UUID secondDevice = UUID.randomUUID();
+
+        insertEvent(actor.toString(), firstDevice, "open", "2026-01-01T01:00:00Z", null);
+        insertEvent(actor.toString(), firstDevice, "open", "2026-01-01T02:00:00Z", null);
+        insertEvent(actor.toString(), secondDevice, "open", "2026-01-01T03:00:00Z", null);
+        insertEvent(actor.toString(), UUID.randomUUID(), "open", "2026-01-02T01:00:00Z", null);
+
+        AdminMetricsOverviewResponse overview = metricsService.getOverview(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z"
+        );
+
+        assertThat(overview.devicesActive()).isEqualTo(2L);
+        assertThat(overview.eventsTotal()).isEqualTo(3L);
+    }
+
+    @Test
+    void aliasesUppercaseCanonicalUuidFormsInEveryProductReport() {
+        UUID anonymousActor = UUID.randomUUID();
+        UUID cloudActor = UUID.randomUUID();
+        insertLink(anonymousActor, cloudActor, "2026-01-01T00:30:00Z");
+
+        insertEvent(anonymousActor, "landing", "2026-01-01T01:00:00Z", null);
+        insertEvent(cloudActor, "purchase", "2026-01-01T01:10:00Z", null);
+        jdbcTemplate.update(
+                "UPDATE " + quoted(PREFIX + "events") + " SET user_id = UPPER(user_id) WHERE event_type = ?",
+                "landing"
+        );
+
+        AdminFunnelResponse funnel = service.getFunnel(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", "landing,purchase", null
+        );
+        AdminMetricsOverviewResponse overview = metricsService.getOverview(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        );
+
+        assertThat(funnel.groups().getFirst().steps()).extracting(step -> step.users()).containsExactly(1L, 1L);
+        assertThat(overview.usersActive()).isEqualTo(1L);
+    }
+
+    @Test
+    void resolverKeepsHistoricalActorsAndNormalizesUuidAliasesOnce() {
+        UUID anonymousActor = UUID.randomUUID();
+        UUID cloudActor = UUID.randomUUID();
+        insertLink(anonymousActor, cloudActor, "2026-01-01T00:30:00Z");
+
+        Map<String, String> resolved = actorIdentityResolver.resolveCanonicalActors(
+                jdbcTemplate,
+                quoted(PREFIX + "actor_identity_links"),
+                PROJECT_ID,
+                List.of("legacy-user", anonymousActor.toString().toUpperCase(), cloudActor.toString())
+        );
+
+        assertThat(resolved).containsEntry("legacy-user", "legacy-user");
+        assertThat(resolved).containsEntry(anonymousActor.toString().toUpperCase(), cloudActor.toString());
+        assertThat(resolved).containsEntry(cloudActor.toString(), cloudActor.toString());
+    }
+
+    @Test
+    void overviewCountsMixedHistoricalAndAliasedActors() {
+        UUID anonymousActor = UUID.randomUUID();
+        UUID cloudActor = UUID.randomUUID();
+        insertLink(anonymousActor, cloudActor, "2026-01-01T00:30:00Z");
+
+        insertEvent(anonymousActor, "open", "2026-01-01T01:00:00Z", null);
+        insertEvent(cloudActor, "open", "2026-01-01T02:00:00Z", null);
+        insertEvent("legacy-user", "open", "2026-01-01T03:00:00Z", null);
+        insertEvent("legacy-user", "open", "2026-01-01T04:00:00Z", null);
+
+        AdminMetricsOverviewResponse overview = metricsService.getOverview(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        );
+
+        assertThat(overview.usersActive()).isEqualTo(2L);
+        assertThat(overview.eventsTotal()).isEqualTo(4L);
+    }
+
+    @Test
+    void overviewQueriesDistinctActorsBeforeResolvingAliases() {
+        UUID anonymousActor = UUID.randomUUID();
+        UUID cloudActor = UUID.randomUUID();
+        insertLink(anonymousActor, cloudActor, "2026-01-01T00:30:00Z");
+
+        insertEvent(anonymousActor, "open", "2026-01-01T01:00:00Z", null);
+        insertEvent(anonymousActor, "open", "2026-01-01T02:00:00Z", null);
+        insertEvent(cloudActor, "open", "2026-01-01T03:00:00Z", null);
+        insertEvent("legacy-user", "open", "2026-01-01T04:00:00Z", null);
+        insertEvent("legacy-user", "open", "2026-01-01T05:00:00Z", null);
+
+        ActorIdentityResolver resolver = spy(new ActorIdentityResolver());
+        AdminMetricsService serviceWithResolverSpy = new AdminMetricsService(
+                dataSourceManager,
+                mock(SemanticDictionaryService.class),
+                resolver
+        );
+        AdminMetricsOverviewResponse overview = serviceWithResolverSpy.getOverview(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        );
+
+        assertThat(overview.usersActive()).isEqualTo(2L);
+        assertThat(overview.eventsTotal()).isEqualTo(5L);
+        verify(resolver).resolveCanonicalActors(
+                any(JdbcTemplate.class),
+                eq(quoted(PREFIX + "actor_identity_links")),
+                eq(PROJECT_ID),
+                argThat(actorIds -> actorIds.size() == 3
+                        && actorIds.containsAll(List.of(anonymousActor.toString(), cloudActor.toString(), "legacy-user")))
+        );
+    }
+
+    @Test
     void retentionUsesCohortRelativeDayWindowsAndDeduplicatesActors() {
         UUID firstUser = UUID.randomUUID();
         UUID secondUser = UUID.randomUUID();
@@ -175,19 +372,48 @@ class AdminProductAnalyticsServicePostgresIT {
     }
 
     private void insertEvent(UUID userId, String eventType, String createdAt, String properties) {
+        insertEvent(userId.toString(), eventType, createdAt, properties);
+    }
+
+    private void insertEvent(String userId, String eventType, String createdAt, String properties) {
+        insertEvent(userId, UUID.randomUUID(), eventType, createdAt, properties);
+    }
+
+    private void insertEvent(
+            String userId,
+            UUID deviceId,
+            String eventType,
+            String createdAt,
+            String properties
+    ) {
         Instant instant = Instant.parse(createdAt);
         jdbcTemplate.update(
                 "INSERT INTO " + quoted(PREFIX + "events") + " "
                         + "(event_id, device_id, user_id, event_type, event_timestamp, properties, project_id, created_at) "
                         + "VALUES (?, ?::uuid, ?, ?, ?, ?::jsonb, ?, ?)",
                 "evt_" + UUID.randomUUID(),
-                UUID.randomUUID().toString(),
-                userId.toString(),
+                deviceId.toString(),
+                userId,
                 eventType,
                 instant.toEpochMilli(),
                 properties,
                 PROJECT_ID,
                 Timestamp.from(instant)
+        );
+    }
+
+    private void insertLink(UUID sourceActorId, UUID canonicalActorId, String linkedAt) {
+        jdbcTemplate.update(
+                String.format(
+                        "INSERT INTO %s (binding_id, project_id, source_actor_id, canonical_actor_id, linked_at) "
+                                + "VALUES (?::uuid, ?, ?::uuid, ?::uuid, ?)",
+                        quoted(PREFIX + "actor_identity_links")
+                ),
+                UUID.randomUUID().toString(),
+                PROJECT_ID,
+                sourceActorId.toString(),
+                canonicalActorId.toString(),
+                Timestamp.from(Instant.parse(linkedAt))
         );
     }
 

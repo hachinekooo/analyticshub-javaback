@@ -67,6 +67,13 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
         String path = requestPath.applicationPath();
+
+        // actor-link 由前置的专用服务 HMAC 过滤器认证。这里只豁免这个确定的接口，
+        // 不放行整个 /internal 命名空间，避免未来新增内部接口时意外裸奔。
+        if (ActorLinkAuthenticationFilter.ENDPOINT.equals(path)) {
+            filterChain.doFilter(request, response);
+            return;
+        }
         
         // 跳过公开路径
         if (isPublicPath(path)) {

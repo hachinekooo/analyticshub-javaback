@@ -1,6 +1,7 @@
 package com.github.analyticshub;
 
 import com.github.analyticshub.controller.HealthController;
+import com.github.analyticshub.util.CryptoUtils;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -45,6 +46,14 @@ class AnalyticshubJavabackApplicationIT {
         registry.add("spring.flyway.default-schema", () -> "analytics");
         registry.add("spring.flyway.schemas", () -> "analytics");
         registry.add("spring.flyway.enabled", () -> true);
+        registry.add("app.security.actor-link.enabled", () -> true);
+        registry.add("app.security.actor-link.require-loopback", () -> true);
+        registry.add("app.security.actor-link.clients[0].service-id", () -> "backend-test");
+        registry.add("app.security.actor-link.clients[0].project-id", () -> "project-test");
+        registry.add("app.security.actor-link.clients[0].secret", () -> "actor-link-test-secret-with-at-least-32-characters");
+        registry.add("app.security.actor-link.clients[1].service-id", () -> "backend-prod");
+        registry.add("app.security.actor-link.clients[1].project-id", () -> "project-prod");
+        registry.add("app.security.actor-link.clients[1].secret", () -> "actor-link-prod-secret-with-at-least-32-characters");
     }
 
     @Autowired
@@ -216,5 +225,66 @@ class AnalyticshubJavabackApplicationIT {
         assertThat(canonicalAdminResponse.statusCode()).isEqualTo(401);
         assertThat(canonicalAdminResponse.body())
                 .contains("\"code\":\"ADMIN_TOKEN_MISSING\"");
+    }
+
+    @Test
+    void actorLinkSecurityIsEnforcedByTheLiveSpringSecurityFilterChain() throws Exception {
+        String actorLinkEndpoint = "/internal/v1/analytics/actor-links";
+        HttpClient client = HttpClient.newHttpClient();
+        String body = "{\"bindingId\":\"11111111-1111-4111-8111-111111111111\","
+                + "\"sourceActorId\":\"22222222-2222-4222-8222-222222222222\","
+                + "\"canonicalActorId\":\"33333333-3333-4333-8333-333333333333\","
+                + "\"linkedAt\":\"2026-01-01T00:00:00Z\"}";
+
+        HttpResponse<String> unsigned = client.send(actorLinkRequestBuilder(actorLinkEndpoint, body).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(unsigned.statusCode()).isEqualTo(401);
+        assertThat(unsigned.body()).contains("ACTOR_LINK_HEADERS_MISSING");
+
+        HttpRequest ordinaryCollectionCredentials = HttpRequest.newBuilder(actorLinkUri(actorLinkEndpoint))
+                .header("Content-Type", "application/json")
+                .header("X-Project-ID", "project-test")
+                .header("X-API-Key", "ordinary-collection-key")
+                .header("X-Device-ID", "22222222-2222-4222-8222-222222222222")
+                .header("X-User-ID", "33333333-3333-4333-833333333333")
+                .header("X-Timestamp", Long.toString(System.currentTimeMillis()))
+                .header("X-Signature", "not-a-service-signature")
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
+        HttpResponse<String> ordinary = client.send(ordinaryCollectionCredentials, HttpResponse.BodyHandlers.ofString());
+        assertThat(ordinary.statusCode()).isEqualTo(401);
+        assertThat(ordinary.body()).contains("ACTOR_LINK_HEADERS_MISSING");
+
+        String timestamp = Long.toString(System.currentTimeMillis());
+        String idempotencyKey = "11111111-1111-4111-8111-111111111111";
+        String signatureData = String.join("|", "POST", actorLinkEndpoint, timestamp,
+                "backend-test", "project-prod", idempotencyKey, CryptoUtils.sha256Hex(body.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        HttpRequest crossProject = actorLinkRequestBuilder(actorLinkEndpoint, body)
+                .header("X-Service-ID", "backend-test")
+                .header("X-Project-ID", "project-prod")
+                .header("X-Timestamp", timestamp)
+                .header("X-Idempotency-Key", idempotencyKey)
+                .header("X-Service-Signature", CryptoUtils.generateSignature(signatureData,
+                        "actor-link-test-secret-with-at-least-32-characters"))
+                .build();
+        HttpResponse<String> crossProjectResponse = client.send(crossProject, HttpResponse.BodyHandlers.ofString());
+        assertThat(crossProjectResponse.statusCode()).isEqualTo(403);
+        assertThat(crossProjectResponse.body()).contains("ACTOR_LINK_CLIENT_FORBIDDEN");
+
+        HttpResponse<String> unsafe = client.send(actorLinkRequestBuilder(
+                        "/internal/v1/analytics/actor-links;unsafe", body).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(unsafe.statusCode()).isEqualTo(400);
+        assertThat(unsafe.body()).contains("INVALID_REQUEST_PATH");
+    }
+
+    private HttpRequest.Builder actorLinkRequestBuilder(String path, String body) {
+        return HttpRequest.newBuilder(actorLinkUri(path))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body));
+    }
+
+    private URI actorLinkUri(String path) {
+        return URI.create("http://127.0.0.1:" + serverPort + path);
     }
 }

@@ -92,6 +92,7 @@ public final class RequestPathSecurityPolicy {
                 return switch (namespaceToken(segment.valueToMatch())) {
                     case "api" -> Namespace.API;
                     case "actuator" -> Namespace.ACTUATOR;
+                    case "internal" -> Namespace.INTERNAL;
                     default -> Namespace.OTHER;
                 };
             }
@@ -103,6 +104,9 @@ public final class RequestPathSecurityPolicy {
             }
             if (applicationPath.equals("/actuator") || applicationPath.startsWith("/actuator/")) {
                 return Namespace.ACTUATOR;
+            }
+            if (applicationPath.equals("/internal") || applicationPath.startsWith("/internal/")) {
+                return Namespace.INTERNAL;
             }
         }
         return Namespace.OTHER;
@@ -151,6 +155,7 @@ public final class RequestPathSecurityPolicy {
     public enum Namespace {
         API,
         ACTUATOR,
+        INTERNAL,
         OTHER
     }
 

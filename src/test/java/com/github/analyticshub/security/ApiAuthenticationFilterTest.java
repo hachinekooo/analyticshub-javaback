@@ -33,6 +33,8 @@ class ApiAuthenticationFilterTest {
     void credentialRotationIsAuthenticatedWhileInitialRegistrationIsPublic() {
         assertTrue(ApiAuthenticationFilter.isPublicPath("/api/v1/auth/register"));
         assertFalse(ApiAuthenticationFilter.isPublicPath("/api/v1/auth/credentials/rotate"));
+        assertFalse(ApiAuthenticationFilter.isPublicPath("/internal"));
+        assertFalse(ApiAuthenticationFilter.isPublicPath("/internal/v1/analytics/actor-links"));
     }
 
     @Test

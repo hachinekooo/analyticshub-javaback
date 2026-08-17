@@ -43,15 +43,18 @@ public class AdminProductAnalyticsService {
     private final MultiDataSourceManager dataSourceManager;
     private final ObjectMapper objectMapper;
     private final SemanticDictionaryService semanticDictionaryService;
+    private final ActorIdentityResolver actorIdentityResolver;
 
     public AdminProductAnalyticsService(
             MultiDataSourceManager dataSourceManager,
             ObjectMapper objectMapper,
-            SemanticDictionaryService semanticDictionaryService
+            SemanticDictionaryService semanticDictionaryService,
+            ActorIdentityResolver actorIdentityResolver
     ) {
         this.dataSourceManager = dataSourceManager;
         this.objectMapper = objectMapper;
         this.semanticDictionaryService = semanticDictionaryService;
+        this.actorIdentityResolver = actorIdentityResolver;
     }
 
     public AdminFunnelResponse getFunnel(
@@ -81,6 +84,7 @@ public class AdminProductAnalyticsService {
                 selection.rawKeys()
         );
         rows = canonicalize(rows, selection.rawToSemantic());
+        rows = resolveCanonicalActors(jdbcTemplate, normalizedProjectId, rows);
 
         Map<String, Map<String, ActorTimeline>> groups = buildFunnelGroups(rows, semanticSteps, normalizedGroupBy);
         List<AdminFunnelGroupResult> groupResults = groups.entrySet().stream()
@@ -132,6 +136,7 @@ public class AdminProductAnalyticsService {
                 selection.rawKeys()
         );
         rows = canonicalize(rows, selection.rawToSemantic());
+        rows = resolveCanonicalActors(jdbcTemplate, normalizedProjectId, rows);
 
         Map<String, Instant> cohortTimes = new HashMap<>();
         Map<String, List<Instant>> returnTimes = new HashMap<>();
@@ -354,6 +359,28 @@ public class AdminProductAnalyticsService {
                         row.properties()
                 ))
                 .filter(row -> row.eventType() != null)
+                .toList();
+    }
+
+    private List<EventRow> resolveCanonicalActors(
+            JdbcTemplate jdbcTemplate,
+            String projectId,
+            List<EventRow> rows
+    ) {
+        String linkTable = dataSourceManager.getTableName(projectId, "actor_identity_links");
+        Map<String, String> canonicalActors = actorIdentityResolver.resolveCanonicalActors(
+                jdbcTemplate,
+                linkTable,
+                projectId,
+                rows.stream().map(EventRow::actorId).toList()
+        );
+        return rows.stream()
+                .map(row -> new EventRow(
+                        row.eventType(),
+                        row.createdAt(),
+                        canonicalActors.getOrDefault(row.actorId(), row.actorId()),
+                        row.properties()
+                ))
                 .toList();
     }
 

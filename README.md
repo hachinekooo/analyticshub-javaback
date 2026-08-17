@@ -55,6 +55,7 @@ curl http://localhost:3001/api/health
 | 范围 | 用途 | 认证 |
 | --- | --- | --- |
 | `/api/v1/**` | App/SDK 采集 | 按接口使用 API Key + HMAC |
+| `/internal/v1/analytics/actor-links` | 业务后端登记项目内 actor alias | 项目级 service HMAC，可叠加 loopback 限制 |
 | `/api/admin/**` | 管理后台 | `X-Admin-Token` 或 Bearer Token |
 | `/api/public/**` | 官网流量与公开 Counter | 默认公开；功能可配置专用 Token |
 | `/api/health` | 健康检查 | 公开 |

@@ -74,7 +74,27 @@ APP_SECURITY_2FA_SECRET=replace-with-totp-secret
 - `/api/admin/**` 需要 `X-Admin-Token` 或 `Authorization: Bearer <token>`。
 - `POST /api/v1/auth/admin-token/verify` 用于管理端 Token 有效性探测。
 - 采集端 `/api/v1/**` 按具体接口使用 API Key + HMAC。
+- `POST /internal/v1/analytics/actor-links` 只接受专用 service HMAC；凭据同时限制调用方与 Project，不能复用 Admin Token、设备 Secret 或用户 access token。
 - 禁止通过 URL query 传递 Admin Token。
+
+### Actor link 服务凭据
+
+一个 AnalyticsHub 实例可以管理多个 Project，也可以接收多个业务后端实例的 actor 绑定。当前契约要求一个 `serviceId` 只写入一个 Project，且一个 Project 只接受一个 actor-link service client；例如 test 与 prod 两个后端即使部署在同一台服务器、调用同一个 Hub origin，也必须配置两组不同凭据。启动校验会拒绝重复的 `serviceId`、`projectId` 或 secret，防止复制配置后意外跨环境写入。
+
+```bash
+ACTOR_LINK_ENABLED=true
+ACTOR_LINK_REQUIRE_LOOPBACK=true
+
+APP_SECURITY_ACTOR_LINK_CLIENTS_0_SERVICE_ID=backend-test
+APP_SECURITY_ACTOR_LINK_CLIENTS_0_PROJECT_ID=project-test
+APP_SECURITY_ACTOR_LINK_CLIENTS_0_SECRET=replace-with-test-random-secret-at-least-32-chars
+
+APP_SECURITY_ACTOR_LINK_CLIENTS_1_SERVICE_ID=backend-prod
+APP_SECURITY_ACTOR_LINK_CLIENTS_1_PROJECT_ID=project-prod
+APP_SECURITY_ACTOR_LINK_CLIENTS_1_SECRET=replace-with-prod-random-secret-at-least-32-chars
+```
+
+同机部署优先让业务后端通过 `127.0.0.1` 访问，并在反向代理层拒绝公网 internal route。`require-loopback` 是纵深防御，service HMAC 才是身份与项目授权；未来拆到另一台服务器时，可关闭 loopback 限制并改用私网、防火墙或 mTLS，但不能取消 HMAC。secret 不允许首尾空白且至少 32 个字符，真实值只进入部署 secret。
 
 ## 生产检查
 

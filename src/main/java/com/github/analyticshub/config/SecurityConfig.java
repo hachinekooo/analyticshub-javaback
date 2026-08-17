@@ -3,6 +3,7 @@ package com.github.analyticshub.config;
 import com.github.analyticshub.common.dto.ApiResponse;
 import tools.jackson.databind.ObjectMapper;
 import com.github.analyticshub.security.AdminApiAuthenticationFilter;
+import com.github.analyticshub.security.ActorLinkAuthenticationFilter;
 import com.github.analyticshub.security.ApiAuthenticationFilter;
 import com.github.analyticshub.security.ClientIpResolver;
 import com.github.analyticshub.security.RateLimitService;
@@ -15,6 +16,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configuration.WebSecurityCustomizer;
@@ -31,6 +33,7 @@ import org.springframework.security.web.firewall.RequestRejectedHandler;
  */
 @Configuration
 @EnableWebSecurity
+@EnableConfigurationProperties(ActorLinkSecurityProperties.class)
 public class SecurityConfig {
 
     static final int MIN_ADMIN_TOKEN_LENGTH = 32;
@@ -41,6 +44,7 @@ public class SecurityConfig {
     private final EmailService emailService;
     private final TwoFactorAuthService twoFactorAuthService;
     private final ClientIpResolver clientIpResolver;
+    private final ActorLinkSecurityProperties actorLinkSecurityProperties;
     
     @org.springframework.beans.factory.annotation.Value("${app.security.admin-token:}")
     private String adminToken;
@@ -65,18 +69,21 @@ public class SecurityConfig {
                           RateLimitService rateLimitService,
                           EmailService emailService,
                           TwoFactorAuthService twoFactorAuthService,
-                          ClientIpResolver clientIpResolver) {
+                          ClientIpResolver clientIpResolver,
+                          ActorLinkSecurityProperties actorLinkSecurityProperties) {
         this.objectMapper = objectMapper;
         this.dataSourceManager = dataSourceManager;
         this.rateLimitService = rateLimitService;
         this.emailService = emailService;
         this.twoFactorAuthService = twoFactorAuthService;
         this.clientIpResolver = clientIpResolver;
+        this.actorLinkSecurityProperties = actorLinkSecurityProperties;
     }
 
     @PostConstruct
     void validateConfiguration() {
         validateAdminTokenConfiguration(adminToken);
+        actorLinkSecurityProperties.validate();
     }
 
     static void validateAdminTokenConfiguration(String configuredToken) {
@@ -95,6 +102,8 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http.csrf(csrf -> csrf.disable())
             .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+            // 内部 actor-link 必须先于普通采集 HMAC 完成专用服务认证。
+            .addFilterBefore(actorLinkAuthenticationFilter(), UsernamePasswordAuthenticationFilter.class)
             // 显式添加认证过滤器，顺序很重要
             // 先注册管理端过滤器的相对顺序，再把匿名入口限流放到它之前。
             .addFilterBefore(adminApiAuthenticationFilter(), UsernamePasswordAuthenticationFilter.class)
@@ -180,6 +189,11 @@ public class SecurityConfig {
         );
     }
 
+    @Bean
+    public ActorLinkAuthenticationFilter actorLinkAuthenticationFilter() {
+        return new ActorLinkAuthenticationFilter(objectMapper, actorLinkSecurityProperties);
+    }
+
     /**
      * 关闭 AdminApiAuthenticationFilter 的默认注册
      * 避免被 Spring Boot 自动加入到 Servlet 全局过滤器链中
@@ -205,6 +219,13 @@ public class SecurityConfig {
     @Bean
     public org.springframework.boot.web.servlet.FilterRegistrationBean<PublicEndpointRateLimitFilter> publicEndpointRateLimitFilterRegistration(PublicEndpointRateLimitFilter filter) {
         org.springframework.boot.web.servlet.FilterRegistrationBean<PublicEndpointRateLimitFilter> registration = new org.springframework.boot.web.servlet.FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
+    @Bean
+    public org.springframework.boot.web.servlet.FilterRegistrationBean<ActorLinkAuthenticationFilter> actorLinkAuthenticationFilterRegistration(ActorLinkAuthenticationFilter filter) {
+        org.springframework.boot.web.servlet.FilterRegistrationBean<ActorLinkAuthenticationFilter> registration = new org.springframework.boot.web.servlet.FilterRegistrationBean<>(filter);
         registration.setEnabled(false);
         return registration;
     }

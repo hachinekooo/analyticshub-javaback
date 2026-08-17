@@ -12,12 +12,65 @@ import org.springframework.security.web.firewall.RequestRejectedException;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
 class SecurityConfigValidationTest {
+
+    @Test
+    void actorLinkClientsRequireUniqueProjectScopedCredentialsWithoutWhitespace() {
+        ActorLinkSecurityProperties properties = new ActorLinkSecurityProperties();
+        properties.setEnabled(true);
+        properties.setClients(List.of(
+                new ActorLinkSecurityProperties.Client(
+                        "backend-test",
+                        "project-test",
+                        " " + "a".repeat(32)
+                )
+        ));
+
+        assertThatThrownBy(properties::validate)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("unpadded secret");
+
+        properties.setClients(List.of(
+                new ActorLinkSecurityProperties.Client("backend", "project", "a".repeat(32)),
+                new ActorLinkSecurityProperties.Client("backend", "project", "b".repeat(32))
+        ));
+        assertThatThrownBy(properties::validate)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("exactly one project");
+
+        properties.setClients(List.of(
+                new ActorLinkSecurityProperties.Client("backend-test", "project-test", "a".repeat(32)),
+                new ActorLinkSecurityProperties.Client("backend-prod", "project-prod", "a".repeat(32))
+        ));
+        assertThatThrownBy(properties::validate)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("secrets must be unique");
+
+        properties.setClients(List.of(
+                new ActorLinkSecurityProperties.Client("backend-test", "project-shared", "a".repeat(32)),
+                new ActorLinkSecurityProperties.Client("backend-prod", "project-shared", "b".repeat(32))
+        ));
+        assertThatThrownBy(properties::validate)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("projectId may authorize exactly one service client");
+    }
+
+    @Test
+    void actorLinkSignatureValidityHasABoundedReplayWindow() {
+        ActorLinkSecurityProperties properties = new ActorLinkSecurityProperties();
+        properties.setSignatureValidityMs(ActorLinkSecurityProperties.MAX_SIGNATURE_VALIDITY_MS + 1);
+
+        assertThatThrownBy(properties::validate)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("signature validity is capped");
+    }
 
     @Test
     void blankAdminTokenKeepsAdminEndpointsDisabledWithoutBlockingStartup() {
@@ -112,7 +165,8 @@ class SecurityConfigValidationTest {
                 new RateLimitService(),
                 mock(EmailService.class),
                 mock(TwoFactorAuthService.class),
-                new ClientIpResolver("127.0.0.1,::1")
+                new ClientIpResolver("127.0.0.1,::1"),
+                new ActorLinkSecurityProperties()
         );
     }
 }

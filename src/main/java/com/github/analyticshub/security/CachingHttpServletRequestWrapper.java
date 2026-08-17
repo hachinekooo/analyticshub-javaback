@@ -69,6 +69,11 @@ public class CachingHttpServletRequestWrapper extends HttpServletRequestWrapper 
         return new String(this.cachedBody, java.nio.charset.StandardCharsets.UTF_8);
     }
 
+    /** Returns an immutable snapshot of the exact bytes read from the request. */
+    public byte[] getBodyBytes() {
+        return this.cachedBody.clone();
+    }
+
     static final class RequestBodyTooLargeException extends IOException {
         RequestBodyTooLargeException(int maxBodyBytes) {
             super("Request body exceeds configured limit of " + maxBodyBytes + " bytes");
