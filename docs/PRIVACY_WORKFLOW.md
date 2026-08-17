@@ -49,11 +49,12 @@ AnalyticsHub 中的 `DELETE` 工单执行的是去标识化，不是物理删除
 
 | 数据 | 处理方式 |
 | --- | --- |
-| 设备 | 更换 device ID 和凭据；清除历史凭据、机型和系统版本；禁用设备 |
-| 事件 | 更换记录、用户和设备标识；清除 session ID 与 properties；时间降为天粒度 |
-| 会话 | 更换会话、用户和设备标识；清除机型和系统版本；时间降为天粒度 |
-| 流量 | 更换记录、用户和设备标识；清除 session、页面、来源和 metadata；时间降为天粒度 |
+| 设备 | 只处理工单 device ID：更换 device ID 和凭据；清除历史凭据、机型和系统版本；禁用设备 |
+| 事件 | 处理工单 user ID 及其一跳匿名 actor phase：更换记录、用户和设备标识；清除 session ID 与 properties；时间降为天粒度 |
+| 会话 | 处理工单 user ID 及其一跳匿名 actor phase：更换会话、用户和设备标识；清除机型和系统版本；时间降为天粒度 |
+| 流量 | 处理工单 user ID 及其一跳匿名 actor phase：更换记录、用户和设备标识；清除 session、页面、来源和 metadata；时间降为天粒度 |
 | 幂等记录 | 对关联 event ID 重新生成不可反推标识 |
+| actor alias | 移除 canonical actor 的活动匿名 phase 绑定；只保留 SHA-256 摘要，迟到绑定返回终态成功，不重新建立关联 |
 
 继续保留：
 
@@ -66,12 +67,14 @@ AnalyticsHub 中的 `DELETE` 工单执行的是去标识化，不是物理删除
 
 ## EXPORT 的准确含义
 
-导出文件只包含当前项目中匹配工单 user ID 或 device ID 的：
+导出文件只包含当前项目中工单 user ID 及其一跳匿名 actor phase 的：
 
 - 设备基本信息；
 - 事件；
 - 会话；
 - 流量记录。
+
+设备基本信息仍只按工单 device ID 导出；事件、会话和流量不会因为共享设备而把其他用户的数据纳入导出。
 
 API Key、Secret 和历史设备凭据不会导出。文件由客服在浏览器中生成和下载，AnalyticsHub 不把导出文件长期保存到项目数据库。
 

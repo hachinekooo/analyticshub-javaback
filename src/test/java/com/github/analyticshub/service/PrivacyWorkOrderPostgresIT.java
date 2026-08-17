@@ -9,6 +9,8 @@ import com.github.analyticshub.dto.AdminPrivacyExecutionRequest;
 import com.github.analyticshub.dto.AdminPrivacyExecutionResponse;
 import com.github.analyticshub.dto.AdminPrivacyRequestsResponse;
 import com.github.analyticshub.dto.AdminPrivacyRequestUpdateRequest;
+import com.github.analyticshub.dto.ActorIdentityLinkRequest;
+import com.github.analyticshub.dto.ActorIdentityLinkResponse;
 import com.github.analyticshub.dto.PrivacyRequestDetailResponse;
 import com.github.analyticshub.dto.WorkOrderNotificationQueuedResponse;
 import com.github.analyticshub.dto.WorkOrderOutboxDeliveryResult;
@@ -24,14 +26,18 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.time.Instant;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -64,6 +70,7 @@ class PrivacyWorkOrderPostgresIT {
     private EmailService emailService;
     private AdminPrivacyRequestService adminService;
     private PrivacyDataExecutionService executionService;
+    private ActorIdentityLinkService actorIdentityLinkService;
     private WorkOrderOutboxDeliveryService deliveryService;
 
     @BeforeEach
@@ -110,6 +117,10 @@ class PrivacyWorkOrderPostgresIT {
                 .thenReturn(quoted(PREFIX + "traffic_metrics"));
         when(dataSourceManager.getTableName(PROJECT_ID, "idempotency_keys"))
                 .thenReturn(quoted(PREFIX + "idempotency_keys"));
+        when(dataSourceManager.getTableName(PROJECT_ID, "actor_identity_links"))
+                .thenReturn(quoted(PREFIX + "actor_identity_links"));
+        when(dataSourceManager.getTableName(PROJECT_ID, "actor_suppressions"))
+                .thenReturn(quoted(PREFIX + "actor_suppressions"));
 
         ObjectMapper objectMapper = JsonMapper.builder().build();
         ProjectTransactionExecutor transactions = new ProjectTransactionExecutor();
@@ -117,6 +128,7 @@ class PrivacyWorkOrderPostgresIT {
         when(emailService.isDeliveryEnabled()).thenReturn(true);
         adminService = new AdminPrivacyRequestService(dataSourceManager, objectMapper, transactions);
         executionService = new PrivacyDataExecutionService(dataSourceManager, objectMapper, transactions);
+        actorIdentityLinkService = new ActorIdentityLinkService(dataSourceManager, transactions);
         deliveryService = new WorkOrderOutboxDeliveryService(
                 dataSourceManager,
                 transactions,
@@ -478,9 +490,171 @@ class PrivacyWorkOrderPostgresIT {
     }
 
     @Test
+    void exportIncludesDirectAnonymousActorPhasesButNeverUsesDeviceAsAnIdentityFallback() {
+        String requestId = insertSubmittedRequest("EXPORT", "ANALYTICSHUB");
+        insertSubjectData();
+        UUID anonymousActor = UUID.randomUUID();
+        UUID anonymousDevice = UUID.randomUUID();
+        insertActorLink(anonymousActor, UUID.fromString(SUBJECT_USER_ID));
+        insertAnalyticsFact("event-anonymous", anonymousActor.toString(), anonymousDevice.toString());
+        insertAnalyticsFact("event-shared-device", UUID.randomUUID().toString(), SUBJECT_DEVICE_ID);
+
+        AdminPrivacyExecutionResponse response = executionService.execute(
+                PROJECT_ID,
+                requestId,
+                new AdminPrivacyExecutionRequest(0L, "customer-service", null)
+        );
+
+        assertThat(castRows(response.exportData().get("devices"))).hasSize(1);
+        assertThat(castRows(response.exportData().get("events")))
+                .extracting(row -> row.get("event_id"))
+                .containsExactlyInAnyOrder("event-subject", "event-anonymous");
+        assertThat(castRows(response.exportData().get("sessions"))).hasSize(2);
+        assertThat(castRows(response.exportData().get("trafficMetrics"))).hasSize(2);
+        assertThat(response.summary()).containsEntry("counts", Map.of(
+                "devices", 1,
+                "events", 2,
+                "sessions", 2,
+                "trafficMetrics", 2,
+                "actorClosure", 2
+        ));
+    }
+
+    @Test
+    void exportResolvesSourceActorThroughCanonicalActorAndIncludesSiblingPhases() {
+        UUID canonicalActor = UUID.fromString(SUBJECT_USER_ID);
+        UUID submittedSourceActor = UUID.randomUUID();
+        UUID siblingSourceActor = UUID.randomUUID();
+        String requestId = insertSubmittedRequest(
+                "EXPORT",
+                "ANALYTICSHUB",
+                submittedSourceActor.toString(),
+                SUBJECT_DEVICE_ID
+        );
+        insertSubjectData();
+        insertActorLink(submittedSourceActor, canonicalActor);
+        insertActorLink(siblingSourceActor, canonicalActor);
+        insertAnalyticsFact("event-submitted-source", submittedSourceActor.toString(), UUID.randomUUID().toString());
+        insertAnalyticsFact("event-sibling-source", siblingSourceActor.toString(), UUID.randomUUID().toString());
+
+        AdminPrivacyExecutionResponse response = executionService.execute(
+                PROJECT_ID,
+                requestId,
+                new AdminPrivacyExecutionRequest(0L, "customer-service", null)
+        );
+
+        assertThat(castRows(response.exportData().get("events")))
+                .extracting(row -> row.get("event_id"))
+                .containsExactlyInAnyOrder(
+                        "event-subject",
+                        "event-submitted-source",
+                        "event-sibling-source"
+                );
+        @SuppressWarnings("unchecked")
+        Map<String, Object> counts = (Map<String, Object>) response.summary().get("counts");
+        assertThat(counts).containsEntry("actorClosure", 3);
+    }
+
+    @Test
+    void exportFixesActorClosureBeforeFactsAndBlocksLateActorLinkUntilItsSnapshotCompletes() throws Exception {
+        String requestId = insertSubmittedRequest("EXPORT", "ANALYTICSHUB");
+        UUID lateSourceActor = UUID.randomUUID();
+        insertSubjectData();
+        insertAnalyticsFact("event-late-link", lateSourceActor.toString(), UUID.randomUUID().toString());
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try (Connection eventLock = dataSource.getConnection()) {
+            eventLock.setAutoCommit(false);
+            try (Statement statement = eventLock.createStatement()) {
+                statement.execute("LOCK TABLE " + quoted(PREFIX + "events") + " IN ACCESS EXCLUSIVE MODE");
+            }
+
+            Future<AdminPrivacyExecutionResponse> export = executor.submit(() -> executionService.execute(
+                    PROJECT_ID,
+                    requestId,
+                    new AdminPrivacyExecutionRequest(0L, "customer-service", null)
+            ));
+            assertThat(awaitActorLinkTableLock()).isTrue();
+
+            Future<ActorIdentityLinkResponse> lateLink = executor.submit(() -> actorIdentityLinkService.link(
+                    PROJECT_ID,
+                    new ActorIdentityLinkRequest(
+                            UUID.randomUUID(),
+                            lateSourceActor,
+                            UUID.fromString(SUBJECT_USER_ID),
+                            Instant.parse("2026-08-17T00:00:00Z")
+                    )
+            ));
+            assertThatThrownBy(() -> lateLink.get(300, TimeUnit.MILLISECONDS))
+                    .isInstanceOf(TimeoutException.class);
+
+            eventLock.commit();
+            AdminPrivacyExecutionResponse exportResponse = export.get(5, TimeUnit.SECONDS);
+            assertThat(castRows(exportResponse.exportData().get("events")))
+                    .extracting(row -> row.get("event_id"))
+                    .containsExactly("event-subject");
+            assertThat(lateLink.get(5, TimeUnit.SECONDS).status()).isEqualTo("created");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void deleteAnonymizesDirectActorClosureRemovesAliasesAndSuppressesLateLinks() {
+        String requestId = insertSubmittedRequest("DELETE", "ANALYTICSHUB");
+        insertSubjectData();
+        UUID anonymousActor = UUID.randomUUID();
+        UUID anonymousDevice = UUID.randomUUID();
+        UUID sharedDeviceOtherUser = UUID.randomUUID();
+        insertActorLink(anonymousActor, UUID.fromString(SUBJECT_USER_ID));
+        insertAnalyticsFact("event-anonymous", anonymousActor.toString(), anonymousDevice.toString());
+        insertAnalyticsFact("event-shared-device", sharedDeviceOtherUser.toString(), SUBJECT_DEVICE_ID);
+
+        AdminPrivacyExecutionResponse response = executionService.execute(
+                PROJECT_ID,
+                requestId,
+                new AdminPrivacyExecutionRequest(0L, "customer-service", requestId)
+        );
+
+        assertThat(response.summary()).containsEntry("operation", "ANONYMIZE");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> counts = (Map<String, Object>) response.summary().get("counts");
+        assertThat(counts).containsEntry("actorAliasesRemoved", 1)
+                .containsEntry("canonicalActorSuppressed", true)
+                .containsEntry("eventsAnonymized", 2)
+                .containsEntry("sessionsAnonymized", 2)
+                .containsEntry("trafficMetricsAnonymized", 2);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM " + quoted(PREFIX + "actor_identity_links"), Long.class
+        )).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM " + quoted(PREFIX + "actor_suppressions"), Long.class
+        )).isEqualTo(1L);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT user_id FROM " + quoted(PREFIX + "events") + " WHERE event_id = 'event-shared-device'",
+                String.class
+        )).isEqualTo(sharedDeviceOtherUser.toString());
+
+        ActorIdentityLinkResponse lateLink = actorIdentityLinkService.link(
+                PROJECT_ID,
+                new ActorIdentityLinkRequest(
+                        UUID.randomUUID(),
+                        UUID.randomUUID(),
+                        UUID.fromString(SUBJECT_USER_ID),
+                        Instant.parse("2026-08-17T00:00:00Z")
+                )
+        );
+        assertThat(lateLink.status()).isEqualTo("suppressed");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM " + quoted(PREFIX + "actor_identity_links"), Long.class
+        )).isZero();
+    }
+
+    @Test
     void anonymizationAndWorkOrderAuditRollBackTogether() {
         String requestId = insertSubmittedRequest("DELETE", "ANALYTICSHUB");
         insertSubjectData();
+        insertActorLink(UUID.randomUUID(), UUID.fromString(SUBJECT_USER_ID));
         jdbcTemplate.execute("DROP TABLE " + quoted(PREFIX + "work_order_activities"));
 
         assertThatThrownBy(() -> executionService.execute(
@@ -494,6 +668,12 @@ class PrivacyWorkOrderPostgresIT {
                 "SELECT COUNT(*) FROM " + quoted(PREFIX + "devices") + " WHERE api_key = 'subject-api-key'",
                 Long.class
         )).isEqualTo(1L);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM " + quoted(PREFIX + "actor_identity_links"), Long.class
+        )).isEqualTo(1L);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM " + quoted(PREFIX + "actor_suppressions"), Long.class
+        )).isZero();
         assertThat(adminService.getRequestDetail(PROJECT_ID, requestId).status()).isEqualTo("SUBMITTED");
     }
 
@@ -510,11 +690,36 @@ class PrivacyWorkOrderPostgresIT {
         }
     }
 
+    private boolean awaitActorLinkTableLock() throws InterruptedException {
+        long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadlineNanos) {
+            Boolean held = jdbcTemplate.queryForObject(
+                    "SELECT EXISTS (SELECT 1 FROM pg_locks locks " +
+                            "JOIN pg_class relation ON relation.oid = locks.relation " +
+                            "WHERE relation.relname = ? AND locks.mode = 'ShareRowExclusiveLock' AND locks.granted)",
+                    Boolean.class,
+                    PREFIX + "actor_identity_links"
+            );
+            if (Boolean.TRUE.equals(held)) {
+                return true;
+            }
+            Thread.sleep(10);
+        }
+        return false;
+    }
+
     private String insertSubmittedRequest() {
         return insertSubmittedRequest("EXPORT", "POSTHOG");
     }
 
     private String insertSubmittedRequest(String requestType, String processor) {
+        return insertSubmittedRequest(requestType, processor, SUBJECT_USER_ID, SUBJECT_DEVICE_ID);
+    }
+
+    private String insertSubmittedRequest(String requestType,
+                                          String processor,
+                                          String userId,
+                                          String deviceId) {
         String requestId = UUID.randomUUID().toString();
         jdbcTemplate.update(
                 "INSERT INTO " + quoted(PREFIX + "privacy_requests") +
@@ -522,8 +727,8 @@ class PrivacyWorkOrderPostgresIT {
                         " VALUES (?, ?, ?, ?::uuid, ?, ?, 'APP_SETTINGS', 'SUBMITTED', ?)",
                 requestId,
                 PROJECT_ID,
-                SUBJECT_USER_ID,
-                SUBJECT_DEVICE_ID,
+                userId,
+                deviceId,
                 requestType,
                 processor,
                 "user@example.com"
@@ -571,6 +776,40 @@ class PrivacyWorkOrderPostgresIT {
                 "INSERT INTO " + quoted(PREFIX + "idempotency_keys") +
                         " (project_id, key_hash, request_hash, event_id) VALUES (?, 'key-hash', 'request-hash', 'event-subject')",
                 PROJECT_ID
+        );
+    }
+
+    private void insertActorLink(UUID sourceActorId, UUID canonicalActorId) {
+        jdbcTemplate.update(
+                "INSERT INTO " + quoted(PREFIX + "actor_identity_links") +
+                        " (binding_id, project_id, source_actor_id, canonical_actor_id, linked_at) " +
+                        "VALUES (?::uuid, ?, ?::uuid, ?::uuid, NOW())",
+                UUID.randomUUID().toString(),
+                PROJECT_ID,
+                sourceActorId.toString(),
+                canonicalActorId.toString()
+        );
+    }
+
+    private void insertAnalyticsFact(String eventId, String userId, String deviceId) {
+        UUID sessionId = UUID.randomUUID();
+        jdbcTemplate.update(
+                "INSERT INTO " + quoted(PREFIX + "events") +
+                        " (event_id, device_id, user_id, session_id, event_type, event_timestamp, properties, project_id) " +
+                        "VALUES (?, ?::uuid, ?, ?::uuid, 'feature_used', 1000, '{\"private\":true}'::jsonb, ?)",
+                eventId, deviceId, userId, sessionId.toString(), PROJECT_ID
+        );
+        jdbcTemplate.update(
+                "INSERT INTO " + quoted(PREFIX + "sessions") +
+                        " (session_id, device_id, user_id, session_start_time, device_model, os_version, app_version, project_id) " +
+                        "VALUES (?::uuid, ?::uuid, ?, NOW(), 'Phone', '1.0', '2.0', ?)",
+                sessionId.toString(), deviceId, userId, PROJECT_ID
+        );
+        jdbcTemplate.update(
+                "INSERT INTO " + quoted(PREFIX + "traffic_metrics") +
+                        " (metric_id, device_id, user_id, session_id, metric_type, page_path, referrer, metric_timestamp, metadata, project_id) " +
+                        "VALUES (?, ?::uuid, ?, ?::uuid, 'PAGE_VIEW', '/private', 'https://example.com', 1000, '{}'::jsonb, ?)",
+                "metric-" + eventId, deviceId, userId, sessionId.toString(), PROJECT_ID
         );
     }
 

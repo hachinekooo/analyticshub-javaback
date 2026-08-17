@@ -17,9 +17,12 @@ import javax.sql.DataSource;
 import java.sql.ResultSet;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -95,9 +98,17 @@ public class PrivacyDataExecutionService {
         }
 
         Instant now = Instant.now();
+        // EXPORT 与 DELETE 都在同一个 alias 锁时点解析 closure。这样迟到绑定要么先提交并被
+        // 纳入本次导出，要么在导出完成后提交，不会夹在 closure 与事实查询之间造成漏项。
+        ActorClosure actorClosure = lockAndResolveActorClosure(
+                jdbcTemplate,
+                tables.actorIdentityLinks(),
+                projectId,
+                workOrder.userId()
+        );
         Execution execution = requestType == PrivacyRequestType.EXPORT
-                ? exportData(jdbcTemplate, tables, workOrder, now)
-                : anonymizeData(jdbcTemplate, tables, workOrder, now);
+                ? exportData(jdbcTemplate, tables, workOrder, actorClosure, now)
+                : anonymizeData(jdbcTemplate, tables, workOrder, actorClosure, now);
 
         String summaryJson = toJson(execution.summary(), "executionSummary");
         int updated = jdbcTemplate.update(
@@ -152,17 +163,24 @@ public class PrivacyDataExecutionService {
     private Execution exportData(JdbcTemplate jdbcTemplate,
                                  Tables tables,
                                  StoredRequest workOrder,
+                                 ActorClosure actorClosure,
                                  Instant now) {
         List<Map<String, Object>> devices = queryDevices(jdbcTemplate, tables.devices(), workOrder);
-        List<Map<String, Object>> events = queryEvents(jdbcTemplate, tables.events(), workOrder);
-        List<Map<String, Object>> sessions = querySessions(jdbcTemplate, tables.sessions(), workOrder);
-        List<Map<String, Object>> trafficMetrics = queryTraffic(jdbcTemplate, tables.trafficMetrics(), workOrder);
+        List<Map<String, Object>> events = queryEvents(jdbcTemplate, tables.events(), workOrder, actorClosure);
+        List<Map<String, Object>> sessions = querySessions(jdbcTemplate, tables.sessions(), workOrder, actorClosure);
+        List<Map<String, Object>> trafficMetrics = queryTraffic(
+                jdbcTemplate,
+                tables.trafficMetrics(),
+                workOrder,
+                actorClosure
+        );
 
         Map<String, Object> counts = new LinkedHashMap<>();
         counts.put("devices", devices.size());
         counts.put("events", events.size());
         counts.put("sessions", sessions.size());
         counts.put("trafficMetrics", trafficMetrics.size());
+        counts.put("actorClosure", actorClosure.userIds().size());
 
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("operation", "EXPORT");
@@ -196,6 +214,7 @@ public class PrivacyDataExecutionService {
     private Execution anonymizeData(JdbcTemplate jdbcTemplate,
                                     Tables tables,
                                     StoredRequest workOrder,
+                                    ActorClosure actorClosure,
                                     Instant now) {
         String anonymousUserId = "anon_" + UUID.randomUUID().toString().replace("-", "");
         String anonymousDeviceId = UUID.randomUUID().toString();
@@ -225,15 +244,12 @@ public class PrivacyDataExecutionService {
                         "UPDATE %s i SET event_id = 'anon_' || md5(? || i.event_id) " +
                                 "WHERE i.project_id = ? AND EXISTS (SELECT 1 FROM %s e " +
                                 "WHERE e.project_id = ? AND e.event_id = i.event_id " +
-                                "AND (e.user_id = ? OR e.device_id = ?::uuid))",
+                                "AND e.user_id IN (%s))",
                         tables.idempotencyKeys(),
-                        tables.events()
+                        tables.events(),
+                        placeholders(actorClosure.userIds().size())
                 ),
-                recordSalt,
-                workOrder.projectId(),
-                workOrder.projectId(),
-                workOrder.userId(),
-                workOrder.deviceId()
+                prepend(recordSalt, workOrder.projectId(), workOrder.projectId(), actorClosure.userIds())
         );
 
         int eventsAnonymized = jdbcTemplate.update(
@@ -242,15 +258,11 @@ public class PrivacyDataExecutionService {
                                 "session_id = NULL, properties = '{}'::jsonb, " +
                                 "event_timestamp = (event_timestamp / 86400000) * 86400000, " +
                                 "created_at = date_trunc('day', created_at) " +
-                                "WHERE project_id = ? AND (user_id = ? OR device_id = ?::uuid)",
-                        tables.events()
+                                "WHERE project_id = ? AND user_id IN (%s)",
+                        tables.events(),
+                        placeholders(actorClosure.userIds().size())
                 ),
-                recordSalt,
-                anonymousUserId,
-                anonymousDeviceId,
-                workOrder.projectId(),
-                workOrder.userId(),
-                workOrder.deviceId()
+                prepend(recordSalt, anonymousUserId, anonymousDeviceId, workOrder.projectId(), actorClosure.userIds())
         );
 
         int sessionsAnonymized = jdbcTemplate.update(
@@ -259,15 +271,11 @@ public class PrivacyDataExecutionService {
                                 "device_model = NULL, os_version = NULL, " +
                                 "session_start_time = date_trunc('day', session_start_time), " +
                                 "created_at = date_trunc('day', created_at) " +
-                                "WHERE project_id = ? AND (user_id = ? OR device_id = ?::uuid)",
-                        tables.sessions()
+                                "WHERE project_id = ? AND user_id IN (%s)",
+                        tables.sessions(),
+                        placeholders(actorClosure.userIds().size())
                 ),
-                recordSalt,
-                anonymousUserId,
-                anonymousDeviceId,
-                workOrder.projectId(),
-                workOrder.userId(),
-                workOrder.deviceId()
+                prepend(recordSalt, anonymousUserId, anonymousDeviceId, workOrder.projectId(), actorClosure.userIds())
         );
 
         int trafficMetricsAnonymized = jdbcTemplate.update(
@@ -276,16 +284,14 @@ public class PrivacyDataExecutionService {
                                 "session_id = NULL, page_path = NULL, referrer = NULL, metadata = '{}'::jsonb, " +
                                 "metric_timestamp = (metric_timestamp / 86400000) * 86400000, " +
                                 "created_at = date_trunc('day', created_at) " +
-                                "WHERE project_id = ? AND (user_id = ? OR device_id = ?::uuid)",
-                        tables.trafficMetrics()
+                                "WHERE project_id = ? AND user_id IN (%s)",
+                        tables.trafficMetrics(),
+                        placeholders(actorClosure.userIds().size())
                 ),
-                recordSalt,
-                anonymousUserId,
-                anonymousDeviceId,
-                workOrder.projectId(),
-                workOrder.userId(),
-                workOrder.deviceId()
+                prepend(recordSalt, anonymousUserId, anonymousDeviceId, workOrder.projectId(), actorClosure.userIds())
         );
+
+        AliasRemoval aliasRemoval = suppressAndRemoveAliases(jdbcTemplate, tables, workOrder, actorClosure, now);
 
         Map<String, Object> counts = new LinkedHashMap<>();
         counts.put("deviceCredentialsRevoked", credentialsRevoked);
@@ -293,6 +299,8 @@ public class PrivacyDataExecutionService {
         counts.put("eventsAnonymized", eventsAnonymized);
         counts.put("sessionsAnonymized", sessionsAnonymized);
         counts.put("trafficMetricsAnonymized", trafficMetricsAnonymized);
+        counts.put("actorAliasesRemoved", aliasRemoval.aliasesRemoved());
+        counts.put("canonicalActorSuppressed", aliasRemoval.suppressionStored());
 
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("operation", "ANONYMIZE");
@@ -326,52 +334,181 @@ public class PrivacyDataExecutionService {
 
     private List<Map<String, Object>> queryEvents(JdbcTemplate jdbcTemplate,
                                                   String table,
-                                                  StoredRequest request) {
+                                                  StoredRequest request,
+                                                  ActorClosure actorClosure) {
         return normalizeRows(jdbcTemplate.queryForList(
                 String.format(
                         "SELECT event_id, device_id::text AS device_id, user_id, session_id::text AS session_id, " +
                                 "event_type, event_timestamp, properties::text AS properties_json, created_at FROM %s " +
-                                "WHERE project_id = ? AND (user_id = ? OR device_id = ?::uuid) ORDER BY created_at, id",
-                        table
+                                "WHERE project_id = ? AND user_id IN (%s) ORDER BY created_at, id",
+                        table,
+                        placeholders(actorClosure.userIds().size())
                 ),
-                request.projectId(),
-                request.userId(),
-                request.deviceId()
+                prepend(request.projectId(), actorClosure.userIds())
         ));
     }
 
     private List<Map<String, Object>> querySessions(JdbcTemplate jdbcTemplate,
                                                     String table,
-                                                    StoredRequest request) {
+                                                    StoredRequest request,
+                                                    ActorClosure actorClosure) {
         return normalizeRows(jdbcTemplate.queryForList(
                 String.format(
                         "SELECT session_id::text AS session_id, device_id::text AS device_id, user_id, session_start_time, " +
                                 "session_duration_ms, device_model, os_version, app_version, build_number, screen_count, " +
                                 "event_count, created_at FROM %s WHERE project_id = ? " +
-                                "AND (user_id = ? OR device_id = ?::uuid) ORDER BY created_at, id",
-                        table
+                                "AND user_id IN (%s) ORDER BY created_at, id",
+                        table,
+                        placeholders(actorClosure.userIds().size())
                 ),
-                request.projectId(),
-                request.userId(),
-                request.deviceId()
+                prepend(request.projectId(), actorClosure.userIds())
         ));
     }
 
     private List<Map<String, Object>> queryTraffic(JdbcTemplate jdbcTemplate,
                                                    String table,
-                                                   StoredRequest request) {
+                                                   StoredRequest request,
+                                                   ActorClosure actorClosure) {
         return normalizeRows(jdbcTemplate.queryForList(
                 String.format(
                         "SELECT metric_id, device_id::text AS device_id, user_id, session_id::text AS session_id, " +
                                 "metric_type, page_path, referrer, metric_timestamp, metadata::text AS metadata_json, " +
-                                "created_at FROM %s WHERE project_id = ? AND (user_id = ? OR device_id = ?::uuid) " +
+                                "created_at FROM %s WHERE project_id = ? AND user_id IN (%s) " +
                                 "ORDER BY created_at, id",
-                        table
+                        table,
+                        placeholders(actorClosure.userIds().size())
                 ),
-                request.projectId(),
-                request.userId(),
-                request.deviceId()
+                prepend(request.projectId(), actorClosure.userIds())
         ));
+    }
+
+    /**
+     * 工单先锁住 alias 表，和 actor-link 写入使用同一种表锁。导出以此固定 closure 与事实
+     * 查询的相对顺序；删除还依赖同一锁避免移除 alias 与迟到绑定交错。
+     */
+    private ActorClosure lockAndResolveActorClosure(JdbcTemplate jdbcTemplate,
+                                                    String linkTable,
+                                                    String projectId,
+                                                    String userId) {
+        jdbcTemplate.execute(String.format("LOCK TABLE %s IN SHARE ROW EXCLUSIVE MODE", linkTable));
+        return resolveActorClosure(jdbcTemplate, linkTable, projectId, userId);
+    }
+
+    /**
+     * 先把工单主体的 source actor（若有）解析到 canonical actor，再展开其直接匿名 phase。
+     * 业务约束不允许 alias chain，因此不递归猜测关系。
+     */
+    private ActorClosure resolveActorClosure(JdbcTemplate jdbcTemplate,
+                                             String linkTable,
+                                             String projectId,
+                                             String userId) {
+        LinkedHashSet<String> userIds = new LinkedHashSet<>();
+        userIds.add(userId);
+        Optional<UUID> canonicalActorId = parseUuid(userId);
+        if (canonicalActorId.isEmpty()) {
+            return new ActorClosure(List.copyOf(userIds), Optional.empty());
+        }
+
+        UUID suppliedActorId = canonicalActorId.get();
+        UUID canonical = jdbcTemplate.query(
+                String.format(
+                        "SELECT canonical_actor_id::text FROM %s "
+                                + "WHERE project_id = ? AND source_actor_id = ?::uuid",
+                        linkTable
+                ),
+                ps -> {
+                    ps.setString(1, projectId);
+                    ps.setString(2, suppliedActorId.toString());
+                },
+                resultSet -> resultSet.next()
+                        ? UUID.fromString(resultSet.getString(1))
+                        : suppliedActorId
+        );
+        userIds.add(suppliedActorId.toString());
+        userIds.add(canonical.toString());
+        jdbcTemplate.query(
+                String.format(
+                        "SELECT source_actor_id::text FROM %s "
+                                + "WHERE project_id = ? AND canonical_actor_id = ?::uuid",
+                        linkTable
+                ),
+                (org.springframework.jdbc.core.RowCallbackHandler) resultSet -> userIds.add(resultSet.getString(1)),
+                projectId,
+                canonical.toString()
+        );
+        return new ActorClosure(List.copyOf(userIds), Optional.of(canonical));
+    }
+
+    /**
+     * 删除后先写不可逆摘要，再移除活动 alias；后续 actor-link 会把该摘要识别为终态成功。
+     */
+    private AliasRemoval suppressAndRemoveAliases(JdbcTemplate jdbcTemplate,
+                                                   Tables tables,
+                                                   StoredRequest workOrder,
+                                                   ActorClosure actorClosure,
+                                                   Instant now) {
+        if (actorClosure.canonicalActorId().isEmpty()) {
+            return new AliasRemoval(0, false);
+        }
+
+        UUID canonicalActorId = actorClosure.canonicalActorId().get();
+        int suppressionsInserted = jdbcTemplate.update(
+                String.format(
+                        "INSERT INTO %s (project_id, canonical_actor_sha256, suppressed_at) VALUES (?, ?, ?) "
+                                + "ON CONFLICT (project_id, canonical_actor_sha256) DO NOTHING",
+                        tables.actorIdentitySuppressions()
+                ),
+                workOrder.projectId(),
+                ActorIdentitySuppression.canonicalHash(canonicalActorId),
+                Timestamp.from(now)
+        );
+        int aliasesRemoved = jdbcTemplate.update(
+                String.format(
+                        "DELETE FROM %s WHERE project_id = ? AND canonical_actor_id = ?::uuid",
+                        tables.actorIdentityLinks()
+                ),
+                workOrder.projectId(),
+                canonicalActorId.toString()
+        );
+        return new AliasRemoval(aliasesRemoved, suppressionsInserted == 1);
+    }
+
+    private static Optional<UUID> parseUuid(String value) {
+        try {
+            return Optional.of(UUID.fromString(value));
+        } catch (IllegalArgumentException exception) {
+            return Optional.empty();
+        }
+    }
+
+    private static String placeholders(int size) {
+        if (size < 1) {
+            throw new IllegalArgumentException("actor closure 不能为空");
+        }
+        return String.join(", ", java.util.Collections.nCopies(size, "?"));
+    }
+
+    private static Object[] prepend(Object first, List<String> trailing) {
+        return prepend(new Object[]{first}, trailing);
+    }
+
+    private static Object[] prepend(Object first, Object second, Object third, List<String> trailing) {
+        return prepend(new Object[]{first, second, third}, trailing);
+    }
+
+    private static Object[] prepend(Object first,
+                                    Object second,
+                                    Object third,
+                                    Object fourth,
+                                    List<String> trailing) {
+        return prepend(new Object[]{first, second, third, fourth}, trailing);
+    }
+
+    private static Object[] prepend(Object[] prefix, List<String> trailing) {
+        List<Object> arguments = new ArrayList<>(prefix.length + trailing.size());
+        java.util.Collections.addAll(arguments, prefix);
+        arguments.addAll(trailing);
+        return arguments.toArray();
     }
 
     private List<Map<String, Object>> normalizeRows(List<Map<String, Object>> rows) {
@@ -508,7 +645,9 @@ public class PrivacyDataExecutionService {
                 dataSourceManager.getTableName(projectId, "events"),
                 dataSourceManager.getTableName(projectId, "sessions"),
                 dataSourceManager.getTableName(projectId, "traffic_metrics"),
-                dataSourceManager.getTableName(projectId, "idempotency_keys")
+                dataSourceManager.getTableName(projectId, "idempotency_keys"),
+                dataSourceManager.getTableName(projectId, "actor_identity_links"),
+                dataSourceManager.getTableName(projectId, "actor_suppressions")
         );
     }
 
@@ -585,7 +724,9 @@ public class PrivacyDataExecutionService {
             String events,
             String sessions,
             String trafficMetrics,
-            String idempotencyKeys
+            String idempotencyKeys,
+            String actorIdentityLinks,
+            String actorIdentitySuppressions
     ) {
     }
 
@@ -607,5 +748,11 @@ public class PrivacyDataExecutionService {
             Map<String, Object> exportData,
             String downloadFileName
     ) {
+    }
+
+    private record ActorClosure(List<String> userIds, Optional<UUID> canonicalActorId) {
+    }
+
+    private record AliasRemoval(int aliasesRemoved, boolean suppressionStored) {
     }
 }

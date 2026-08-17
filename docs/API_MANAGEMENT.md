@@ -611,12 +611,12 @@ Content-Type: application/json
 }
 ```
 
-- `EXPORT`：生成当前项目中匹配 `user_id / device_id` 的设备、事件、会话和流量 JSON 快照；设备 API Key、Secret 及历史凭据不会导出。`confirmation` 可省略。
-- `DELETE`：执行内置 anonymization policy（匿名化策略），不物理删除分析事实。必须在 `confirmation` 中输入完整工单号。
+- `EXPORT`：生成当前项目中工单用户及其一跳匿名 actor phase 的事件、会话和流量 JSON 快照；设备只按工单 device ID 导出。设备 API Key、Secret 及历史凭据不会导出。`confirmation` 可省略。
+- `DELETE`：执行内置 anonymization policy（匿名化策略），不物理删除分析事实。会覆盖该用户的一跳匿名 actor phase，撤销仅工单设备的凭据，并移除活动 alias；必须在 `confirmation` 中输入完整工单号。
 - 两种操作都使用 `version` 做 optimistic concurrency（乐观并发控制），并在同一个项目数据库事务中更新工单和追加审计活动。
 - 成功后工单自动变为 `COMPLETED`。`ANALYTICSHUB` 工单不能只通过状态接口直接标记完成。
 
-匿名化策略会替换用户、设备、会话和记录 ID，清空自由 JSON 属性、页面路径和来源，降低时间精度，并撤销原设备凭据。Counter 等聚合统计、隐私工单和不可变活动记录保留。部署方仍需结合实际埋点内容、备份、日志、法定保存期限与适用地区法规评估匿名化效果；AnalyticsHub 的内置策略不构成法律意见，也不自动证明达到任一司法辖区的匿名化标准。
+匿名化策略会替换受影响 actor closure（身份闭包）内的用户、设备、会话和记录 ID，清空自由 JSON 属性、页面路径和来源，降低时间精度，并撤销工单设备凭据。它不会因为同一设备上存在其他用户的事件而扩展处理范围。完成后系统只保留 canonical actor 的 SHA-256 摘要，用于把迟到的 actor-link 确认为终态成功，避免删除后重建关联。Counter 等聚合统计、隐私工单和不可变活动记录保留。部署方仍需结合实际埋点内容、备份、日志、法定保存期限与适用地区法规评估匿名化效果；AnalyticsHub 的内置策略不构成法律意见，也不自动证明达到任一司法辖区的匿名化标准。
 
 #### 4) 更新工单状态（人工回填）
 
