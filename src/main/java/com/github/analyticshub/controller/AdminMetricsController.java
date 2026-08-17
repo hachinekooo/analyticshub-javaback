@@ -1,6 +1,7 @@
 package com.github.analyticshub.controller;
 
 import com.github.analyticshub.common.dto.ApiResponse;
+import com.github.analyticshub.dto.AdminAppVersionDistributionResponse;
 import com.github.analyticshub.dto.AdminMetricsOverviewResponse;
 import com.github.analyticshub.dto.AdminMetricsTopEventsResponse;
 import com.github.analyticshub.dto.AdminMetricsTrendResponse;
@@ -49,6 +50,16 @@ public class AdminMetricsController {
             @RequestParam(value = "aggregation", required = false) String aggregation) {
         return ApiResponse.success(
                 adminMetricsService.getTopEvents(projectId, from, to, limit, aggregation)
+        );
+    }
+
+    @GetMapping("/app-versions")
+    public ApiResponse<AdminAppVersionDistributionResponse> appVersions(
+            @RequestParam("projectId") String projectId,
+            @RequestParam(value = "from", required = false) String from,
+            @RequestParam(value = "to", required = false) String to) {
+        return ApiResponse.success(
+                adminMetricsService.getAppVersionDistribution(projectId, from, to)
         );
     }
 }

@@ -6,5 +6,6 @@ package com.github.analyticshub.dto;
 public record AdminMetricsTrendPoint(
         String time,
         long events,
+        long activeDevices,
         long sessions
 ) {}

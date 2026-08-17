@@ -309,11 +309,13 @@ GET /api/admin/metrics/trends?projectId=your_project&granularity=day
       {
         "time": "2026-01-01",
         "events": 150,
+        "activeDevices": 42,
         "sessions": 50
       },
       {
         "time": "2026-01-02",
         "events": 180,
+        "activeDevices": 48,
         "sessions": 60
       }
     ]
@@ -342,6 +344,37 @@ GET /api/admin/metrics/top-events?projectId=your_project&limit=10&aggregation=se
 
 `aggregation=raw`（默认）按原始 event key 排名；`aggregation=semantic` 会先按项目语义字典执行 many-to-one 聚合，再排名。
 
+#### 活跃 App 版本
+
+```http
+GET /api/admin/metrics/app-versions?projectId=your_project&from=2026-01-01&to=2026-01-31
+```
+
+该接口按活跃设备统计，而不是按账号统计。每台设备只采用所选时间范围内最后发生事件携带的
+`app_version` 与 `build_number`，因此同一设备在周期内升级不会被重复计数。`coverageRate` 表示
+携带可识别版本的活跃设备占比；未携带版本的历史事件归入 `unknown`，不会静默丢弃。
+
+```json
+{
+  "success": true,
+  "data": {
+    "measurement": "latest_occurred_event_per_device",
+    "activeDevices": 120,
+    "versionKnownDevices": 116,
+    "coverageRate": 0.9667,
+    "items": [
+      {
+        "appVersion": "2.4.1",
+        "buildNumber": "241",
+        "activeDevices": 80,
+        "share": 0.6667,
+        "lastObservedAt": "2026-01-30T12:00:00Z"
+      }
+    ]
+  }
+}
+```
+
 #### 漏斗分析
 
 ```http
@@ -364,7 +397,10 @@ GET /api/admin/analytics/retention?projectId=your_project&from=2026-01-01&to=202
 - `days` 支持 0–90、自动去重并升序返回，省略时为 `1,7,30`。
 - D0、D1 等按 UTC calendar day（UTC 自然日）计算，不按“注册后满 24 小时”计算；同一 actor 同一天多次返回只计一次。
 
-上述事件列表、概览、趋势、热门事件、漏斗与留存统一使用服务端 `created_at`（接收时间）做范围和顺序口径，客户端 `eventTimestamp` 作为原始事实返回但不参与 1.0.1 的时间窗口。这样可避免错误客户端时钟污染运营报表；如业务需要离线上报的发生时间分析，应通过后续显式 time-basis contract 扩展，不能在同一报表里隐式混用两种时间。
+上述事件列表、概览、趋势、热门事件、活跃版本、漏斗与留存统一使用 `eventTimestamp`
+（客户端记录的真实发生时间）做范围和顺序口径，使离线积压事件仍归入实际发生周期。服务端
+`created_at` 保留为接收时间，只用于传输延迟、补发和故障诊断，不参与产品运营窗口；两个时间字段
+不得在同一运营指标中隐式混用。会话类指标仍使用独立的 `sessionStartTime`。
 
 ### 8. 流量指标（查询与分析）
 

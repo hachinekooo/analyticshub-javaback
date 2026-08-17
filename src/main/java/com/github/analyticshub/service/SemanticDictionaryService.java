@@ -248,8 +248,8 @@ public class SemanticDictionaryService {
                 String.format(
                         """
                         SELECT event_type, COUNT(*) AS event_count,
-                               MIN(created_at) AS first_seen_at,
-                               MAX(created_at) AS last_seen_at
+                               to_timestamp(MIN(event_timestamp) / 1000.0) AS first_seen_at,
+                               to_timestamp(MAX(event_timestamp) / 1000.0) AS last_seen_at
                           FROM %s
                          WHERE project_id = ?
                          GROUP BY event_type

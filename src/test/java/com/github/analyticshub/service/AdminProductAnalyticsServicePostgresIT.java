@@ -6,7 +6,10 @@ import com.github.analyticshub.config.MultiDataSourceManager;
 import com.github.analyticshub.database.project.ProjectSchemaMigrator;
 import com.github.analyticshub.dto.AdminFunnelGroupResult;
 import com.github.analyticshub.dto.AdminFunnelResponse;
+import com.github.analyticshub.dto.AdminAppVersionDistributionResponse;
+import com.github.analyticshub.dto.AdminEventsResponse;
 import com.github.analyticshub.dto.AdminMetricsOverviewResponse;
+import com.github.analyticshub.dto.AdminMetricsTrendResponse;
 import com.github.analyticshub.dto.AdminRetentionResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -235,6 +238,94 @@ class AdminProductAnalyticsServicePostgresIT {
     }
 
     @Test
+    void operationalReportsUseOccurrenceTimeInsteadOfDelayedUploadTime() {
+        UUID actor = UUID.randomUUID();
+        UUID device = UUID.randomUUID();
+        insertEvent(
+                actor.toString(),
+                device,
+                "offline_open",
+                "2026-01-01T10:00:00Z",
+                "2026-01-03T10:00:00Z",
+                "{\"app_version\":\"1.1.6\",\"build_number\":\"116\"}"
+        );
+
+        AdminMetricsOverviewResponse occurrenceDay = metricsService.getOverview(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        );
+        AdminMetricsOverviewResponse uploadDay = metricsService.getOverview(
+                PROJECT_ID, "2026-01-03T00:00:00Z", "2026-01-04T00:00:00Z"
+        );
+        AdminMetricsTrendResponse trends = metricsService.getTrends(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", "day"
+        );
+        AdminFunnelResponse funnel = service.getFunnel(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                "offline_open,offline_opened_again",
+                null
+        );
+        AdminEventsResponse eventRecords = new AdminEventQueryService(
+                dataSourceManager,
+                JsonMapper.builder().build()
+        ).listEvents(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                1,
+                20,
+                null,
+                null,
+                null
+        );
+
+        assertThat(occurrenceDay.eventsTotal()).isEqualTo(1L);
+        assertThat(occurrenceDay.devicesActive()).isEqualTo(1L);
+        assertThat(uploadDay.eventsTotal()).isZero();
+        assertThat(trends.points()).hasSize(1);
+        assertThat(trends.points().getFirst().events()).isEqualTo(1L);
+        assertThat(trends.points().getFirst().activeDevices()).isEqualTo(1L);
+        assertThat(funnel.groups()).hasSize(1);
+        assertThat(funnel.groups().getFirst().steps().getFirst().users()).isEqualTo(1L);
+        assertThat(eventRecords.items()).extracting(item -> item.eventType())
+                .containsExactly("offline_open");
+    }
+
+    @Test
+    void appVersionDistributionUsesEachActiveDevicesLatestOccurredEvent() {
+        UUID actor = UUID.randomUUID();
+        UUID upgradedDevice = UUID.randomUUID();
+        UUID currentDevice = UUID.randomUUID();
+        UUID unknownDevice = UUID.randomUUID();
+
+        insertEvent(actor.toString(), upgradedDevice, "open", "2026-01-01T01:00:00Z",
+                "{\"app_version\":\"1.1.5\",\"build_number\":\"115\"}");
+        insertEvent(actor.toString(), upgradedDevice, "open", "2026-01-01T02:00:00Z",
+                "{\"app_version\":\"1.1.6\",\"build_number\":\"116\"}");
+        insertEvent(actor.toString(), currentDevice, "open", "2026-01-01T03:00:00Z",
+                "{\"app_version\":\"1.1.6\",\"build_number\":\"117\"}");
+        insertEvent(actor.toString(), unknownDevice, "legacy_open", "2026-01-01T04:00:00Z", null);
+        insertEvent(actor.toString(), UUID.randomUUID(), "outside", "2026-01-03T01:00:00Z",
+                "{\"app_version\":\"9.9.9\",\"build_number\":\"999\"}");
+
+        AdminAppVersionDistributionResponse response = metricsService.getAppVersionDistribution(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        );
+
+        assertThat(response.measurement()).isEqualTo("latest_occurred_event_per_device");
+        assertThat(response.activeDevices()).isEqualTo(3L);
+        assertThat(response.versionKnownDevices()).isEqualTo(2L);
+        assertThat(response.coverageRate()).isEqualTo(0.6667d);
+        assertThat(response.items()).extracting(item -> item.appVersion() + ":" + item.buildNumber())
+                .containsExactly("1.1.6:117", "1.1.6:116", "unknown:unknown");
+        assertThat(response.items()).extracting(item -> item.activeDevices())
+                .containsExactly(1L, 1L, 1L);
+        assertThat(response.items()).extracting(item -> item.share())
+                .containsExactly(0.3333d, 0.3333d, 0.3333d);
+    }
+
+    @Test
     void aliasesUppercaseCanonicalUuidFormsInEveryProductReport() {
         UUID anonymousActor = UUID.randomUUID();
         UUID cloudActor = UUID.randomUUID();
@@ -386,7 +477,19 @@ class AdminProductAnalyticsServicePostgresIT {
             String createdAt,
             String properties
     ) {
-        Instant instant = Instant.parse(createdAt);
+        insertEvent(userId, deviceId, eventType, createdAt, createdAt, properties);
+    }
+
+    private void insertEvent(
+            String userId,
+            UUID deviceId,
+            String eventType,
+            String occurredAt,
+            String receivedAt,
+            String properties
+    ) {
+        Instant occurrence = Instant.parse(occurredAt);
+        Instant received = Instant.parse(receivedAt);
         jdbcTemplate.update(
                 "INSERT INTO " + quoted(PREFIX + "events") + " "
                         + "(event_id, device_id, user_id, event_type, event_timestamp, properties, project_id, created_at) "
@@ -395,10 +498,10 @@ class AdminProductAnalyticsServicePostgresIT {
                 deviceId.toString(),
                 userId,
                 eventType,
-                instant.toEpochMilli(),
+                occurrence.toEpochMilli(),
                 properties,
                 PROJECT_ID,
-                Timestamp.from(instant)
+                Timestamp.from(received)
         );
     }
 

@@ -11,7 +11,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.sql.DataSource;
-import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -46,11 +45,13 @@ public class AdminEventQueryService {
             throw new IllegalArgumentException("deviceId 格式无效");
         }
 
-        StringBuilder where = new StringBuilder(" WHERE project_id = ? AND created_at >= ? AND created_at < ? ");
+        StringBuilder where = new StringBuilder(
+                " WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ? "
+        );
         List<Object> args = new ArrayList<>();
         args.add(normalizedProjectId);
-        args.add(Timestamp.from(range.start()));
-        args.add(Timestamp.from(range.end()));
+        args.add(range.start().toEpochMilli());
+        args.add(range.end().toEpochMilli());
 
         if (eventType != null && !eventType.isBlank()) {
             where.append(" AND event_type = ? ");
@@ -71,7 +72,7 @@ public class AdminEventQueryService {
 
         String listSql = String.format(
                 "SELECT event_id, event_type, event_timestamp, created_at, device_id, user_id, session_id, properties " +
-                        "FROM %s %s ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                        "FROM %s %s ORDER BY event_timestamp DESC, id DESC LIMIT ? OFFSET ?",
                 eventsTable,
                 where
         );

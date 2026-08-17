@@ -13,7 +13,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.sql.DataSource;
-import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -301,16 +300,16 @@ public class AdminProductAnalyticsService {
         }
         String placeholders = String.join(",", eventTypes.stream().map(ignored -> "?").toList());
         String sql = String.format(
-                "SELECT event_type, created_at, user_id, device_id, properties FROM %s " +
-                        "WHERE project_id = ? AND created_at >= ? AND created_at < ? " +
-                        "AND event_type IN (%s) ORDER BY created_at ASC, id ASC",
+                "SELECT event_type, event_timestamp, user_id, device_id, properties FROM %s " +
+                        "WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ? " +
+                        "AND event_type IN (%s) ORDER BY event_timestamp ASC, id ASC",
                 eventsTable,
                 placeholders
         );
         List<Object> args = new ArrayList<>();
         args.add(projectId);
-        args.add(Timestamp.from(start));
-        args.add(Timestamp.from(end));
+        args.add(start.toEpochMilli());
+        args.add(end.toEpochMilli());
         args.addAll(eventTypes);
 
         return jdbcTemplate.query(sql, (rs, rowNum) -> {
@@ -328,7 +327,7 @@ public class AdminProductAnalyticsService {
             String actorId = userId == null || userId.isBlank() ? deviceId : userId;
             return new EventRow(
                     rs.getString("event_type"),
-                    rs.getTimestamp("created_at").toInstant(),
+                    Instant.ofEpochMilli(rs.getLong("event_timestamp")),
                     actorId == null ? "" : actorId,
                     propertiesNode
             );

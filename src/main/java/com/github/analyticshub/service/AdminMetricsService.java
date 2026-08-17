@@ -1,6 +1,8 @@
 package com.github.analyticshub.service;
 
 import com.github.analyticshub.config.MultiDataSourceManager;
+import com.github.analyticshub.dto.AdminAppVersionDistributionItem;
+import com.github.analyticshub.dto.AdminAppVersionDistributionResponse;
 import com.github.analyticshub.dto.AdminMetricsOverviewResponse;
 import com.github.analyticshub.dto.AdminMetricsTopEvent;
 import com.github.analyticshub.dto.AdminMetricsTopEventsResponse;
@@ -31,6 +33,8 @@ import java.util.Set;
 public class AdminMetricsService {
 
     private static final System.Logger log = System.getLogger(AdminMetricsService.class.getName());
+    private static final String APP_VERSION_MEASUREMENT = "latest_occurred_event_per_device";
+    private static final String UNKNOWN_VERSION = "unknown";
 
     private final MultiDataSourceManager dataSourceManager;
     private final SemanticDictionaryService semanticDictionaryService;
@@ -59,6 +63,8 @@ public class AdminMetricsService {
 
         Timestamp start = Timestamp.from(range.start());
         Timestamp end = Timestamp.from(range.end());
+        long eventStart = range.start().toEpochMilli();
+        long eventEnd = range.end().toEpochMilli();
 
         long devicesTotal = queryCount(jdbcTemplate,
                 "SELECT COUNT(*) FROM %s WHERE project_id = ?",
@@ -66,23 +72,24 @@ public class AdminMetricsService {
         // 活跃设备由区间内真实事件决定；注册/凭据轮换时间不能代替使用行为。
         long devicesActive = queryCount(jdbcTemplate,
                 "SELECT COUNT(DISTINCT device_id) FROM %s "
-                        + "WHERE project_id = ? AND created_at >= ? AND created_at < ?",
-                eventsTable, normalizedProjectId, start, end);
+                        + "WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ?",
+                eventsTable, normalizedProjectId, eventStart, eventEnd);
         long sessionsTotal = queryCount(jdbcTemplate,
                 "SELECT COUNT(*) FROM %s WHERE project_id = ? AND session_start_time >= ? AND session_start_time < ?",
                 sessionsTable, normalizedProjectId, start, end);
         long eventsTotal = queryCount(jdbcTemplate,
-                "SELECT COUNT(*) FROM %s WHERE project_id = ? AND created_at >= ? AND created_at < ?",
-                eventsTable, normalizedProjectId, start, end);
+                "SELECT COUNT(*) FROM %s WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ?",
+                eventsTable, normalizedProjectId, eventStart, eventEnd);
         List<String> activeActorIds = jdbcTemplate.query(
                 String.format(
-                        "SELECT DISTINCT user_id FROM %s WHERE project_id = ? AND created_at >= ? AND created_at < ?",
+                        "SELECT DISTINCT user_id FROM %s "
+                                + "WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ?",
                         eventsTable
                 ),
                 (resultSet, rowNumber) -> resultSet.getString(1),
                 normalizedProjectId,
-                start,
-                end
+                eventStart,
+                eventEnd
         );
         long usersActive = actorIdentityResolver.resolveCanonicalActors(
                         jdbcTemplate,
@@ -127,15 +134,24 @@ public class AdminMetricsService {
 
         Timestamp start = Timestamp.from(range.start());
         Timestamp end = Timestamp.from(range.end());
+        long eventStart = range.start().toEpochMilli();
+        long eventEnd = range.end().toEpochMilli();
 
         Map<Instant, Long> eventBuckets = queryBucketCounts(jdbcTemplate,
-                "SELECT date_trunc(?, created_at) AS bucket, COUNT(*) AS total FROM %s " +
-                        "WHERE project_id = ? AND created_at >= ? AND created_at < ? " +
+                "SELECT date_trunc(?, to_timestamp(event_timestamp / 1000.0), 'UTC') AS bucket, "
+                        + "COUNT(*) AS total FROM %s " +
+                        "WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ? " +
                         "GROUP BY bucket ORDER BY bucket",
-                eventsTable, bucket.value(), normalizedProjectId, start, end);
+                eventsTable, bucket.value(), normalizedProjectId, eventStart, eventEnd);
+        Map<Instant, Long> activeDeviceBuckets = queryBucketCounts(jdbcTemplate,
+                "SELECT date_trunc(?, to_timestamp(event_timestamp / 1000.0), 'UTC') AS bucket, "
+                        + "COUNT(DISTINCT device_id) AS total FROM %s "
+                        + "WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ? "
+                        + "GROUP BY bucket ORDER BY bucket",
+                eventsTable, bucket.value(), normalizedProjectId, eventStart, eventEnd);
 
         Map<Instant, Long> sessionBuckets = queryBucketCounts(jdbcTemplate,
-                "SELECT date_trunc(?, session_start_time) AS bucket, COUNT(*) AS total FROM %s " +
+                "SELECT date_trunc(?, session_start_time, 'UTC') AS bucket, COUNT(*) AS total FROM %s " +
                         "WHERE project_id = ? AND session_start_time >= ? AND session_start_time < ? " +
                         "GROUP BY bucket ORDER BY bucket",
                 sessionsTable, bucket.value(), normalizedProjectId, start, end);
@@ -146,8 +162,9 @@ public class AdminMetricsService {
         while (cursor.isBefore(endCursor)) {
             Instant key = cursor.toInstant();
             long events = eventBuckets.getOrDefault(key, 0L);
+            long activeDevices = activeDeviceBuckets.getOrDefault(key, 0L);
             long sessions = sessionBuckets.getOrDefault(key, 0L);
-            points.add(new AdminMetricsTrendPoint(key.toString(), events, sessions));
+            points.add(new AdminMetricsTrendPoint(key.toString(), events, activeDevices, sessions));
             cursor = bucket.next(cursor);
         }
 
@@ -173,22 +190,22 @@ public class AdminMetricsService {
         JdbcTemplate jdbcTemplate = new JdbcTemplate(context.dataSource());
 
         String eventsTable = dataSourceManager.getTableName(normalizedProjectId, "events");
-        Timestamp start = Timestamp.from(range.start());
-        Timestamp end = Timestamp.from(range.end());
+        long eventStart = range.start().toEpochMilli();
+        long eventEnd = range.end().toEpochMilli();
 
         int topN = (limit == null || limit < 1) ? 10 : Math.min(limit, 50);
         String aggregationMode = normalizeTopEventsAggregation(aggregation);
 
         String sql = String.format(
                 "SELECT event_type, COUNT(*) AS total FROM %s " +
-                        "WHERE project_id = ? AND created_at >= ? AND created_at < ? " +
+                        "WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ? " +
                         "GROUP BY event_type",
                 eventsTable
         );
 
         List<AdminMetricsTopEvent> rawItems = jdbcTemplate.query(sql, (rs, rowNum) ->
                         new AdminMetricsTopEvent(rs.getString("event_type"), rs.getLong("total")),
-                normalizedProjectId, start, end
+                normalizedProjectId, eventStart, eventEnd
         );
         List<AdminMetricsTopEvent> items;
         if ("semantic".equals(aggregationMode)) {
@@ -221,6 +238,97 @@ public class AdminMetricsService {
                 range.end().toString(),
                 items
         );
+    }
+
+    /**
+     * 返回活跃设备版本分布。一个账号可能同时使用多个版本，因此这里按设备而不是 actor 归组。
+     * 每台设备只采用所选范围内最后发生的事件，升级前后的版本不会被重复计数。
+     */
+    public AdminAppVersionDistributionResponse getAppVersionDistribution(
+            String projectId,
+            String from,
+            String to
+    ) {
+        String normalizedProjectId = normalizeProjectId(projectId);
+        AdminQueryUtils.Range range = AdminQueryUtils.resolveRange(from, to);
+        ProjectContext context = requireProject(normalizedProjectId);
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(context.dataSource());
+        String eventsTable = dataSourceManager.getTableName(normalizedProjectId, "events");
+
+        String sql = """
+                WITH latest AS (
+                    SELECT device_id,
+                           event_timestamp,
+                           COALESCE(NULLIF(LEFT(BTRIM(properties ->> 'app_version'), 50), ''), 'unknown')
+                               AS app_version,
+                           COALESCE(NULLIF(LEFT(BTRIM(properties ->> 'build_number'), 50), ''), 'unknown')
+                               AS build_number,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY device_id
+                               ORDER BY event_timestamp DESC, id DESC
+                           ) AS row_number
+                      FROM %s
+                     WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ?
+                ), grouped AS (
+                    SELECT app_version,
+                           CASE WHEN app_version = 'unknown' THEN 'unknown' ELSE build_number END AS build_number,
+                           COUNT(*) AS active_devices,
+                           MAX(event_timestamp) AS last_observed_at
+                      FROM latest
+                     WHERE row_number = 1
+                     GROUP BY app_version,
+                              CASE WHEN app_version = 'unknown' THEN 'unknown' ELSE build_number END
+                )
+                SELECT app_version, build_number, active_devices, last_observed_at
+                  FROM grouped
+                 ORDER BY CASE WHEN app_version = 'unknown' THEN 1 ELSE 0 END,
+                          active_devices DESC,
+                          last_observed_at DESC,
+                          app_version DESC,
+                          build_number ASC
+                """.formatted(eventsTable);
+
+        List<VersionGroup> groups = jdbcTemplate.query(
+                sql,
+                (resultSet, rowNumber) -> new VersionGroup(
+                        resultSet.getString("app_version"),
+                        resultSet.getString("build_number"),
+                        resultSet.getLong("active_devices"),
+                        resultSet.getLong("last_observed_at")
+                ),
+                normalizedProjectId,
+                range.start().toEpochMilli(),
+                range.end().toEpochMilli()
+        );
+        long activeDevices = groups.stream().mapToLong(VersionGroup::activeDevices).sum();
+        long versionKnownDevices = groups.stream()
+                .filter(group -> !UNKNOWN_VERSION.equals(group.appVersion()))
+                .mapToLong(VersionGroup::activeDevices)
+                .sum();
+        List<AdminAppVersionDistributionItem> items = groups.stream()
+                .map(group -> new AdminAppVersionDistributionItem(
+                        group.appVersion(),
+                        group.buildNumber(),
+                        group.activeDevices(),
+                        activeDevices == 0 ? 0d : roundRatio((double) group.activeDevices() / activeDevices),
+                        Instant.ofEpochMilli(group.lastObservedAt()).toString()
+                ))
+                .toList();
+
+        return new AdminAppVersionDistributionResponse(
+                normalizedProjectId,
+                range.start().toString(),
+                range.end().toString(),
+                APP_VERSION_MEASUREMENT,
+                activeDevices,
+                versionKnownDevices,
+                activeDevices == 0 ? 0d : roundRatio((double) versionKnownDevices / activeDevices),
+                items
+        );
+    }
+
+    private static double roundRatio(double value) {
+        return Math.round(value * 10_000d) / 10_000d;
     }
 
     private static String normalizeTopEventsAggregation(String aggregation) {
@@ -304,6 +412,13 @@ public class AdminMetricsService {
     }
 
     private record ProjectContext(MultiDataSourceManager.ProjectConfig config, DataSource dataSource) {}
+
+    private record VersionGroup(
+            String appVersion,
+            String buildNumber,
+            long activeDevices,
+            long lastObservedAt
+    ) {}
 
     private static String normalizeProjectId(String projectId) {
         if (projectId == null) {
