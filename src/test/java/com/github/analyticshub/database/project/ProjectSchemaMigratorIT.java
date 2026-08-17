@@ -70,8 +70,8 @@ class ProjectSchemaMigratorIT {
         ProjectSchemaMigrationResult result = migrator.migrate(dataSource, schema, "analytics_");
 
         assertThat(result.initialVersion()).isNull();
-        assertThat(result.currentVersion()).isEqualTo("8");
-        assertThat(result.migrationsExecuted()).isEqualTo(8);
+        assertThat(result.currentVersion()).isEqualTo("7");
+        assertThat(result.migrationsExecuted()).isEqualTo(7);
         assertThat(result.legacyBaselineApplied()).isFalse();
         assertThat(result.historyTable()).isEqualTo("analytics_flyway_history");
         assertThat(result.tables()).containsExactly(
@@ -94,7 +94,7 @@ class ProjectSchemaMigratorIT {
 
         ProjectSchemaStatus status = migrator.inspect(dataSource, schema, "analytics_");
         assertThat(status.current()).isTrue();
-        assertThat(status.currentVersion()).isEqualTo("8");
+        assertThat(status.currentVersion()).isEqualTo("7");
         assertThat(status.pendingMigrations()).isZero();
         assertThat(status.migrationHistoryValid()).isTrue();
         assertThat(status.allTablesExist()).isTrue();
@@ -108,7 +108,7 @@ class ProjectSchemaMigratorIT {
 
         assertThat(status.current()).isFalse();
         assertThat(status.currentVersion()).isNull();
-        assertThat(status.pendingMigrations()).isEqualTo(8);
+        assertThat(status.pendingMigrations()).isEqualTo(7);
         assertThat(status.historyTableExists()).isFalse();
         assertThat(status.migrationHistoryValid()).isFalse();
         assertThat(status.tables().values()).allMatch(exists -> !exists);
@@ -173,8 +173,8 @@ class ProjectSchemaMigratorIT {
         ProjectSchemaMigrationResult result = migrator.migrate(dataSource, schema, prefix);
 
         assertThat(result.initialVersion()).isEqualTo("1");
-        assertThat(result.currentVersion()).isEqualTo("8");
-        assertThat(result.migrationsExecuted()).isEqualTo(7);
+        assertThat(result.currentVersion()).isEqualTo("7");
+        assertThat(result.migrationsExecuted()).isEqualTo(6);
         assertThat(result.legacyBaselineApplied()).isTrue();
         assertThat(tableExists(schema, prefix + "idempotency_keys")).isTrue();
         assertThat(jdbcTemplate.queryForObject(
@@ -182,7 +182,7 @@ class ProjectSchemaMigratorIT {
                 Integer.class,
                 "event-before-upgrade"
         )).isEqualTo(1);
-        assertThat(historyVersions(schema, result.historyTable())).containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
+        assertThat(historyVersions(schema, result.historyTable())).containsExactly("1", "2", "3", "4", "5", "6", "7");
     }
 
     @Test
@@ -192,11 +192,11 @@ class ProjectSchemaMigratorIT {
 
         ProjectSchemaMigrationResult rerun = migrator.migrate(dataSource, schema, "repeat_");
 
-        assertThat(rerun.initialVersion()).isEqualTo("8");
-        assertThat(rerun.currentVersion()).isEqualTo("8");
+        assertThat(rerun.initialVersion()).isEqualTo("7");
+        assertThat(rerun.currentVersion()).isEqualTo("7");
         assertThat(rerun.migrationsExecuted()).isZero();
         assertThat(rerun.legacyBaselineApplied()).isFalse();
-        assertThat(historyVersions(schema, rerun.historyTable())).containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
+        assertThat(historyVersions(schema, rerun.historyTable())).containsExactly("1", "2", "3", "4", "5", "6", "7");
     }
 
     @Test
@@ -206,8 +206,8 @@ class ProjectSchemaMigratorIT {
         ProjectSchemaMigrationResult alpha = migrator.migrate(dataSource, schema, "alpha_");
         ProjectSchemaMigrationResult beta = migrator.migrate(dataSource, schema, "beta_");
 
-        assertThat(alpha.migrationsExecuted()).isEqualTo(8);
-        assertThat(beta.migrationsExecuted()).isEqualTo(8);
+        assertThat(alpha.migrationsExecuted()).isEqualTo(7);
+        assertThat(beta.migrationsExecuted()).isEqualTo(7);
         assertThat(alpha.historyTable()).isEqualTo("alpha_flyway_history");
         assertThat(beta.historyTable()).isEqualTo("beta_flyway_history");
         assertAllTablesExist(schema, alpha.tables());
@@ -231,11 +231,11 @@ class ProjectSchemaMigratorIT {
                 "concurrent_"
         );
 
-        assertThat(results).allSatisfy(result -> assertThat(result.currentVersion()).isEqualTo("8"));
+        assertThat(results).allSatisfy(result -> assertThat(result.currentVersion()).isEqualTo("7"));
         assertThat(results).extracting(ProjectSchemaMigrationResult::migrationsExecuted)
-                .containsExactlyInAnyOrder(0, 8);
+                .containsExactlyInAnyOrder(0, 7);
         assertThat(historyVersions(schema, "concurrent_flyway_history"))
-                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
+                .containsExactly("1", "2", "3", "4", "5", "6", "7");
     }
 
     @Test
@@ -247,11 +247,11 @@ class ProjectSchemaMigratorIT {
         List<ProjectSchemaMigrationResult> results = migrateConcurrently(schema, prefix, prefix);
 
         assertThat(results).extracting(ProjectSchemaMigrationResult::migrationsExecuted)
-                .containsExactlyInAnyOrder(0, 7);
+                .containsExactlyInAnyOrder(0, 6);
         assertThat(results).extracting(ProjectSchemaMigrationResult::legacyBaselineApplied)
                 .containsExactlyInAnyOrder(false, true);
         assertThat(historyVersions(schema, prefix + "flyway_history"))
-                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
+                .containsExactly("1", "2", "3", "4", "5", "6", "7");
     }
 
     @Test
@@ -264,14 +264,14 @@ class ProjectSchemaMigratorIT {
         assertThat(results).extracting(ProjectSchemaMigrationResult::tablePrefix)
                 .containsExactlyInAnyOrder("left_", "right_");
         assertThat(results).allSatisfy(result -> {
-            assertThat(result.currentVersion()).isEqualTo("8");
+            assertThat(result.currentVersion()).isEqualTo("7");
             assertAllTablesExist(schema, result.tables());
         });
         assertThat(historyVersions(schema, "left_flyway_history"))
-                .endsWith("1", "2", "3", "4", "5", "6", "7", "8")
+                .endsWith("1", "2", "3", "4", "5", "6", "7")
                 .doesNotHaveDuplicates();
         assertThat(historyVersions(schema, "right_flyway_history"))
-                .endsWith("1", "2", "3", "4", "5", "6", "7", "8")
+                .endsWith("1", "2", "3", "4", "5", "6", "7")
                 .doesNotHaveDuplicates();
     }
 
