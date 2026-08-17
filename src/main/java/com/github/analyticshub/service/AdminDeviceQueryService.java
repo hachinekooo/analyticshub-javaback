@@ -14,7 +14,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 管理端设备查询服务
+ * 管理端设备注册记录查询服务。
+ *
+ * <p>这里返回注册时保存的设备元数据。{@code created_at} 与 {@code app_version}
+ * 分别表示当前设备记录的创建时间和注册版本快照，不代表 App Store 安装时间或当前活跃版本。</p>
  */
 @Service
 public class AdminDeviceQueryService {

@@ -33,6 +33,10 @@ public class Device {
     @TableField("os_version")
     private String osVersion;
 
+    /**
+     * 当前设备记录首次创建时的客户端版本快照。
+     * 正常凭据轮换不会刷新该值，不能据此判断当前活跃版本或 App Store 安装增量。
+     */
     @TableField("app_version")
     private String appVersion;
 

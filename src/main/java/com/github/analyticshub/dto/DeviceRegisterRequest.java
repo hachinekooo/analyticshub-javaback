@@ -13,5 +13,6 @@ public record DeviceRegisterRequest(
     String deviceId,
     String deviceModel,
     String osVersion,
+    /** 当前设备记录首次创建时的客户端版本；不是安装版本或持续刷新的活跃版本。 */
     String appVersion
 ) {}

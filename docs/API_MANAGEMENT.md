@@ -166,6 +166,13 @@ GET /api/admin/devices?projectId=your_project&page=1&pageSize=20
 }
 ```
 
+设备列表展示的是 Analytics credential registration（分析凭据注册）记录，字段口径如下：
+
+- `createdAt`：当前 device record 的创建时间，不等同于 App 安装或首次打开时间；
+- `appVersion`：创建该记录时的客户端版本快照，正常升级和凭据轮换不会持续刷新；
+- 按 `createdAt + appVersion` 汇总可观察“哪个版本产生了多少分析注册记录”，适合排查版本发布后的 SDK 接入、凭据注册异常和同意分析用户的注册批次；它不是下载、新增安装或完整用户增长；
+- “所选周期内活跃设备主要使用什么版本”应查询“活跃 App 版本”接口；下载量、重新下载和商店转化应以 App Store Connect 报告为准。
+
 #### 管理员重置设备凭据
 
 当设备已经丢失本地凭据、无法通过 HMAC rotate endpoint 自助轮换时，可以由管理员执行受控恢复：
@@ -353,6 +360,7 @@ GET /api/admin/metrics/app-versions?projectId=your_project&from=2026-01-01&to=20
 该接口按活跃设备统计，而不是按账号统计。每台设备只采用所选时间范围内最后发生事件携带的
 `app_version` 与 `build_number`，因此同一设备在周期内升级不会被重复计数。`coverageRate` 表示
 携带可识别版本的活跃设备占比；未携带版本的历史事件归入 `unknown`，不会静默丢弃。
+这里的“活跃”要求设备在周期内实际产生事件且用户允许分析；升级后从未打开 App、尚未同步离线队列或未同意分析的设备不会被猜测计入。
 
 ```json
 {

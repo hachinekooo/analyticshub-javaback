@@ -55,6 +55,8 @@ X-Project-ID: your-project-id
 
 公共注册不会覆盖同一项目下已存在 device UUID 的凭据。重复注册返回 HTTP 409 `DEVICE_ALREADY_REGISTERED`；客户端必须安全持久化首次响应，不能在遇到任意 HTTP 401 时直接删除凭据并重新注册。设备已经丢失全部凭据时，应由管理员调用管理端 credential reset endpoint（凭据重置接口），而不是恢复公开覆盖注册。
 
+`appVersion` 是当前 device record（设备记录）首次创建时的客户端版本快照。应用升级后的正常凭据轮换不会刷新它，因此它可用于排查某个客户端版本的注册接入与凭据兼容问题，但不能解释为 App Store 安装版本、下载增量或当前仍在使用的版本。接入方应继续在每个业务事件的 properties 中携带真实 `app_version` 与 `build_number`；管理端“活跃 App 版本”据此计算所选周期内的最新观测版本。
+
 #### 已认证凭据轮换
 
 ```http
