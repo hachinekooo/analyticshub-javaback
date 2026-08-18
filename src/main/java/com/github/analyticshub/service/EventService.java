@@ -144,7 +144,7 @@ public class EventService {
     ) {
         String existingEventId = reserveIdempotencyKey(
                 jdbcTemplate,
-                context.getProjectId(),
+                context,
                 eventsTable,
                 idempotencyTable,
                 event
@@ -186,7 +186,7 @@ public class EventService {
      */
     private String reserveIdempotencyKey(
             JdbcTemplate jdbcTemplate,
-            String projectId,
+            RequestContext context,
             String eventsTable,
             String idempotencyTable,
             PreparedEvent event
@@ -195,7 +195,14 @@ public class EventService {
             return null;
         }
 
-        String keyHash = CryptoUtils.sha256Hex(event.idempotencyKey());
+        String projectId = context.getProjectId();
+        String actorId = context.getUserId() == null || context.getUserId().isBlank()
+                ? context.getDevice().getDeviceId().toString()
+                : context.getUserId();
+        // 幂等约束描述的是“同一 actor 的同一业务事件”，不能把客户端键提升为 Project 全局唯一。
+        // eventType 同时进入摘要，避免通用采集方误把同一个原始键复用于不同事件时互相吞并。
+        String scopedKey = actorId + "\0" + event.eventType() + "\0" + event.idempotencyKey();
+        String keyHash = CryptoUtils.sha256Hex(scopedKey);
         String insertSql = String.format(
                 "INSERT INTO %s (project_id, key_hash, request_hash, event_id) VALUES (?, ?, ?, ?) " +
                         "ON CONFLICT (project_id, key_hash) DO NOTHING",
@@ -231,14 +238,6 @@ public class EventService {
         }
 
         IdempotencyReservation reservation = reservations.getFirst();
-        if (!event.requestHash().equals(reservation.requestHash())) {
-            throw new BusinessException(
-                    "IDEMPOTENCY_KEY_REUSED",
-                    "同一幂等键不能用于不同的事件内容",
-                    HttpStatus.CONFLICT
-            );
-        }
-
         String existingEventId = reservation.eventId();
         String existsSql = String.format("SELECT EXISTS (SELECT 1 FROM %s WHERE event_id = ?)", eventsTable);
         Boolean eventExists = jdbcTemplate.queryForObject(existsSql, Boolean.class, existingEventId);

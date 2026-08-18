@@ -157,6 +157,28 @@ class DashboardDefinitionValidatorTest {
     }
 
     @Test
+    void acceptsFunnelJourneyCorrelationProperty() throws Exception {
+        var definition = objectMapper.readTree("""
+                {
+                  "schemaVersion": 1,
+                  "widgets": [{
+                    "id": "paywall-funnel",
+                    "type": "core.productFunnel",
+                    "layout": {"x": 0, "y": 0, "w": 12, "h": 4},
+                    "config": {
+                      "steps": ["paywall_viewed", "purchase_succeeded"],
+                      "groupBy": "entry_point",
+                      "journeyKey": "paywall_flow_id"
+                    }
+                  }]
+                }
+                """);
+
+        assertThatCode(() -> validator.validate(1, definition))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
     void rejectsDuplicateConfigValuesAndImpossibleMinimumLayout() throws Exception {
         var duplicateSteps = objectMapper.readTree("""
                 {

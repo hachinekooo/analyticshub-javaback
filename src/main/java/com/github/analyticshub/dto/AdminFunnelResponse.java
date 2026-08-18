@@ -8,6 +8,8 @@ public record AdminFunnelResponse(
         String rangeEnd,
         List<String> steps,
         String groupBy,
+        String journeyKey,
+        String countingUnit,
         String attributionModel,
         List<AdminFunnelGroupResult> groups
 ) {}

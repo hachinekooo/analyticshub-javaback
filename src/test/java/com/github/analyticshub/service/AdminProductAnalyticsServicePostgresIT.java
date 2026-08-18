@@ -150,6 +150,51 @@ class AdminProductAnalyticsServicePostgresIT {
     }
 
     @Test
+    void funnelCanCountMultiplePaywallJourneysFromTheSameActor() {
+        UUID actor = UUID.randomUUID();
+        insertEvent(actor, "paywall_prompt_viewed", "2026-01-01T01:00:00Z",
+                "{\"paywall_flow_id\":\"flow-1\",\"entry_point\":\"styling_effects\"}");
+        insertEvent(actor, "paywall_prompt_action_selected", "2026-01-01T01:01:00Z",
+                "{\"paywall_flow_id\":\"flow-1\",\"prompt_action\":\"primary_upgrade\"}");
+        insertEvent(actor, "purchase_succeeded", "2026-01-01T01:02:00Z",
+                "{\"paywall_flow_id\":\"flow-1\"}");
+
+        insertEvent(actor, "paywall_prompt_viewed", "2026-01-01T02:00:00Z",
+                "{\"paywall_flow_id\":\"flow-2\",\"entry_point\":\"sticker_panel\"}");
+        insertEvent(actor, "paywall_prompt_action_selected", "2026-01-01T02:01:00Z",
+                "{\"paywall_flow_id\":\"flow-2\",\"prompt_action\":\"primary_upgrade\"}");
+
+        // 客户端 flow ID 不是全局身份；另一 actor 使用相同值仍是一条独立旅程。
+        UUID otherActor = UUID.randomUUID();
+        insertEvent(otherActor, "paywall_prompt_viewed", "2026-01-01T03:00:00Z",
+                "{\"paywall_flow_id\":\"flow-1\",\"entry_point\":\"styling_effects\"}");
+        insertEvent(otherActor, "paywall_prompt_action_selected", "2026-01-01T03:01:00Z",
+                "{\"paywall_flow_id\":\"flow-1\",\"prompt_action\":\"primary_upgrade\"}");
+
+        // 缺少 journey key 的噪声事件不能串入任一付费旅程。
+        insertEvent(actor, "purchase_succeeded", "2026-01-01T02:02:00Z", null);
+
+        AdminFunnelResponse response = service.getFunnel(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                "paywall_prompt_viewed,paywall_prompt_action_selected,purchase_succeeded",
+                "entry_point",
+                "paywall_flow_id"
+        );
+
+        assertThat(response.countingUnit()).isEqualTo("journeys");
+        assertThat(response.journeyKey()).isEqualTo("paywall_flow_id");
+        assertThat(response.attributionModel()).isEqualTo("first_touch_journey");
+        assertThat(response.groups()).extracting(AdminFunnelGroupResult::groupValue)
+                .containsExactly("sticker_panel", "styling_effects");
+        assertThat(response.groups().getFirst().steps()).extracting(step -> step.users())
+                .containsExactly(1L, 1L, 0L);
+        assertThat(response.groups().get(1).steps()).extracting(step -> step.users())
+                .containsExactly(2L, 2L, 1L);
+    }
+
+    @Test
     void funnelAndRetentionResolveAnonymousAliasesToTheCloudActor() {
         UUID anonymousActor = UUID.randomUUID();
         UUID cloudActor = UUID.randomUUID();
@@ -167,8 +212,8 @@ class AdminProductAnalyticsServicePostgresIT {
                 Timestamp.from(Instant.parse("2026-01-01T00:30:00Z"))
         );
 
-        insertEvent(anonymousActor, "landing", "2026-01-01T01:00:00Z", null);
-        insertEvent(cloudActor, "purchase", "2026-01-01T01:10:00Z", null);
+        insertEvent(anonymousActor, "landing", "2026-01-01T01:00:00Z", "{\"flow_id\":\"login-flow\"}");
+        insertEvent(cloudActor, "purchase", "2026-01-01T01:10:00Z", "{\"flow_id\":\"login-flow\"}");
         insertEvent(cloudActor, "return", "2026-01-02T02:00:00Z", null);
 
         AdminFunnelResponse funnel = service.getFunnel(
@@ -179,6 +224,18 @@ class AdminProductAnalyticsServicePostgresIT {
                 null
         );
         assertThat(funnel.groups().getFirst().steps())
+                .extracting(step -> step.users())
+                .containsExactly(1L, 1L);
+
+        AdminFunnelResponse journeyFunnel = service.getFunnel(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                "landing,purchase",
+                null,
+                "flow_id"
+        );
+        assertThat(journeyFunnel.groups().getFirst().steps())
                 .extracting(step -> step.users())
                 .containsExactly(1L, 1L);
 

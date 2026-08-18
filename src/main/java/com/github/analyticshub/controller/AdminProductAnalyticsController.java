@@ -28,8 +28,11 @@ public class AdminProductAnalyticsController {
             @RequestParam(value = "from", required = false) String from,
             @RequestParam(value = "to", required = false) String to,
             @RequestParam("steps") String steps,
-            @RequestParam(value = "groupBy", required = false) String groupBy) {
-        return ApiResponse.success(analyticsService.getFunnel(projectId, from, to, steps, groupBy));
+            @RequestParam(value = "groupBy", required = false) String groupBy,
+            @RequestParam(value = "journeyKey", required = false) String journeyKey) {
+        return ApiResponse.success(analyticsService.getFunnel(
+                projectId, from, to, steps, groupBy, journeyKey
+        ));
     }
 
     @GetMapping("/retention")

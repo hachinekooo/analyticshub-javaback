@@ -389,10 +389,15 @@ GET /api/admin/metrics/app-versions?projectId=your_project&from=2026-01-01&to=20
 GET /api/admin/analytics/funnel?projectId=your_project&from=2026-01-01&to=2026-01-31&steps=landing,checkout,purchase&groupBy=source
 ```
 
+可选 `journeyKey` 用于按一次业务旅程而不是按 actor 计数。例如付费墙使用
+`journeyKey=paywall_flow_id`，同一用户的多次触发会分别进入漏斗；缺少该属性的事件不会被猜测归入某次旅程。
+响应中的 `countingUnit` 为 `actors` 或 `journeys`，管理端必须据此显示“人数”或“旅程数”。
+
 - `steps` 必须按顺序提供 2–12 个不同 event key。
-- actor（统计主体）优先使用 `user_id`，遗留空值才回退到 `device_id`；每一步按 actor 去重。
+- actor（统计主体）优先使用 `user_id`，遗留空值才回退到 `device_id`；未配置 `journeyKey` 时每一步按 actor 去重。
 - `groupBy` 可选，只读取第一步事件顶层 properties 中对应的 key。
-- `attributionModel=first_touch_actor` 表示 actor 永久归到第一次进入漏斗时的 group，不会因后续重复进入而跨组重复计算。
+- `journeyKey` 可选；配置后按 `canonical actor + journey value` 计数，属性缺失或非字符串的事件不进入该旅程。
+- `attributionModel=first_touch_actor` 表示按 actor 首触归因；`first_touch_journey` 表示按每次旅程首触归因。
 - `conversionRate` 相对第一步计算，`dropOffRate` 相对上一步计算。
 
 #### 留存分析

@@ -112,7 +112,7 @@ X-Signature: hmac_signature_here
 }
 ```
 
-`idempotencyKey` 是可选的 client-generated key（客户端生成键），最大 256 字符。同一项目内，同 key + 同 payload 会重放首次 `eventId`；同 key + 不同 payload 返回 HTTP 409 `IDEMPOTENCY_KEY_REUSED`。批量接口中的每个 item 独立使用自己的 key；单批最多 100 条。
+`idempotencyKey` 是可选的 client-generated key（客户端生成键），最大 256 字符。服务端按 `actor + eventType + key` 建立幂等作用域；同一业务事实重试时返回首次 `eventId`，即使重试时间或公共属性发生变化也不会重复写入。不同 actor 或不同事件类型使用相同原始 key 时互不冲突。批量接口中的每个 item 独立使用自己的 key；单批最多 100 条。
 
 ### 3. 批量事件追踪
 

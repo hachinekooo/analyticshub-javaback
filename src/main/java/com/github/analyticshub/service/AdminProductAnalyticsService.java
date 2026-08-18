@@ -37,7 +37,8 @@ public class AdminProductAnalyticsService {
     private static final System.Logger log = System.getLogger(AdminProductAnalyticsService.class.getName());
     private static final int MAX_FUNNEL_STEPS = 12;
     private static final int MAX_RETENTION_DAY = 90;
-    private static final String FUNNEL_ATTRIBUTION_MODEL = "first_touch_actor";
+    private static final String ACTOR_FUNNEL_ATTRIBUTION_MODEL = "first_touch_actor";
+    private static final String JOURNEY_FUNNEL_ATTRIBUTION_MODEL = "first_touch_journey";
 
     private final MultiDataSourceManager dataSourceManager;
     private final ObjectMapper objectMapper;
@@ -63,6 +64,17 @@ public class AdminProductAnalyticsService {
             String steps,
             String groupBy
     ) {
+        return getFunnel(projectId, from, to, steps, groupBy, null);
+    }
+
+    public AdminFunnelResponse getFunnel(
+            String projectId,
+            String from,
+            String to,
+            String steps,
+            String groupBy,
+            String journeyKey
+    ) {
         String normalizedProjectId = normalizeProjectId(projectId);
         AdminQueryUtils.Range range = AdminQueryUtils.resolveRange(from, to);
         List<String> semanticSteps = parseEventList(steps, MAX_FUNNEL_STEPS, "steps");
@@ -71,6 +83,7 @@ public class AdminProductAnalyticsService {
         }
         SemanticSelection selection = resolveSelection(normalizedProjectId, semanticSteps);
         String normalizedGroupBy = normalizePropertyKey(groupBy);
+        String normalizedJourneyKey = normalizePropertyKey(journeyKey);
 
         JdbcTemplate jdbcTemplate = new JdbcTemplate(requireProject(normalizedProjectId).dataSource());
         String eventsTable = dataSourceManager.getTableName(normalizedProjectId, "events");
@@ -85,7 +98,12 @@ public class AdminProductAnalyticsService {
         rows = canonicalize(rows, selection.rawToSemantic());
         rows = resolveCanonicalActors(jdbcTemplate, normalizedProjectId, rows);
 
-        Map<String, Map<String, ActorTimeline>> groups = buildFunnelGroups(rows, semanticSteps, normalizedGroupBy);
+        Map<String, Map<String, ActorTimeline>> groups = buildFunnelGroups(
+                rows,
+                semanticSteps,
+                normalizedGroupBy,
+                normalizedJourneyKey
+        );
         List<AdminFunnelGroupResult> groupResults = groups.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
                 .map(entry -> new AdminFunnelGroupResult(
@@ -100,7 +118,11 @@ public class AdminProductAnalyticsService {
                 range.end().toString(),
                 semanticSteps,
                 normalizedGroupBy,
-                FUNNEL_ATTRIBUTION_MODEL,
+                normalizedJourneyKey,
+                normalizedJourneyKey.isBlank() ? "actors" : "journeys",
+                normalizedJourneyKey.isBlank()
+                        ? ACTOR_FUNNEL_ATTRIBUTION_MODEL
+                        : JOURNEY_FUNNEL_ATTRIBUTION_MODEL,
                 groupResults
         );
     }
@@ -177,7 +199,8 @@ public class AdminProductAnalyticsService {
     private Map<String, Map<String, ActorTimeline>> buildFunnelGroups(
             List<EventRow> rows,
             List<String> stepEvents,
-            String groupBy
+            String groupBy,
+            String journeyKey
     ) {
         String firstStep = stepEvents.get(0);
         Map<String, Map<String, ActorTimeline>> groups = new LinkedHashMap<>();
@@ -187,29 +210,44 @@ public class AdminProductAnalyticsService {
             if (row.actorId().isBlank()) {
                 continue;
             }
+            String subjectId = funnelSubjectId(row, journeyKey);
+            if (subjectId == null) {
+                continue;
+            }
             if (firstStep.equals(row.eventType())) {
-                if (actorAttributedGroups.containsKey(row.actorId())) {
+                if (actorAttributedGroups.containsKey(subjectId)) {
                     continue;
                 }
                 String groupValue = groupBy.isBlank() ? "all" : propertyValue(row.properties(), groupBy);
-                // 分组漏斗采用 first-touch 归因：同一 actor 只归入第一次进入漏斗的 group。
-                // 否则一个用户多次从不同入口看付费墙，后续购买会被多个入口重复计数。
-                actorAttributedGroups.put(row.actorId(), groupValue);
+                // 未指定 journeyKey 时按 actor 首触归因；指定后按一次业务旅程首触归因。
+                actorAttributedGroups.put(subjectId, groupValue);
                 groups.computeIfAbsent(groupValue, ignored -> new LinkedHashMap<>())
-                        .computeIfAbsent(row.actorId(), ignored -> new ActorTimeline())
+                        .computeIfAbsent(subjectId, ignored -> new ActorTimeline())
                         .add(row.eventType(), row.createdAt());
                 continue;
             }
 
-            String groupValue = actorAttributedGroups.get(row.actorId());
+            String groupValue = actorAttributedGroups.get(subjectId);
             if (groupValue == null) {
                 continue;
             }
             groups.get(groupValue)
-                    .computeIfAbsent(row.actorId(), ignored -> new ActorTimeline())
+                    .computeIfAbsent(subjectId, ignored -> new ActorTimeline())
                     .add(row.eventType(), row.createdAt());
         }
         return groups;
+    }
+
+    private static String funnelSubjectId(EventRow row, String journeyKey) {
+        if (journeyKey.isBlank()) {
+            return row.actorId();
+        }
+        JsonNode value = row.properties() == null ? null : row.properties().get(journeyKey);
+        if (value == null || !value.isString() || value.asString().isBlank()) {
+            return null;
+        }
+        // 同名 flow 也不能跨 actor 合并；actor alias 已在进入这里前归一。
+        return row.actorId() + "\0" + value.asString();
     }
 
     private List<AdminFunnelStepResult> calculateFunnelSteps(

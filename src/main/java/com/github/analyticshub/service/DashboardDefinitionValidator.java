@@ -70,7 +70,7 @@ public class DashboardDefinitionValidator {
             Map.entry("core.overview", Set.of()),
             Map.entry("core.trends", Set.of("granularity")),
             Map.entry("core.topEvents", Set.of("aggregation", "limit")),
-            Map.entry("core.productFunnel", Set.of("steps", "groupBy")),
+            Map.entry("core.productFunnel", Set.of("steps", "groupBy", "journeyKey")),
             Map.entry("core.retention", Set.of("cohortEvent", "returnEvent", "days")),
             Map.entry("core.trafficOverview", Set.of()),
             Map.entry("core.trafficTrends", Set.of("granularity")),
@@ -337,6 +337,9 @@ public class DashboardDefinitionValidator {
         validateAnalyticsEventArray(config.get("steps"), 2, 12, path + ".steps");
         if (config.has("groupBy")) {
             requireAnalyticsKey(config.get("groupBy"), 80, path + ".groupBy");
+        }
+        if (config.has("journeyKey")) {
+            requireAnalyticsKey(config.get("journeyKey"), 80, path + ".journeyKey");
         }
     }
 

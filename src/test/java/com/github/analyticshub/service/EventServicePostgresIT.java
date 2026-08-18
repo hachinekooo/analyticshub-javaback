@@ -125,34 +125,49 @@ class EventServicePostgresIT {
     }
 
     @Test
-    void sameIdempotencyKeyWithDifferentPayloadIsRejectedAndOriginalEventRemains() {
+    void sameActorAndEventKeyReturnsOriginalEventWhenRetryPayloadChanges() {
         EventTrackRequest first = request("item_completed", "completion:item-conflict");
         EventTrackResponse response = eventService.trackEvent(first);
         EventTrackRequest conflicting = new EventTrackRequest(
-                "item_shared",
-                first.timestamp(),
+                first.eventType(),
+                first.timestamp() + 1,
                 Map.of("status", "shared"),
                 null,
                 first.idempotencyKey()
         );
 
-        assertThatThrownBy(() -> eventService.trackEvent(conflicting))
-                .isInstanceOfSatisfying(com.github.analyticshub.exception.BusinessException.class, exception -> {
-                    assertThat(exception.getCode()).isEqualTo("IDEMPOTENCY_KEY_REUSED");
-                    assertThat(exception.getHttpStatus().value()).isEqualTo(409);
-                });
+        EventTrackResponse duplicate = eventService.trackEvent(conflicting);
 
+        assertThat(duplicate.eventId()).isEqualTo(response.eventId());
         assertThat(count("event_it_events")).isEqualTo(1);
         assertThat(count("event_it_idempotency_keys")).isEqualTo(1);
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT event_id FROM event_it_events",
                 String.class
         )).isEqualTo(response.eventId());
-        verify(counterService, never()).processEventAutoIncrements(
-                eq("test_project"),
-                eq("item_shared"),
-                any()
-        );
+    }
+
+    @Test
+    void sameRawKeyDoesNotCollideAcrossActorsOrEventTypes() {
+        EventTrackRequest first = request("item_completed", "shared-client-key");
+        EventTrackResponse firstResponse = eventService.trackEvent(first);
+
+        RequestContext.get().setUserId("another_actor");
+        EventTrackResponse secondActorResponse = eventService.trackEvent(first);
+
+        RequestContext.get().setUserId("test_user");
+        EventTrackResponse secondEventResponse = eventService.trackEvent(new EventTrackRequest(
+                "item_shared",
+                first.timestamp(),
+                Map.of("status", "shared"),
+                null,
+                first.idempotencyKey()
+        ));
+
+        assertThat(secondActorResponse.eventId()).isNotEqualTo(firstResponse.eventId());
+        assertThat(secondEventResponse.eventId()).isNotEqualTo(firstResponse.eventId());
+        assertThat(count("event_it_events")).isEqualTo(3);
+        assertThat(count("event_it_idempotency_keys")).isEqualTo(3);
     }
 
     @Test
