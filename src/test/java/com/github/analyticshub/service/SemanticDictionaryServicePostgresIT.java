@@ -266,6 +266,29 @@ class SemanticDictionaryServicePostgresIT {
         assertThat(service.listDefinitions("project_a", "EVENT_TYPE").items().getFirst().aliases()).isEmpty();
     }
 
+    @Test
+    void inactiveDefinitionWithRetainedAliasesResolvesAsUnavailable() {
+        upsert(
+                "project_a",
+                "custom.content.completed",
+                SemanticAliasUpdateMode.REPLACE,
+                List.of("item.completed"),
+                "Content completed"
+        );
+        systemJdbcTemplate.update(
+                "UPDATE analytics_semantic_definitions SET is_active = FALSE "
+                        + "WHERE project_id = ? AND source_kind = ? AND semantic_key = ?",
+                "project_a",
+                SemanticSourceKind.EVENT_TYPE.name(),
+                "custom.content.completed"
+        );
+
+        assertThat(service.resolveAvailableActiveEventAliases(
+                "project_a",
+                List.of("custom.content.completed")
+        )).containsEntry("custom.content.completed", List.of());
+    }
+
     private void upsert(
             String projectId,
             String semanticKey,

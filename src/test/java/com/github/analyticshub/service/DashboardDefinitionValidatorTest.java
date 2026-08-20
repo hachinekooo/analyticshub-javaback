@@ -31,7 +31,10 @@ class DashboardDefinitionValidatorTest {
                       "id": "overview-main",
                       "type": "core.overview",
                       "layout": {"x": 0, "y": 0, "w": 12, "h": 4},
-                      "config": {"title": "Overview"}
+                      "config": {
+                        "title": "Overview",
+                        "metricKeys": ["system.active_devices", "core.account.created"]
+                      }
                     },
                     {
                       "id": "top-events",
@@ -72,6 +75,52 @@ class DashboardDefinitionValidatorTest {
                 """);
 
         assertInvalid(definition, "不支持的字段");
+    }
+
+    @Test
+    void rejectsUnsupportedOrDuplicateOverviewMetricKeys() throws Exception {
+        var unsupported = objectMapper.readTree("""
+                {
+                  "schemaVersion": 1,
+                  "widgets": [{
+                    "id": "overview",
+                    "type": "core.overview",
+                    "layout": {"x": 0, "y": 0, "w": 12, "h": 4},
+                    "config": {"metricKeys": ["custom.arbitrary.event"]}
+                  }]
+                }
+                """);
+        assertInvalid(unsupported, "不支持的指标");
+
+        var duplicate = objectMapper.readTree("""
+                {
+                  "schemaVersion": 1,
+                  "widgets": [{
+                    "id": "overview",
+                    "type": "core.overview",
+                    "layout": {"x": 0, "y": 0, "w": 12, "h": 4},
+                    "config": {"metricKeys": ["system.active_devices", "system.active_devices"]}
+                  }]
+                }
+                """);
+        assertInvalid(duplicate, "不能包含重复值");
+    }
+
+    @Test
+    void rejectsCounterKeysOutsideTheSharedCounterGrammar() throws Exception {
+        var definition = objectMapper.readTree("""
+                {
+                  "schemaVersion": 1,
+                  "widgets": [{
+                    "id": "counters",
+                    "type": "core.counters",
+                    "layout": {"x": 0, "y": 0, "w": 6, "h": 6},
+                    "config": {"keys": ["bad$key"]}
+                  }]
+                }
+                """);
+
+        assertInvalid(definition, "不合法的 Counter Key");
     }
 
     @Test

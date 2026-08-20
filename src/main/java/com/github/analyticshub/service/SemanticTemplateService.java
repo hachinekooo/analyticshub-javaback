@@ -20,6 +20,12 @@ public class SemanticTemplateService {
             new Preset("core.action.completed", Map.of(
                     "zh-CN", "核心动作完成", "en", "Core action completed"
             ), "engagement", "用户完成产品最核心的业务动作"),
+            new Preset("core.account.created", Map.of(
+                    "zh-CN", "云账号创建", "en", "Cloud account created"
+            ), "lifecycle", "后端权威确认创建了新的云账号"),
+            new Preset("core.account.recreated", Map.of(
+                    "zh-CN", "云账号重新创建", "en", "Cloud account recreated"
+            ), "lifecycle", "账号注销后经用户确认重新创建云账号"),
             new Preset("core.paywall.opened", Map.of(
                     "zh-CN", "付费墙打开", "en", "Paywall opened"
             ), "monetization", "用户打开付费页面或付费墙"),

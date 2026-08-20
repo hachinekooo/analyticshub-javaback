@@ -292,10 +292,20 @@ GET /api/admin/metrics/overview?projectId=your_project&from=2026-01-01&to=2026-0
     "devicesTotal": 5000,
     "devicesActive": 1200,
     "usersActive": 800,
+    "cloudAccountsCreated": 36,
+    "cloudAccountsRecreated": 2,
     "sessionsTotal": 15000,
     "eventsTotal": 45000,
     "avgSessionDurationMs": 180000,
-    "avgEventsPerSession": 3.0
+    "avgEventsPerSession": 3.0,
+    "availableMetricKeys": [
+      "system.active_devices",
+      "system.active_actors",
+      "system.event_occurrences",
+      "system.top_active_app_version",
+      "core.account.created",
+      "core.account.recreated"
+    ]
   }
 }
 ```
@@ -312,23 +322,41 @@ GET /api/admin/metrics/trends?projectId=your_project&granularity=day
   "data": {
     "projectId": "your_project",
     "granularity": "day",
+    "availableMetricKeys": [
+      "system.active_actors",
+      "system.active_devices",
+      "core.account.created",
+      "core.account.recreated"
+    ],
     "points": [
       {
         "time": "2026-01-01",
         "events": 150,
         "activeDevices": 42,
+        "activeUsers": 31,
+        "cloudAccountsCreated": 3,
+        "cloudAccountsRecreated": 0,
         "sessions": 50
       },
       {
         "time": "2026-01-02",
         "events": 180,
         "activeDevices": 48,
+        "activeUsers": 35,
+        "cloudAccountsCreated": 2,
+        "cloudAccountsRecreated": 1,
         "sessions": 60
       }
     ]
   }
 }
 ```
+
+`usersActive` / `activeUsers` 按事件真实发生时间统计，并通过 actor alias 将同一用户的匿名阶段与登录阶段归一后去重。账号创建与重建指标分别依赖 `core.account.created`、`core.account.recreated` 官方语义；项目必须把自己的后端权威事件配置为 raw aliases。
+
+`availableMetricKeys` 是展示能力的权威边界：system 指标始终可用；official business metric 只有语义定义启用且至少存在一个有效 alias 时才会出现。调用方必须用它区分“尚未配置，不应展示”和“已配置但当前周期确实为 0”。账号指标只代表已同意数据分析且成功采集到的可观测账号，不等于业务账号库总量。
+
+滚动升级时应先发布 backend、再发布 frontend。新版 frontend 对尚未返回 `availableMetricKeys` 的旧 backend 只回退展示旧 API 已能可靠提供的 system 指标，不推断任何业务能力。
 
 ```http
 GET /api/admin/metrics/top-events?projectId=your_project&limit=10
@@ -787,7 +815,14 @@ DELETE /api/admin/projects/{projectId}/dashboards/{dashboardKey}?expectedRevisio
       {
         "id": "overview-main",
         "type": "core.overview",
-        "layout": {"x": 0, "y": 0, "w": 12, "h": 4}
+        "layout": {"x": 0, "y": 0, "w": 12, "h": 4},
+        "config": {
+          "metricKeys": [
+            "system.active_devices",
+            "system.active_actors",
+            "core.account.created"
+          ]
+        }
       }
     ]
   },
@@ -800,3 +835,7 @@ DELETE /api/admin/projects/{projectId}/dashboards/{dashboardKey}?expectedRevisio
 创建时 `expectedRevision` 为 `0`；更新和删除必须传当前 revision，过期返回 409。
 
 `definition.defaultRange` 仅接受 `24h`、`7d`、`30d`、`90d`、`custom`；`custom` 表示不预置日期。它是项目 Dashboard 的初始查询范围，不是用户每次在页面选择日期后都会更新的临时状态。
+
+`core.overview.config.metricKeys` 是有序选择：system 指标由 AnalyticsHub 事实直接计算；`core.*` 业务指标复用官方语义 Key，并且只有完成有效映射后才可新加入配置和在正常大屏展示。后端会在 Dashboard 写入边界再次校验，旧前端或脚本不能绕过。已保存业务指标后来因停用或清空映射而失效时，读取会隐藏该指标但保留原配置；无关布局编辑仍可保存，重新加入其他失效指标仍会被拒绝。历史 Dashboard 未保存该字段时，由当前可用指标生成动态兼容默认值；普通布局保存不会隐式固化，只有管理员实际编辑概览选择后才转为显式配置。
+
+`core.counters.config.keys` 同样是有序选择，表示从项目已有计数器中拿哪些累计值展示。后端在 Dashboard 写入边界校验本次新增的引用确实存在；历史 Counter 后来被删除时允许原样保留，使无关布局编辑仍可保存，但展示和配置界面都必须明确标记失效引用。计数器组件展示截至当前的持久化累计值，不跟随 Dashboard 日期范围，也不能静默改变其他项的顺序。

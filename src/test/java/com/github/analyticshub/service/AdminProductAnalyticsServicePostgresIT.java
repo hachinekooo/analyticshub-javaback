@@ -96,6 +96,11 @@ class AdminProductAnalyticsServicePostgresIT {
             for (String key : invocation.<List<String>>getArgument(1)) result.put(key, List.of(key));
             return result;
         });
+        when(semantics.resolveAvailableActiveEventAliases(eq(PROJECT_ID), anyList())).thenAnswer(invocation -> {
+            Map<String, List<String>> result = new LinkedHashMap<>();
+            for (String key : invocation.<List<String>>getArgument(1)) result.put(key, List.of(key));
+            return result;
+        });
         actorIdentityResolver = new ActorIdentityResolver();
         service = new AdminProductAnalyticsService(
                 dataSourceManager,
@@ -295,6 +300,44 @@ class AdminProductAnalyticsServicePostgresIT {
     }
 
     @Test
+    void overviewAndTrendsUseStableAccountSemanticsAndOccurrenceTime() {
+        UUID actor = UUID.randomUUID();
+        UUID device = UUID.randomUUID();
+        insertEvent(actor.toString(), device, "core.account.created", "2026-01-01T01:00:00Z", null);
+        insertEvent(actor.toString(), device, "core.account.recreated", "2026-01-02T01:00:00Z", null);
+        insertEvent(actor.toString(), device, "unrelated", "2026-01-02T02:00:00Z", null);
+
+        AdminMetricsOverviewResponse overview = metricsService.getOverview(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z"
+        );
+        AdminMetricsTrendResponse trends = metricsService.getTrends(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z", "day"
+        );
+
+        assertThat(overview.cloudAccountsCreated()).isEqualTo(1L);
+        assertThat(overview.cloudAccountsRecreated()).isEqualTo(1L);
+        assertThat(overview.availableMetricKeys())
+                .containsExactly(
+                        "system.active_devices",
+                        "system.active_actors",
+                        "system.event_occurrences",
+                        "system.top_active_app_version",
+                        "core.account.created",
+                        "core.account.recreated"
+                );
+        assertThat(trends.availableMetricKeys())
+                .containsExactly(
+                        "system.active_actors",
+                        "system.active_devices",
+                        "core.account.created",
+                        "core.account.recreated"
+                );
+        assertThat(trends.points()).extracting(point -> point.activeUsers()).containsExactly(1L, 1L);
+        assertThat(trends.points()).extracting(point -> point.cloudAccountsCreated()).containsExactly(1L, 0L);
+        assertThat(trends.points()).extracting(point -> point.cloudAccountsRecreated()).containsExactly(0L, 1L);
+    }
+
+    @Test
     void operationalReportsUseOccurrenceTimeInsteadOfDelayedUploadTime() {
         UUID actor = UUID.randomUUID();
         UUID device = UUID.randomUUID();
@@ -343,6 +386,7 @@ class AdminProductAnalyticsServicePostgresIT {
         assertThat(trends.points()).hasSize(1);
         assertThat(trends.points().getFirst().events()).isEqualTo(1L);
         assertThat(trends.points().getFirst().activeDevices()).isEqualTo(1L);
+        assertThat(trends.points().getFirst().activeUsers()).isEqualTo(1L);
         assertThat(funnel.groups()).hasSize(1);
         assertThat(funnel.groups().getFirst().steps().getFirst().users()).isEqualTo(1L);
         assertThat(eventRecords.items()).extracting(item -> item.eventType())
@@ -401,9 +445,13 @@ class AdminProductAnalyticsServicePostgresIT {
         AdminMetricsOverviewResponse overview = metricsService.getOverview(
                 PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
         );
+        AdminMetricsTrendResponse trends = metricsService.getTrends(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", "day"
+        );
 
         assertThat(funnel.groups().getFirst().steps()).extracting(step -> step.users()).containsExactly(1L, 1L);
         assertThat(overview.usersActive()).isEqualTo(1L);
+        assertThat(trends.points()).extracting(point -> point.activeUsers()).containsExactly(1L);
     }
 
     @Test

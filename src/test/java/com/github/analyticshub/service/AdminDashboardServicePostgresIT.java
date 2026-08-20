@@ -50,6 +50,8 @@ class AdminDashboardServicePostgresIT {
     private JdbcTemplate jdbcTemplate;
     private TransactionTemplate transaction;
     private AdminDashboardService service;
+    private SemanticDictionaryService semanticDictionaryService;
+    private CounterService counterService;
 
     @BeforeEach
     void setUp() {
@@ -85,11 +87,18 @@ class AdminDashboardServicePostgresIT {
         AnalyticsProjectMapper projectMapper = mock(AnalyticsProjectMapper.class);
         when(projectMapper.selectOne(any())).thenReturn(project);
 
+        semanticDictionaryService = mock(SemanticDictionaryService.class);
+        when(semanticDictionaryService.resolveAvailableActiveEventAliases(any(), any()))
+                .thenReturn(Map.of());
+        counterService = mock(CounterService.class);
+        when(counterService.existingKeys(any(), any())).thenReturn(java.util.Set.of());
         service = new AdminDashboardService(
                 projectMapper,
                 jdbcTemplate,
                 objectMapper,
-                new DashboardDefinitionValidator()
+                new DashboardDefinitionValidator(),
+                new DashboardOverviewMetricPolicy(semanticDictionaryService),
+                new DashboardCounterPolicy(counterService)
         );
     }
 
@@ -231,6 +240,138 @@ class AdminDashboardServicePostgresIT {
         )).isInstanceOf(DataIntegrityViolationException.class);
     }
 
+    @Test
+    void rejectsUnmappedBusinessOverviewMetricsButAllowsMappedOrSystemMetrics() {
+        assertThat(upsert(
+                "system_only",
+                requestWithDefinition(
+                        "System only",
+                        overviewDefinition(List.of(OverviewMetricCatalog.ACTIVE_DEVICES))
+                )
+        ).dashboardKey()).isEqualTo("system_only");
+
+        AdminDashboardUpsertRequest unmapped = requestWithDefinition(
+                "Unmapped",
+                overviewDefinition(List.of(OverviewMetricCatalog.ACCOUNT_CREATED))
+        );
+        assertBusinessError(
+                () -> upsert("unmapped", unmapped),
+                "DASHBOARD_METRIC_UNAVAILABLE",
+                400
+        );
+
+        when(semanticDictionaryService.resolveAvailableActiveEventAliases(any(), any()))
+                .thenReturn(Map.of(
+                        OverviewMetricCatalog.ACCOUNT_CREATED,
+                        List.of("cloud_account_created")
+                ));
+        AdminDashboardRecord mapped = upsert(
+                "mapped",
+                requestWithDefinition(
+                        "Mapped",
+                        overviewDefinition(List.of(
+                                OverviewMetricCatalog.ACTIVE_DEVICES,
+                                OverviewMetricCatalog.ACCOUNT_CREATED
+                        ))
+                )
+        );
+        assertThat(mapped.definition()).isEqualTo(overviewDefinition(List.of(
+                OverviewMetricCatalog.ACTIVE_DEVICES,
+                OverviewMetricCatalog.ACCOUNT_CREATED
+        )));
+
+        when(semanticDictionaryService.resolveAvailableActiveEventAliases(any(), any()))
+                .thenReturn(Map.of());
+        AdminDashboardRecord layoutOnlyUpdate = upsert(
+                "mapped",
+                new AdminDashboardUpsertRequest(
+                        Map.of("en", "Mapped layout update"),
+                        "Overview metric policy",
+                        1,
+                        overviewDefinition(List.of(
+                                OverviewMetricCatalog.ACTIVE_DEVICES,
+                                OverviewMetricCatalog.ACCOUNT_CREATED
+                        )),
+                        mapped.revision(),
+                        false,
+                        true
+                )
+        );
+        assertThat(layoutOnlyUpdate.revision()).isEqualTo(mapped.revision() + 1);
+
+        assertBusinessError(
+                () -> upsert(
+                        "mapped",
+                        new AdminDashboardUpsertRequest(
+                                Map.of("en", "Invalid new metric"),
+                                "Overview metric policy",
+                                1,
+                                overviewDefinition(List.of(
+                                        OverviewMetricCatalog.ACCOUNT_CREATED,
+                                        OverviewMetricCatalog.ACCOUNT_RECREATED
+                                )),
+                                layoutOnlyUpdate.revision(),
+                                false,
+                                true
+                        )
+                ),
+                "DASHBOARD_METRIC_UNAVAILABLE",
+                400
+        );
+    }
+
+    @Test
+    void validatesNewCounterReferencesWithoutBlockingRetainedStaleKeys() {
+        when(counterService.existingKeys(any(), any()))
+                .thenReturn(java.util.Set.of("letters_completed", "shares_completed"));
+        AdminDashboardRecord created = upsert(
+                "counters",
+                requestWithDefinition(
+                        "Counters",
+                        counterDefinition(List.of("shares_completed", "letters_completed"))
+                )
+        );
+        assertThat(created.definition()).isEqualTo(
+                counterDefinition(List.of("shares_completed", "letters_completed"))
+        );
+
+        when(counterService.existingKeys(any(), any())).thenReturn(java.util.Set.of());
+        AdminDashboardRecord retained = upsert(
+                "counters",
+                new AdminDashboardUpsertRequest(
+                        Map.of("en", "Counters layout update"),
+                        "Counter reference policy",
+                        1,
+                        counterDefinition(List.of("shares_completed", "letters_completed")),
+                        created.revision(),
+                        false,
+                        true
+                )
+        );
+        assertThat(retained.revision()).isEqualTo(created.revision() + 1);
+
+        assertBusinessError(
+                () -> upsert(
+                        "counters",
+                        new AdminDashboardUpsertRequest(
+                                Map.of("en", "Invalid counter"),
+                                "Counter reference policy",
+                                1,
+                                counterDefinition(List.of(
+                                        "shares_completed",
+                                        "letters_completed",
+                                        "missing_counter"
+                                )),
+                                retained.revision(),
+                                false,
+                                true
+                        )
+                ),
+                "DASHBOARD_COUNTER_UNAVAILABLE",
+                400
+        );
+    }
+
     private MutationAttempt updateAfter(
             CountDownLatch ready,
             CountDownLatch start,
@@ -288,6 +429,45 @@ class AdminDashboardServicePostgresIT {
         return Map.of(
                 "schemaVersion", 1,
                 "widgets", List.of()
+        );
+    }
+
+    private AdminDashboardUpsertRequest requestWithDefinition(
+            String displayName,
+            Map<String, Object> definition
+    ) {
+        return new AdminDashboardUpsertRequest(
+                Map.of("en", displayName),
+                "Overview metric policy",
+                1,
+                definition,
+                null,
+                false,
+                true
+        );
+    }
+
+    private Map<String, Object> overviewDefinition(List<String> metricKeys) {
+        return Map.of(
+                "schemaVersion", 1,
+                "widgets", List.of(Map.of(
+                        "id", "overview",
+                        "type", "core.overview",
+                        "layout", Map.of("x", 0, "y", 0, "w", 12, "h", 4),
+                        "config", Map.of("metricKeys", metricKeys)
+                ))
+        );
+    }
+
+    private Map<String, Object> counterDefinition(List<String> counterKeys) {
+        return Map.of(
+                "schemaVersion", 1,
+                "widgets", List.of(Map.of(
+                        "id", "counters",
+                        "type", "core.counters",
+                        "layout", Map.of("x", 0, "y", 0, "w", 6, "h", 6),
+                        "config", Map.of("keys", counterKeys)
+                ))
         );
     }
 

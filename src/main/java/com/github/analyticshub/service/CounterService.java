@@ -20,7 +20,10 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.StringJoiner;
 
 @Service
@@ -64,9 +67,35 @@ public class CounterService {
         return new CountersResponse(normalizedProjectId, items);
     }
 
+    /**
+     * 返回当前项目真实存在的 Counter Key，仅供需要校验项目级引用的服务使用。
+     * 不返回 Counter 内容，避免 Dashboard 写入策略依赖管理端展示 DTO。
+     */
+    public Set<String> existingKeys(String projectId, List<String> keys) {
+        if (keys == null || keys.isEmpty()) return Set.of();
+        List<String> normalizedKeys = keys.stream()
+                .map(CounterKeyRules::normalize)
+                .distinct()
+                .toList();
+        String normalizedProjectId = normalizeProjectId(projectId);
+        ProjectContext context = requireProject(normalizedProjectId);
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(context.dataSource());
+        String table = dataSourceManager.getTableName(normalizedProjectId, "counters");
+        String placeholders = String.join(",", Collections.nCopies(normalizedKeys.size(), "?"));
+        List<Object> arguments = new ArrayList<>(1 + normalizedKeys.size());
+        arguments.add(normalizedProjectId);
+        arguments.addAll(normalizedKeys);
+        return Collections.unmodifiableSet(new LinkedHashSet<>(jdbcTemplate.queryForList(
+                "SELECT counter_key FROM " + table + " WHERE project_id = ? "
+                        + "AND counter_key IN (" + placeholders + ") ORDER BY counter_key",
+                String.class,
+                arguments.toArray()
+        )));
+    }
+
     public CounterRecord get(String projectId, String key, boolean onlyPublic) {
         String normalizedProjectId = normalizeProjectId(projectId);
-        String normalizedKey = normalizeCounterKey(key);
+        String normalizedKey = CounterKeyRules.normalize(key);
         ProjectContext context = requireProject(normalizedProjectId);
         JdbcTemplate jdbcTemplate = new JdbcTemplate(context.dataSource());
         String table = dataSourceManager.getTableName(normalizedProjectId, "counters");
@@ -75,7 +104,7 @@ public class CounterService {
 
     public CounterRecord upsert(String projectId, String key, CounterUpsertRequest request) {
         String normalizedProjectId = normalizeProjectId(projectId);
-        String normalizedKey = normalizeCounterKey(key);
+        String normalizedKey = CounterKeyRules.normalize(key);
         ProjectContext context = requireProject(normalizedProjectId);
         String table = dataSourceManager.getTableName(normalizedProjectId, "counters");
         Long value = request == null ? null : request.value();
@@ -166,7 +195,7 @@ public class CounterService {
 
     public CounterRecord increment(String projectId, String key, long delta) {
         String normalizedProjectId = normalizeProjectId(projectId);
-        String normalizedKey = normalizeCounterKey(key);
+        String normalizedKey = CounterKeyRules.normalize(key);
         ProjectContext context = requireProject(normalizedProjectId);
         String table = dataSourceManager.getTableName(normalizedProjectId, "counters");
 
@@ -186,7 +215,7 @@ public class CounterService {
      */
     public CounterRecord rebuild(String projectId, String key) {
         String normalizedProjectId = normalizeProjectId(projectId);
-        String normalizedKey = normalizeCounterKey(key);
+        String normalizedKey = CounterKeyRules.normalize(key);
         ProjectContext context = requireProject(normalizedProjectId);
         String counterTable = dataSourceManager.getTableName(normalizedProjectId, "counters");
         String eventTable = dataSourceManager.getTableName(normalizedProjectId, "events");
@@ -296,7 +325,7 @@ public class CounterService {
 
     public void delete(String projectId, String key) {
         String normalizedProjectId = normalizeProjectId(projectId);
-        String normalizedKey = normalizeCounterKey(key);
+        String normalizedKey = CounterKeyRules.normalize(key);
         ProjectContext context = requireProject(normalizedProjectId);
         String table = dataSourceManager.getTableName(normalizedProjectId, "counters");
         projectTransactions.execute(context.dataSource(), jdbcTemplate -> {
@@ -484,19 +513,4 @@ public class CounterService {
         return projectId == null ? "" : projectId.strip();
     }
 
-    private static String normalizeCounterKey(String key) {
-        if (key == null || key.isBlank()) {
-            throw new IllegalArgumentException("counter key 不能为空");
-        }
-        String normalized = key.strip();
-        if (normalized.length() > 100) {
-            throw new IllegalArgumentException("counter key 长度不能超过 100");
-        }
-        if (!normalized.matches("^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$")) {
-            throw new IllegalArgumentException(
-                    "counter key 仅支持字母、数字、点、下划线、冒号和连字符，且必须以字母或数字开头"
-            );
-        }
-        return normalized;
-    }
 }

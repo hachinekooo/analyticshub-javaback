@@ -300,6 +300,26 @@ public class SemanticDictionaryService {
             String projectId,
             List<String> semanticKeys
     ) {
+        return resolveActiveEventAliases(projectId, semanticKeys, true);
+    }
+
+    /**
+     * Resolves optional reporting semantics without making a generic dashboard unavailable.
+     * Missing or inactive definitions are returned as empty alias lists.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, List<String>> resolveAvailableActiveEventAliases(
+            String projectId,
+            List<String> semanticKeys
+    ) {
+        return resolveActiveEventAliases(projectId, semanticKeys, false);
+    }
+
+    private Map<String, List<String>> resolveActiveEventAliases(
+            String projectId,
+            List<String> semanticKeys,
+            boolean requireAllDefinitions
+    ) {
         String normalizedProjectId = normalizeProjectId(projectId);
         requireProject(normalizedProjectId, false);
         if (semanticKeys == null || semanticKeys.isEmpty()) {
@@ -325,7 +345,7 @@ public class SemanticDictionaryService {
                         aliases.put(rs.getString("semantic_key"), new ArrayList<>()),
                 arguments.toArray()
         );
-        if (aliases.size() != requested.size()) {
+        if (requireAllDefinitions && aliases.size() != requested.size()) {
             List<String> missing = requested.stream().filter(key -> !aliases.containsKey(key)).toList();
             throw new BusinessException(
                     "SEMANTIC_DEFINITION_UNAVAILABLE",
@@ -333,17 +353,24 @@ public class SemanticDictionaryService {
                     HttpStatus.CONFLICT
             );
         }
-        systemJdbcTemplate.query(
-                "SELECT semantic_key, raw_key FROM analytics_semantic_aliases "
-                        + "WHERE project_id = ? AND source_kind = ? "
-                        + "AND semantic_key IN (" + placeholders + ") ORDER BY semantic_key, raw_key",
-                (org.springframework.jdbc.core.RowCallbackHandler) rs -> aliases
-                        .get(rs.getString("semantic_key"))
-                        .add(rs.getString("raw_key")),
-                arguments.toArray()
-        );
+        if (!aliases.isEmpty()) {
+            String activePlaceholders = String.join(",", Collections.nCopies(aliases.size(), "?"));
+            List<Object> aliasArguments = new ArrayList<>(2 + aliases.size());
+            aliasArguments.add(normalizedProjectId);
+            aliasArguments.add(SemanticSourceKind.EVENT_TYPE.name());
+            aliasArguments.addAll(aliases.keySet());
+            systemJdbcTemplate.query(
+                    "SELECT semantic_key, raw_key FROM analytics_semantic_aliases "
+                            + "WHERE project_id = ? AND source_kind = ? "
+                            + "AND semantic_key IN (" + activePlaceholders + ") ORDER BY semantic_key, raw_key",
+                    (org.springframework.jdbc.core.RowCallbackHandler) rs -> aliases
+                            .get(rs.getString("semantic_key"))
+                            .add(rs.getString("raw_key")),
+                    aliasArguments.toArray()
+            );
+        }
         Map<String, List<String>> result = new LinkedHashMap<>();
-        requested.forEach(key -> result.put(key, List.copyOf(aliases.get(key))));
+        requested.forEach(key -> result.put(key, List.copyOf(aliases.getOrDefault(key, List.of()))));
         return Collections.unmodifiableMap(result);
     }
 

@@ -22,7 +22,7 @@ AnalyticsHub 定位为公司自行部署的 internal operations center（内部�
 运营人员可以拖拽内置组件并保存项目专属布局。system database 只保存 declarative JSON（声明式 JSON）：
 
 - widget type 必须在后端 allow-list 中；
-- layout 使用 12 列网格；
+- layout 使用 12 列离散网格；移动与缩放始终按最小网格单位吸附，编辑态显示点阵参照和虚线落点占位，完成后隐藏这些辅助视觉；
 - config 按 widget 类型做 typed validation（类型化校验）；
 - schemaVersion 1 中每种 core widget type 最多一个实例，避免多个实例错误共享运行时数据；未来需要多实例时应升级 schema 并使用 widget-id scoped data state；
 - 不允许 HTML、JavaScript、SQL、任意 URL、`eval` 或 dynamic import；
@@ -47,7 +47,9 @@ Dashboard definition 的 `defaultRange` 定义首次进入该项目时的默认�
 
 工作区 key 是 Dashboard API 和扩展组件暴露的稳定标识。system V5 migration 将旧的 `operations` / `technical` 分别迁移为 `overview` / `details`，并从历史 App 明细布局中移除误放的网站流量组件；其他已保存布局保持不变。新代码不再维护旧 key 的运行时 fallback。
 
-两个空间中的分析事实都只读。`overview` 允许调整组件布局与显示配置，但组件不能创建或修改业务数据；`details` 只负责筛选和查看模板支持的原始数据集。语义映射和 Counter 维护分别收口到顶部导航的“指标字典”和“计数器”。
+两个空间中的分析事实都只读，`overview` 与 `details` 都允许调整组件布局与显示配置，但组件不能创建或修改业务数据。明细表格的分页行数由卡片高度统一推导：先扣除标题、表头和分页器等固定区域，再按紧凑表格行高计算 5～100 行的真实容量；布局调整后回到第一页并按新容量重新查询。请求只在缩放结束后触发，因此无需用粗档位换取防抖。这样放大的卡片不会留下明显空白，也不会为填满空间而让内容溢出。包含历史固定 `pageSize` 的 Dashboard 仍可正常加载，但该值不再参与分页，并会在新版保存时移除，避免布局高度和配置值形成双重真相。语义映射和 Counter 维护分别收口到顶部导航的“指标字典”和“计数器”。
+
+Dashboard 面向运营者时以本地化业务名称为主，不常驻展示 raw event key 或 semantic key。内部 Key 通过 progressive disclosure（渐进式披露）按需提供；事件明细按行只显示业务名称，并在卡片标题区通过“本页事件说明”按事件类型去重展示含义与内部 Key，避免同一事件的每条记录重复出现说明图标。未映射事件使用可读化名称，并明确引导到“指标字典”补充业务映射。活跃、账号生命周期、排行、漏斗和留存等容易混淆的指标必须提供克制的说明入口，讲清统计对象、去重方式、数据边界以及它能回答的问题，不能要求使用者理解内部实现术语。
 
 ### 3. 可信 build-time extension
 
@@ -169,9 +171,13 @@ export const dashboardWidgetExtensions: readonly DashboardWidgetExtension[] =
 
 Dashboard 和 Counter 只依赖稳定的 semantic key（语义 Key），采集端继续上报自己的 raw event key（原始埋点）。语义字典以 `(projectId, sourceKind, rawKey)` 保证一个 raw key 只有一个归属，同时允许多个 raw key 指向同一个 semantic key。例如 `task_completed` 与后续的 `task_done_v2` 都可以映射到 `core.action.completed`。
 
-`app` 和 `webapp` 模板会预置 `core.activation.completed`、`core.action.completed`、`core.paywall.opened`、`core.purchase.completed`。这些 official definitions（官方定义）的 Key 不允许删除；项目可以修改显示名、维护 aliases、停用暂时不用的定义。项目新增定义必须使用 `custom.*` 命名空间，Key 创建后作为稳定引用不再改名；需要替换时应新建定义并迁移组件配置。
+核心概览把指标分成两类：`system.*` 由事件、设备和身份事实直接计算；可展示的 `core.*` 业务指标复用经过筛选的官方语义 Key。组件的 `metricKeys` 保存有序选择。未映射的官方业务指标既不能新加入配置，也不进入正常大屏；已保存指标后来失效时保留配置，使无关布局编辑仍可保存，但展示层不会伪造 `0`。完成映射但当前周期没有事件时才显示真实的 `0`。历史上没有 `metricKeys` 的组件保持动态默认，只有管理员明确编辑指标选择时才转为显式配置。普通 App 模板不会因为项目类型而假设产品一定具有云账号能力。
+
+`app` 和 `webapp` 模板会预置 `core.activation.completed`、`core.action.completed`、`core.paywall.opened`、`core.purchase.completed`、`core.account.created`、`core.account.recreated`。这些 official definitions（官方定义）的 Key 不允许删除；项目可以修改显示名、维护 aliases、停用暂时不用的定义。账号生命周期语义必须映射到服务端权威确认的创建/重建事件，不能用登录成功代替注册。项目新增定义必须使用 `custom.*` 命名空间，Key 创建后作为稳定引用不再改名；需要替换时应新建定义并迁移组件配置。
 
 原始事件事实不会被修改。查询时按 `Raw Event → Semantic Key → Widget/Counter` 解析，所以修正 alias 后，历史事实仍可重新聚合或 rebuild（回算）。未映射事件仍保留在事件目录中，但不会误算进依赖语义 Key 的组件。项目专属 alias 和条件属于部署方配置，不写进开源底座源码。规则 contract 与安全边界见 [管理端 API](API_MANAGEMENT.md#9-运营累计统计counters配置与管理)。
+
+累计统计组件与核心概览保持独立：它通过有序 `keys` 从项目现有 Counter 中选择长期累计值，展示口径是“截至当前”，不随 Dashboard 日期范围变化。后端拒绝新加入的不存在 Key；历史 Counter 后来被删除时可随无关编辑原样保留，但必须在编辑和展示状态中标明配置失效，不能静默回退为全部 Counter。
 
 ## 扩展一个新内置 Widget
 

@@ -2,6 +2,7 @@ package com.github.analyticshub.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import com.github.analyticshub.dto.AdminDashboardRecord;
 import com.github.analyticshub.dto.AdminDashboardUpsertRequest;
@@ -37,17 +38,23 @@ public class AdminDashboardService {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
     private final DashboardDefinitionValidator definitionValidator;
+    private final DashboardOverviewMetricPolicy overviewMetricPolicy;
+    private final DashboardCounterPolicy counterPolicy;
 
     public AdminDashboardService(
             AnalyticsProjectMapper projectMapper,
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper,
-            DashboardDefinitionValidator definitionValidator
+            DashboardDefinitionValidator definitionValidator,
+            DashboardOverviewMetricPolicy overviewMetricPolicy,
+            DashboardCounterPolicy counterPolicy
     ) {
         this.projectMapper = projectMapper;
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
         this.definitionValidator = definitionValidator;
+        this.overviewMetricPolicy = overviewMetricPolicy;
+        this.counterPolicy = counterPolicy;
     }
 
     public List<AdminDashboardRecord> list(String projectId) {
@@ -80,14 +87,22 @@ public class AdminDashboardService {
         String normalizedKey = normalizeDashboardKey(dashboardKey);
         validateRequest(request);
         definitionValidator.validateDisplayName(objectMapper.valueToTree(request.displayName()));
-        definitionValidator.validate(
-                request.schemaVersion(),
-                objectMapper.valueToTree(request.definition())
-        );
+        JsonNode definition = objectMapper.valueToTree(request.definition());
+        definitionValidator.validate(request.schemaVersion(), definition);
 
         lockProject(normalizedProjectId);
         List<AdminDashboardRecord> existingRows = find(normalizedProjectId, normalizedKey);
         AdminDashboardRecord existing = existingRows.isEmpty() ? null : existingRows.getFirst();
+        overviewMetricPolicy.validateForWrite(
+                normalizedProjectId,
+                definition,
+                existing == null ? null : objectMapper.valueToTree(existing.definition())
+        );
+        counterPolicy.validateForWrite(
+                normalizedProjectId,
+                definition,
+                existing == null ? null : objectMapper.valueToTree(existing.definition())
+        );
         boolean active = request.isActive() == null
                 ? existing == null || existing.isActive()
                 : request.isActive();

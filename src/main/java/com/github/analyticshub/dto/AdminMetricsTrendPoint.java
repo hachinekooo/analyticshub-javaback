@@ -7,5 +7,8 @@ public record AdminMetricsTrendPoint(
         String time,
         long events,
         long activeDevices,
+        long activeUsers,
+        long cloudAccountsCreated,
+        long cloudAccountsRecreated,
         long sessions
 ) {}

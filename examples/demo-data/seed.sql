@@ -165,6 +165,30 @@ SELECT 'app-journey-' || lpad(n::text, 4, '0') || '-' || stage,
        'demo_app', occurred_at
 FROM journey_events;
 
+-- Account lifecycle uses backend-authoritative events and a smaller realistic volume.
+WITH account_events AS (
+    SELECT n, 'cloud_account_created' AS event_type,
+           now() - (n % 30) * interval '1 day' - interval '9 hours' AS occurred_at
+    FROM generate_series(1, 36) AS series(n)
+    UNION ALL
+    SELECT n, 'cloud_account_recreated',
+           now() - (n * 11) * interval '1 day' - interval '15 hours'
+    FROM generate_series(1, 2) AS series(n)
+)
+INSERT INTO demo_app.analytics_events (
+    event_id, device_id, user_id, session_id, event_type, event_timestamp,
+    properties, project_id, created_at
+)
+SELECT 'app-account-' || event_type || '-' || lpad(n::text, 3, '0'),
+       md5('app-device-' || (1 + n % 160))::uuid,
+       'app_account_' || lpad(n::text, 4, '0'),
+       md5('app-session-' || (1 + n % 1800))::uuid,
+       event_type,
+       floor(extract(epoch FROM occurred_at) * 1000)::bigint,
+       jsonb_build_object('source', 'backend_authority', 'platform', 'ios'),
+       'demo_app', occurred_at
+FROM account_events;
+
 -- Marketing Website: enough page views, visitors, campaigns and bot traffic to show real ratios.
 WITH facts AS (
     SELECT n,
@@ -270,7 +294,7 @@ WITH actors AS (
            now() - (15 + n % 14) * interval '1 day' - interval '12 hours' AS activated_at
     FROM generate_series(1, 120) AS series(n)
 ), journey_events AS (
-    SELECT n, 'activation' AS stage, 'account_created' AS event_type, activated_at AS occurred_at
+    SELECT n, 'activation' AS stage, 'account_activated' AS event_type, activated_at AS occurred_at
     FROM actors
     UNION ALL
     SELECT n, 'action', 'task_completed', activated_at + interval '15 minutes'
@@ -421,9 +445,12 @@ INSERT INTO analytics.analytics_semantic_aliases (project_id, source_kind, raw_k
   ('demo_app','EVENT_TYPE','letter_saved','core.action.completed'),
   ('demo_app','EVENT_TYPE','paywall_opened','core.paywall.opened'),
   ('demo_app','EVENT_TYPE','purchase_completed','core.purchase.completed'),
+  ('demo_app','EVENT_TYPE','cloud_account_created','core.account.created'),
+  ('demo_app','EVENT_TYPE','cloud_account_recreated','core.account.recreated'),
   ('demo_app','EVENT_TYPE','stationery_beautification_applied','custom.stationery.beautification_applied'),
   ('demo_app','EVENT_TYPE','share_completed','custom.content.shared'),
-  ('demo_webapp','EVENT_TYPE','account_created','core.activation.completed'),
+  ('demo_webapp','EVENT_TYPE','account_activated','core.activation.completed'),
+  ('demo_webapp','EVENT_TYPE','account_created','core.account.created'),
   ('demo_webapp','EVENT_TYPE','workspace_created','custom.workspace.created'),
   ('demo_webapp','EVENT_TYPE','task_completed','core.action.completed'),
   ('demo_webapp','EVENT_TYPE','billing_page_opened','core.paywall.opened'),

@@ -177,6 +177,17 @@ class CounterServicePostgresIT {
     }
 
     @Test
+    void existingKeysReturnsOnlyRequestedCountersOwnedByTheProject() {
+        counterService.upsert(PROJECT_ID, "letters_completed", null);
+        counterService.upsert(PROJECT_ID, "shares_completed", null);
+
+        assertThat(counterService.existingKeys(
+                PROJECT_ID,
+                List.of("missing_counter", "shares_completed", "letters_completed")
+        )).containsExactly("letters_completed", "shares_completed");
+    }
+
+    @Test
     void eventAndEveryMatchingCounterCommitTogether() throws Exception {
         ObjectMapper objectMapper = JsonMapper.builder().build();
         var trigger = objectMapper.readTree("{\"semantic_key\":\"task_completed\"}");

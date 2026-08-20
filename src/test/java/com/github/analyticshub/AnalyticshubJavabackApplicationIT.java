@@ -82,7 +82,7 @@ class AnalyticshubJavabackApplicationIT {
 
         assertThat(currentSchema).isEqualTo("analytics");
         assertThat(projectsTableExists).isTrue();
-        assertThat(latestMigration).isEqualTo("5");
+        assertThat(latestMigration).isEqualTo("6");
         String analysisTemplate = jdbcTemplate.queryForObject(
                 "SELECT column_default FROM information_schema.columns " +
                         "WHERE table_schema = 'analytics' AND table_name = 'analytics_projects' " +
@@ -167,9 +167,16 @@ class AnalyticshubJavabackApplicationIT {
         )).isEqualTo("OFFICIAL");
         assertThat(upgradeDatabase.queryForObject(
                 "SELECT COUNT(*) FROM analytics_upgrade_v4.flyway_schema_history " +
-                        "WHERE success = TRUE AND version = '5'",
+                        "WHERE success = TRUE AND version = '6'",
                 Integer.class
         )).isOne();
+        assertThat(upgradeDatabase.queryForObject(
+                "SELECT COUNT(*) FROM analytics_upgrade_v4.analytics_semantic_definitions " +
+                        "WHERE project_id = ? AND source_kind = 'EVENT_TYPE' " +
+                        "AND semantic_key IN ('core.account.created', 'core.account.recreated')",
+                Integer.class,
+                "existing_app"
+        )).isEqualTo(2);
     }
 
     @Test

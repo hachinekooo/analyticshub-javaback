@@ -19,11 +19,12 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Set;
 
 /**
@@ -33,6 +34,8 @@ import java.util.Set;
 public class AdminMetricsService {
 
     private static final System.Logger log = System.getLogger(AdminMetricsService.class.getName());
+    private static final String ACCOUNT_CREATED_SEMANTIC_KEY = OverviewMetricCatalog.ACCOUNT_CREATED;
+    private static final String ACCOUNT_RECREATED_SEMANTIC_KEY = OverviewMetricCatalog.ACCOUNT_RECREATED;
     private static final String APP_VERSION_MEASUREMENT = "latest_occurred_event_per_device";
     private static final String UNKNOWN_VERSION = "unknown";
 
@@ -101,6 +104,26 @@ public class AdminMetricsService {
                 .stream()
                 .distinct()
                 .count();
+        Map<String, List<String>> accountAliases = semanticDictionaryService.resolveAvailableActiveEventAliases(
+                normalizedProjectId,
+                List.of(ACCOUNT_CREATED_SEMANTIC_KEY, ACCOUNT_RECREATED_SEMANTIC_KEY)
+        );
+        long cloudAccountsCreated = queryEventCount(
+                jdbcTemplate,
+                eventsTable,
+                normalizedProjectId,
+                eventStart,
+                eventEnd,
+                accountAliases.getOrDefault(ACCOUNT_CREATED_SEMANTIC_KEY, List.of())
+        );
+        long cloudAccountsRecreated = queryEventCount(
+                jdbcTemplate,
+                eventsTable,
+                normalizedProjectId,
+                eventStart,
+                eventEnd,
+                accountAliases.getOrDefault(ACCOUNT_RECREATED_SEMANTIC_KEY, List.of())
+        );
 
         double avgDuration = queryAvg(jdbcTemplate,
                 "SELECT COALESCE(AVG(session_duration_ms), 0) FROM %s WHERE project_id = ? AND session_start_time >= ? AND session_start_time < ?",
@@ -115,10 +138,13 @@ public class AdminMetricsService {
                 devicesTotal,
                 devicesActive,
                 usersActive,
+                cloudAccountsCreated,
+                cloudAccountsRecreated,
                 sessionsTotal,
                 eventsTotal,
                 avgSessionDurationMs,
-                avgEventsPerSession
+                avgEventsPerSession,
+                OverviewMetricCatalog.availableOverviewKeys(accountAliases)
         );
     }
 
@@ -131,6 +157,7 @@ public class AdminMetricsService {
 
         String sessionsTable = dataSourceManager.getTableName(normalizedProjectId, "sessions");
         String eventsTable = dataSourceManager.getTableName(normalizedProjectId, "events");
+        String actorLinksTable = dataSourceManager.getTableName(normalizedProjectId, "actor_identity_links");
 
         Timestamp start = Timestamp.from(range.start());
         Timestamp end = Timestamp.from(range.end());
@@ -150,6 +177,38 @@ public class AdminMetricsService {
                         + "GROUP BY bucket ORDER BY bucket",
                 eventsTable, bucket.value(), normalizedProjectId, eventStart, eventEnd);
 
+        Map<Instant, Long> activeUserBuckets = queryActiveUserBuckets(
+                jdbcTemplate,
+                eventsTable,
+                actorLinksTable,
+                normalizedProjectId,
+                eventStart,
+                eventEnd,
+                bucket
+        );
+        Map<String, List<String>> accountAliases = semanticDictionaryService.resolveAvailableActiveEventAliases(
+                normalizedProjectId,
+                List.of(ACCOUNT_CREATED_SEMANTIC_KEY, ACCOUNT_RECREATED_SEMANTIC_KEY)
+        );
+        Map<Instant, Long> accountCreatedBuckets = queryEventBucketCounts(
+                jdbcTemplate,
+                eventsTable,
+                normalizedProjectId,
+                eventStart,
+                eventEnd,
+                bucket,
+                accountAliases.getOrDefault(ACCOUNT_CREATED_SEMANTIC_KEY, List.of())
+        );
+        Map<Instant, Long> accountRecreatedBuckets = queryEventBucketCounts(
+                jdbcTemplate,
+                eventsTable,
+                normalizedProjectId,
+                eventStart,
+                eventEnd,
+                bucket,
+                accountAliases.getOrDefault(ACCOUNT_RECREATED_SEMANTIC_KEY, List.of())
+        );
+
         Map<Instant, Long> sessionBuckets = queryBucketCounts(jdbcTemplate,
                 "SELECT date_trunc(?, session_start_time, 'UTC') AS bucket, COUNT(*) AS total FROM %s " +
                         "WHERE project_id = ? AND session_start_time >= ? AND session_start_time < ? " +
@@ -163,8 +222,19 @@ public class AdminMetricsService {
             Instant key = cursor.toInstant();
             long events = eventBuckets.getOrDefault(key, 0L);
             long activeDevices = activeDeviceBuckets.getOrDefault(key, 0L);
+            long activeUsers = activeUserBuckets.getOrDefault(key, 0L);
+            long cloudAccountsCreated = accountCreatedBuckets.getOrDefault(key, 0L);
+            long cloudAccountsRecreated = accountRecreatedBuckets.getOrDefault(key, 0L);
             long sessions = sessionBuckets.getOrDefault(key, 0L);
-            points.add(new AdminMetricsTrendPoint(key.toString(), events, activeDevices, sessions));
+            points.add(new AdminMetricsTrendPoint(
+                    key.toString(),
+                    events,
+                    activeDevices,
+                    activeUsers,
+                    cloudAccountsCreated,
+                    cloudAccountsRecreated,
+                    sessions
+            ));
             cursor = bucket.next(cursor);
         }
 
@@ -173,7 +243,8 @@ public class AdminMetricsService {
                 bucket.value(),
                 range.start().toString(),
                 range.end().toString(),
-                points
+                points,
+                OverviewMetricCatalog.availableTrendKeys(accountAliases)
         );
     }
 
@@ -411,6 +482,113 @@ public class AdminMetricsService {
         return result;
     }
 
+    /**
+     * 活跃用户按时间桶归组后再解析 canonical actor，避免登录前后身份在同一天重复计数。
+     * SQL 只取每个桶内的 distinct actor，降低 Java 侧归并的数据量。
+     */
+    private Map<Instant, Long> queryActiveUserBuckets(
+            JdbcTemplate jdbcTemplate,
+            String eventsTable,
+            String actorLinksTable,
+            String projectId,
+            long eventStart,
+            long eventEnd,
+            Granularity granularity
+    ) {
+        List<BucketActor> rows = jdbcTemplate.query(
+                "SELECT DISTINCT date_trunc(?, to_timestamp(event_timestamp / 1000.0), 'UTC') AS bucket, "
+                        + "user_id FROM " + eventsTable + " "
+                        + "WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ? "
+                        + "AND user_id IS NOT NULL AND BTRIM(user_id) <> ''",
+                (resultSet, rowNumber) -> new BucketActor(
+                        readBucket(resultSet),
+                        resultSet.getString("user_id")
+                ),
+                granularity.value(),
+                projectId,
+                eventStart,
+                eventEnd
+        );
+        List<String> rawActors = rows.stream().map(BucketActor::rawActorId).distinct().toList();
+        Map<String, String> canonicalActors = actorIdentityResolver.resolveCanonicalActors(
+                jdbcTemplate,
+                actorLinksTable,
+                projectId,
+                rawActors
+        );
+        Map<Instant, Set<String>> actorsByBucket = new HashMap<>();
+        for (BucketActor row : rows) {
+            if (row.bucket() == null) continue;
+            String canonical = canonicalActors.getOrDefault(row.rawActorId(), row.rawActorId());
+            actorsByBucket.computeIfAbsent(row.bucket(), ignored -> new HashSet<>()).add(canonical);
+        }
+        Map<Instant, Long> result = new HashMap<>();
+        actorsByBucket.forEach((time, actors) -> result.put(time, (long) actors.size()));
+        return result;
+    }
+
+    private long queryEventCount(
+            JdbcTemplate jdbcTemplate,
+            String eventsTable,
+            String projectId,
+            long eventStart,
+            long eventEnd,
+            List<String> eventTypes
+    ) {
+        if (eventTypes.isEmpty()) return 0L;
+        String placeholders = String.join(",", java.util.Collections.nCopies(eventTypes.size(), "?"));
+        List<Object> arguments = new ArrayList<>();
+        arguments.add(projectId);
+        arguments.add(eventStart);
+        arguments.add(eventEnd);
+        arguments.addAll(eventTypes);
+        return queryCountSql(
+                jdbcTemplate,
+                "SELECT COUNT(*) FROM " + eventsTable
+                        + " WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ?"
+                        + " AND event_type IN (" + placeholders + ")",
+                arguments.toArray()
+        );
+    }
+
+    private Map<Instant, Long> queryEventBucketCounts(
+            JdbcTemplate jdbcTemplate,
+            String eventsTable,
+            String projectId,
+            long eventStart,
+            long eventEnd,
+            Granularity granularity,
+            List<String> eventTypes
+    ) {
+        if (eventTypes.isEmpty()) return Map.of();
+        String placeholders = String.join(",", java.util.Collections.nCopies(eventTypes.size(), "?"));
+        List<Object> arguments = new ArrayList<>();
+        arguments.add(granularity.value());
+        arguments.add(projectId);
+        arguments.add(eventStart);
+        arguments.add(eventEnd);
+        arguments.addAll(eventTypes);
+        return queryBucketCounts(
+                jdbcTemplate,
+                "SELECT date_trunc(?, to_timestamp(event_timestamp / 1000.0), 'UTC') AS bucket, "
+                        + "COUNT(*) AS total FROM %s WHERE project_id = ? "
+                        + "AND event_timestamp >= ? AND event_timestamp < ? "
+                        + "AND event_type IN (" + placeholders + ") GROUP BY bucket ORDER BY bucket",
+                eventsTable,
+                arguments.toArray()
+        );
+    }
+
+    private static Instant readBucket(java.sql.ResultSet resultSet) throws java.sql.SQLException {
+        try {
+            OffsetDateTime value = resultSet.getObject("bucket", OffsetDateTime.class);
+            return value == null ? null : value.toInstant();
+        } catch (Exception ignored) {
+            Timestamp value = resultSet.getTimestamp("bucket");
+            return value == null ? null : value.toInstant();
+        }
+    }
+
     private record ProjectContext(MultiDataSourceManager.ProjectConfig config, DataSource dataSource) {}
 
     private record VersionGroup(
@@ -419,6 +597,8 @@ public class AdminMetricsService {
             long activeDevices,
             long lastObservedAt
     ) {}
+
+    private record BucketActor(Instant bucket, String rawActorId) {}
 
     private static String normalizeProjectId(String projectId) {
         if (projectId == null) {

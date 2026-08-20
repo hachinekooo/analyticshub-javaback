@@ -10,5 +10,6 @@ public record AdminMetricsTrendResponse(
         String granularity,
         String rangeStart,
         String rangeEnd,
-        List<AdminMetricsTrendPoint> points
+        List<AdminMetricsTrendPoint> points,
+        List<String> availableMetricKeys
 ) {}

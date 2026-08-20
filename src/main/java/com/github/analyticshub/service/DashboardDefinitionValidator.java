@@ -67,7 +67,7 @@ public class DashboardDefinitionValidator {
     );
 
     private static final Map<String, Set<String>> TYPE_CONFIG_FIELDS = Map.ofEntries(
-            Map.entry("core.overview", Set.of()),
+            Map.entry("core.overview", Set.of("metricKeys")),
             Map.entry("core.trends", Set.of("granularity")),
             Map.entry("core.topEvents", Set.of("aggregation", "limit")),
             Map.entry("core.productFunnel", Set.of("steps", "groupBy", "journeyKey")),
@@ -283,6 +283,16 @@ public class DashboardDefinitionValidator {
         }
 
         switch (type) {
+            case "core.overview" -> {
+                if (config.has("metricKeys")) {
+                    validateStringArray(config.get("metricKeys"), 1, 10, path + ".metricKeys");
+                    for (JsonNode metricKey : config.get("metricKeys")) {
+                        if (!OverviewMetricCatalog.supportedKeys().contains(metricKey.stringValue())) {
+                            fail(path + ".metricKeys 包含不支持的指标");
+                        }
+                    }
+                }
+            }
             case "core.trends" -> validateGranularity(config, path, Set.of("hour", "day"));
             case "core.trafficTrends" -> validateGranularity(
                     config,
@@ -305,6 +315,11 @@ public class DashboardDefinitionValidator {
             case "core.counters" -> {
                 if (config.has("keys")) {
                     validateStringArray(config.get("keys"), 1, 20, path + ".keys");
+                    for (JsonNode counterKey : config.get("keys")) {
+                        if (!CounterKeyRules.isValid(counterKey.stringValue())) {
+                            fail(path + ".keys 包含不合法的 Counter Key");
+                        }
+                    }
                 }
             }
             case "core.events" -> {
