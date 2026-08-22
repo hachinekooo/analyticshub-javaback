@@ -144,4 +144,4 @@ for f in ops/server/*.sh ops/apps/analyticshub/*.sh; do bash -n "$f" || exit 1; 
 bash ops/analyticshub help
 ```
 
-确认生成的 artifact 是 `target/analyticshub-1.0.1.jar`，记录其 SHA-256，并让 release tag、测试记录、部署 JAR 与 checksum 指向同一个 commit。仓库 CI 会在 push / pull request 上执行 Maven 全量验证与 ops 脚本测试，但本地发布检查仍不能省略生产备份、配置核对和逐项目 health 检查。
+确认生成的 artifact 是 `target/analyticshub-1.0.1.jar`，记录其 SHA-256，并让 release tag、测试记录、部署 JAR 与 checksum 指向同一个 commit。仓库不启用托管 CI；维护者必须在受控本地环境完成上述全量验证与 ops 脚本测试，生产备份、配置核对和逐项目 health 检查同样不能省略。
