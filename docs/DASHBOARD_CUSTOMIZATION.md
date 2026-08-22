@@ -40,10 +40,12 @@ Dashboard definition 的 `defaultRange` 定义首次进入该项目时的默认�
 
 | 模板 | `overview` 数据大屏 | `details` 明细数据 |
 | --- | --- | --- |
-| `app` | 产品行为、事件趋势、核心动作 | 事件、设备、会话；不默认展示网站 PV/UV |
-| `website` | PV、UV、人均访问、访问趋势、页面与来源排行 | 页面访问记录；不提供 App 切换 |
-| `webapp` | 产品行为与完整网站流量组件 | 业务事件、页面访问、设备和会话 |
+| `app`（仅 App 产品分析） | 产品行为、事件趋势、核心动作 | 事件、设备、会话；不展示官网流量组件 |
+| `website`（仅官网流量分析） | PV、访客、人均访问、访问趋势、页面与来源排行 | 页面访问记录；不展示 App 产品事件组件 |
+| `webapp`（App + 官网组合分析） | 产品行为与完整官网流量组件 | 业务事件、页面访问、设备和会话 |
 | `blank` | 空白编排区 | 空白数据集，按接入能力扩展 |
+
+模板是 presentation scope（展示范围），不是 storage topology（存储拓扑）。同一个 Project 可以在同一目标 Schema 中分别用 `events` 保存 App 产品事件、用 `traffic_metrics` 保存官网访问事实；此时应选择 `webapp`。切换模板不会创建、迁移或删除项目表，也不会覆盖已保存布局，新开放的组件由管理员在“编辑布局”中按需添加。完整的创建与初始化示例见[管理端 API：项目创建、初始化与模板选择](API_MANAGEMENT.md#项目创建初始化与模板选择)。
 
 工作区 key 是 Dashboard API 和扩展组件暴露的稳定标识。system V5 migration 将旧的 `operations` / `technical` 分别迁移为 `overview` / `details`，并从历史 App 明细布局中移除误放的网站流量组件；其他已保存布局保持不变。新代码不再维护旧 key 的运行时 fallback。
 

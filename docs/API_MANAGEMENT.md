@@ -66,12 +66,60 @@ X-Admin-Token: your_admin_token
 
 `analysisTemplate` 是项目工作台的稳定初始化模板，新建项目必填：
 
-- `app`：App 产品运营；
-- `website`：展示型网站；
-- `webapp`：WebApp / SaaS；
+- `app`：仅 App 产品分析；
+- `website`：仅官网流量分析；
+- `webapp`：App + 官网组合分析；
 - `blank`：空白工作台。
 
-所有模板都有 `overview`（数据大屏）和 `details`（明细数据）两个稳定空间。模板只决定两个空间初始化哪些只读组件与数据集，不在明细页再次切换 App/Website 类型。历史项目在 system migration V5 中迁移为 `app`，同一 migration 会将旧 Dashboard 的 `operations` / `technical` key 迁移为 `overview` / `details`。之后可以通过更新项目 API 调整模板。
+所有模板都有 `overview`（数据大屏）和 `details`（明细数据）两个稳定空间。模板只决定两个空间开放哪些只读组件及其默认布局，不决定数据库、Schema、表或采集 API 如何拆分。所有项目初始化时都创建同一套受管项目表；没有出现在当前模板中的数据不会被删除，只是不在该工作台中默认展示。历史项目在 system migration V5 中迁移为 `app`，同一 migration 会将旧 Dashboard 的 `operations` / `technical` key 迁移为 `overview` / `details`。之后可以通过更新项目 API 调整模板。
+
+#### 项目创建、初始化与模板选择
+
+项目配置、项目库初始化和工作台模板是三个不同层次：
+
+1. **新建项目**：在 system database 登记稳定 `projectId`、项目库连接、目标 Schema、表前缀和分析模板；不会创建外部 PostgreSQL database 或用户。
+2. **初始化项目**：管理员明确执行 `POST /api/admin/projects/{id}/init` 后，AnalyticsHub 才连接目标 database。目标 Schema 不存在时会在数据库用户权限允许的前提下创建；已经存在时只校验并执行待补的 Flyway migration，不重复创建或清空已有表。
+3. **选择模板**：只控制 `overview` / `details` 中可用的组件和新工作区默认布局，不改变 `projectId`、数据库连接、Schema、表前缀或历史数据。
+
+初始化后，目标 Schema 包含带 `tablePrefix` 的项目表。以 `dbSchema=analytics`、`tablePrefix=product_` 为例：
+
+| 物理表 | 主要职责 |
+| --- | --- |
+| `product_devices` | 分析凭据注册和设备版本快照 |
+| `product_events` | App、客户端或 Web 产品行为事件 |
+| `product_sessions` | 分析会话事实 |
+| `product_traffic_metrics` | 官网页面访问、访客、页面和来源数据 |
+| `product_counters` | 不随 Dashboard 日期范围变化的长期累计值 |
+| `product_idempotency_keys` | 采集请求幂等边界 |
+| `product_actor_identity_links` | 匿名 actor 到权威账号 actor 的项目内关联 |
+| `product_actor_suppressions` | 隐私删除后阻止迟到关联恢复的不可逆摘要 |
+| `product_privacy_requests` | 隐私请求主记录 |
+| `product_work_order_activities` | 隐私工单活动审计 |
+| `product_work_order_outbox` | 隐私工单异步通知任务 |
+| `product_flyway_history` | 该 Schema + 表前缀自己的项目 migration 历史 |
+
+这些表属于同一个 AnalyticsHub Project，但按事实类型保持边界。例如，同一产品的 App 事件进入 `product_events`，官网访问进入 `product_traffic_metrics`；使用组合模板不会把两种身份或原始事实合并成一张表。
+
+##### 示例：同一产品同时拥有 App 和官网
+
+假设一个产品使用下面的通用配置：
+
+```text
+projectId:   example_product_prod
+dbName:      example_product
+dbSchema:    analytics
+tablePrefix: product_
+```
+
+如果 App SDK 与官网流量采集都使用 `example_product_prod`：
+
+- 选择 `webapp`，管理端显示为“App + 官网（组合分析）”；
+- App 的事件、漏斗和留存继续读取 `product_events` 等产品事实表；
+- 官网的 PV、访客、热门页面和来源读取 `product_traffic_metrics`；
+- 两类数据在同一个项目工作台中分别展示，不要求拆分 database、Schema 或 Project；
+- 官网匿名访客标识和 App actor 仍是两套身份边界，模板不会把它们自动关联。
+
+如果项目已经使用 `app` 模板并且官网流量也已写入，只需把模板更新为 `webapp`。切换不会迁移或删除数据，也不会覆盖已保存 Dashboard；保存后在“编辑布局”中添加流量组件即可。只有当 App 与官网确实需要不同的访问权限、保留周期、数据库边界或运营归属时，才应建立两个使用不同 `projectId` 的项目，例如 `example_product_app_prod` 与 `example_product_web_prod`。同一个 `projectId` 不能重复创建。
 
 ```http
 GET    /api/admin/projects

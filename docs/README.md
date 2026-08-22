@@ -19,6 +19,7 @@ agent_notes: 先按任务选择目标文档；索引不替代具体文档
 | 如何从零启动并看到完整页面 | [快速启动](../QUICKSTART.md) |
 | 如何加载三种模板的演示数据 | [三模板演示数据](../examples/demo-data/README.md) |
 | 系统库、项目库和认证如何协作 | [架构与认证链路](ARCHITECTURE.md) |
+| 如何新建项目、初始化 Schema 和选择分析模板 | [管理端 API：项目创建、初始化与模板选择](API_MANAGEMENT.md#项目创建初始化与模板选择) |
 | App/官网怎样采集数据 | [采集端 API](API_COLLECTION.md) |
 | 管理后台怎样调用接口 | [管理端 API](API_MANAGEMENT.md) |
 | 怎样处理隐私工单 | [隐私工单处理流程](PRIVACY_WORKFLOW.md) |
