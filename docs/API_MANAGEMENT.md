@@ -255,7 +255,8 @@ GET /api/admin/events?projectId=your_project
 **参数**：
 - `page`, `pageSize`: 分页参数
 - `eventType`: 筛选事件类型
-- `userId`: 筛选用户
+- `userId`: 按事件写入时的原始统计身份精确筛选
+- `resolvedActorId`: 按归一身份筛选完整旅程；可传归一 actor 或其已绑定的匿名 raw actor，都会返回关联前后的事件
 - `deviceId`: 筛选设备
 - `from`, `to`: 时间范围
 
@@ -274,7 +275,10 @@ GET /api/admin/events?projectId=your_project
         "eventType": "button_click",
         "eventTimestamp": 1673520000000,
         "deviceId": "550e8400-...",
-        "userId": "u_001",
+        "userId": "550e8400-e29b-41d4-a716-446655440000",
+        "resolvedActorId": "0f8fad5b-d9cb-469f-a165-70867728950e",
+        "identityScope": "anonymous",
+        "actorLinked": true,
         "sessionId": "sess_abc",
         "properties": {
           "button_id": "login_btn"
@@ -284,6 +288,11 @@ GET /api/admin/events?projectId=your_project
   }
 }
 ```
+
+`userId` 是不可改写的原始采集事实：匿名阶段为统计专用 UUID，云账号阶段通常为业务云账号 UUID。
+`resolvedActorId` 是当前 alias 规则下用于漏斗和旅程查询的归一身份；建立关联后通常对应云账号 UUID。
+这些字段仅供受控运营和工单排查，不包含资料或内容数据。`identityScope` 来自事件采集阶段，
+用于区分匿名阶段与云账号阶段，不应单独作为登录成功的业务审计证据。
 
 ### 6. 会话管理（查询）
 

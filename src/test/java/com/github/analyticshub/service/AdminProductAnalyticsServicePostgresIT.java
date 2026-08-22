@@ -213,7 +213,7 @@ class AdminProductAnalyticsServicePostgresIT {
                 bindingId.toString(),
                 PROJECT_ID,
                 anonymousActor.toString(),
-                cloudActor.toString(),
+                cloudActor.toString().toUpperCase(),
                 Timestamp.from(Instant.parse("2026-01-01T00:30:00Z"))
         );
 
@@ -368,13 +368,15 @@ class AdminProductAnalyticsServicePostgresIT {
         );
         AdminEventsResponse eventRecords = new AdminEventQueryService(
                 dataSourceManager,
-                JsonMapper.builder().build()
+                JsonMapper.builder().build(),
+                actorIdentityResolver
         ).listEvents(
                 PROJECT_ID,
                 "2026-01-01T00:00:00Z",
                 "2026-01-02T00:00:00Z",
                 1,
                 20,
+                null,
                 null,
                 null,
                 null
@@ -391,6 +393,127 @@ class AdminProductAnalyticsServicePostgresIT {
         assertThat(funnel.groups().getFirst().steps().getFirst().users()).isEqualTo(1L);
         assertThat(eventRecords.items()).extracting(item -> item.eventType())
                 .containsExactly("offline_open");
+    }
+
+    @Test
+    void eventRecordsExposeAndFilterOneContinuousActorJourney() {
+        UUID anonymousActor = UUID.randomUUID();
+        UUID cloudActor = UUID.randomUUID();
+        insertLink(anonymousActor, cloudActor, "2026-01-01T00:30:00Z");
+        insertEvent(
+                anonymousActor.toString(),
+                UUID.randomUUID(),
+                "anonymous_open",
+                "2026-01-01T01:00:00Z",
+                "2026-01-01T01:00:01Z",
+                "{\"identity_scope\":\"anonymous\"}"
+        );
+        insertEvent(
+                cloudActor.toString(),
+                UUID.randomUUID(),
+                "cloud_open",
+                "2026-01-01T02:00:00Z",
+                "2026-01-01T02:00:01Z",
+                "{\"identity_scope\":\"cloud_account\"}"
+        );
+        insertEvent(
+                UUID.randomUUID().toString(),
+                UUID.randomUUID(),
+                "unrelated_open",
+                "2026-01-01T03:00:00Z",
+                "2026-01-01T03:00:01Z",
+                "{\"identity_scope\":\"anonymous\"}"
+        );
+
+        AdminEventsResponse response = new AdminEventQueryService(
+                dataSourceManager,
+                JsonMapper.builder().build(),
+                actorIdentityResolver
+        ).listEvents(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                1,
+                20,
+                null,
+                null,
+                cloudActor.toString(),
+                null
+        );
+
+        assertThat(response.total()).isEqualTo(2L);
+        assertThat(response.items()).extracting(item -> item.eventType())
+                .containsExactly("cloud_open", "anonymous_open");
+        assertThat(response.items()).allSatisfy(item ->
+                assertThat(item.resolvedActorId()).isEqualTo(cloudActor.toString())
+        );
+        assertThat(response.items()).filteredOn(item -> item.eventType().equals("anonymous_open"))
+                .singleElement()
+                .satisfies(item -> {
+                    assertThat(item.userId()).isEqualTo(anonymousActor.toString());
+                    assertThat(item.identityScope()).isEqualTo("anonymous");
+                    assertThat(item.actorLinked()).isTrue();
+                });
+        assertThat(response.items()).filteredOn(item -> item.eventType().equals("cloud_open"))
+                .singleElement()
+                .satisfies(item -> {
+                    assertThat(item.userId()).isEqualTo(cloudActor.toString());
+                    assertThat(item.identityScope()).isEqualTo("cloud_account");
+                    assertThat(item.actorLinked()).isFalse();
+                });
+
+        AdminEventsResponse responseFromRawAnonymousActor = new AdminEventQueryService(
+                dataSourceManager,
+                JsonMapper.builder().build(),
+                actorIdentityResolver
+        ).listEvents(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                1,
+                20,
+                null,
+                null,
+                anonymousActor.toString(),
+                null
+        );
+        assertThat(responseFromRawAnonymousActor.items()).extracting(item -> item.eventType())
+                .containsExactly("cloud_open", "anonymous_open");
+
+        AdminEventsResponse responseWithRawActorIntersection = new AdminEventQueryService(
+                dataSourceManager,
+                JsonMapper.builder().build(),
+                actorIdentityResolver
+        ).listEvents(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                1,
+                20,
+                null,
+                anonymousActor.toString(),
+                cloudActor.toString(),
+                null
+        );
+        assertThat(responseWithRawActorIntersection.items()).extracting(item -> item.eventType())
+                .containsExactly("anonymous_open");
+
+        assertThatThrownBy(() -> new AdminEventQueryService(
+                dataSourceManager,
+                JsonMapper.builder().build(),
+                actorIdentityResolver
+        ).listEvents(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                1,
+                20,
+                null,
+                null,
+                "not-a-uuid",
+                null
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("resolvedActorId 格式无效");
     }
 
     @Test

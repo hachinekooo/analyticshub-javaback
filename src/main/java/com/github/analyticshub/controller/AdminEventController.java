@@ -30,9 +30,12 @@ public class AdminEventController {
             @RequestParam(value = "pageSize", required = false) Integer pageSize,
             @RequestParam(value = "eventType", required = false) String eventType,
             @RequestParam(value = "userId", required = false) String userId,
+            @RequestParam(value = "resolvedActorId", required = false) String resolvedActorId,
             @RequestParam(value = "deviceId", required = false) String deviceId) {
         return ApiResponse.success(
-                adminEventQueryService.listEvents(projectId, from, to, page, pageSize, eventType, userId, deviceId)
+                adminEventQueryService.listEvents(
+                        projectId, from, to, page, pageSize, eventType, userId, resolvedActorId, deviceId
+                )
         );
     }
 }

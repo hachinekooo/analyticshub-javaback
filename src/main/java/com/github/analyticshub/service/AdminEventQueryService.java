@@ -13,6 +13,9 @@ import org.springframework.stereotype.Service;
 import javax.sql.DataSource;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
 
 /**
  * 管理端事件查询服务
@@ -24,15 +27,20 @@ public class AdminEventQueryService {
 
     private final MultiDataSourceManager dataSourceManager;
     private final ObjectMapper objectMapper;
+    private final ActorIdentityResolver actorIdentityResolver;
 
-    public AdminEventQueryService(MultiDataSourceManager dataSourceManager, ObjectMapper objectMapper) {
+    public AdminEventQueryService(MultiDataSourceManager dataSourceManager,
+                                  ObjectMapper objectMapper,
+                                  ActorIdentityResolver actorIdentityResolver) {
         this.dataSourceManager = dataSourceManager;
         this.objectMapper = objectMapper;
+        this.actorIdentityResolver = actorIdentityResolver;
     }
 
     public AdminEventsResponse listEvents(String projectId, String from, String to,
                                           Integer page, Integer pageSize,
-                                          String eventType, String userId, String deviceId) {
+                                          String eventType, String userId,
+                                          String resolvedActorId, String deviceId) {
         String normalizedProjectId = normalizeProjectId(projectId);
         AdminQueryUtils.Range range = AdminQueryUtils.resolveRange(from, to);
         AdminQueryUtils.Paging paging = AdminQueryUtils.resolvePaging(page, pageSize);
@@ -40,10 +48,17 @@ public class AdminEventQueryService {
         JdbcTemplate jdbcTemplate = new JdbcTemplate(context.dataSource());
 
         String eventsTable = dataSourceManager.getTableName(normalizedProjectId, "events");
+        String actorLinksTable = dataSourceManager.getTableName(normalizedProjectId, "actor_identity_links");
 
         if (deviceId != null && !deviceId.isBlank() && !CryptoUtils.isValidUUID(deviceId)) {
             throw new IllegalArgumentException("deviceId 格式无效");
         }
+        List<String> resolvedActorMembers = resolveActorMembers(
+                jdbcTemplate,
+                actorLinksTable,
+                normalizedProjectId,
+                resolvedActorId
+        );
 
         StringBuilder where = new StringBuilder(
                 " WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ? "
@@ -60,6 +75,12 @@ public class AdminEventQueryService {
         if (userId != null && !userId.isBlank()) {
             where.append(" AND user_id = ? ");
             args.add(userId.trim());
+        }
+        if (!resolvedActorMembers.isEmpty()) {
+            where.append(" AND user_id IN (")
+                    .append(String.join(",", resolvedActorMembers.stream().map(ignored -> "?").toList()))
+                    .append(") ");
+            args.addAll(resolvedActorMembers);
         }
         if (deviceId != null && !deviceId.isBlank()) {
             where.append(" AND device_id = ?::uuid ");
@@ -81,7 +102,7 @@ public class AdminEventQueryService {
         listArgs.add(paging.pageSize());
         listArgs.add(paging.offset());
 
-        List<AdminEventRecord> items = jdbcTemplate.query(listSql, (rs, rowNum) -> {
+        List<RawAdminEventRecord> rawItems = jdbcTemplate.query(listSql, (rs, rowNum) -> {
             String properties = rs.getString("properties");
             JsonNode propertiesNode = null;
             if (properties != null && !properties.isBlank()) {
@@ -91,7 +112,7 @@ public class AdminEventQueryService {
                     log.log(System.Logger.Level.WARNING, "Failed to parse properties JSON", e);
                 }
             }
-            return new AdminEventRecord(
+            return new RawAdminEventRecord(
                     rs.getString("event_id"),
                     rs.getString("event_type"),
                     rs.getLong("event_timestamp"),
@@ -103,6 +124,32 @@ public class AdminEventQueryService {
             );
         }, listArgs.toArray());
 
+        Map<String, String> resolvedActors = actorIdentityResolver.resolveCanonicalActors(
+                jdbcTemplate,
+                actorLinksTable,
+                normalizedProjectId,
+                rawItems.stream().map(RawAdminEventRecord::userId).filter(Objects::nonNull).toList()
+        );
+        List<AdminEventRecord> items = rawItems.stream().map(item -> {
+            String resolvedActor = item.userId() == null
+                    ? null
+                    : resolvedActors.getOrDefault(item.userId(), item.userId());
+            String identityScope = textProperty(item.properties(), "identity_scope");
+            return new AdminEventRecord(
+                    item.eventId(),
+                    item.eventType(),
+                    item.eventTimestamp(),
+                    item.createdAt(),
+                    item.deviceId(),
+                    item.userId(),
+                    resolvedActor,
+                    identityScope,
+                    item.userId() != null && !Objects.equals(item.userId(), resolvedActor),
+                    item.sessionId(),
+                    item.properties()
+            );
+        }).toList();
+
         return new AdminEventsResponse(
                 normalizedProjectId,
                 range.start().toString(),
@@ -113,6 +160,63 @@ public class AdminEventQueryService {
                 items
         );
     }
+
+    private List<String> resolveActorMembers(JdbcTemplate jdbcTemplate,
+                                             String actorLinksTable,
+                                             String projectId,
+                                             String resolvedActorId) {
+        if (resolvedActorId == null || resolvedActorId.isBlank()) {
+            return List.of();
+        }
+        String candidate = resolvedActorId.trim();
+        if (!CryptoUtils.isValidUUID(candidate)) {
+            throw new IllegalArgumentException("resolvedActorId 格式无效");
+        }
+        String normalized = UUID.fromString(candidate).toString();
+        List<String> canonicalMatches = jdbcTemplate.queryForList(
+                String.format(
+                        "SELECT canonical_actor_id::text FROM %s WHERE project_id = ? "
+                                + "AND source_actor_id = ?::uuid",
+                        actorLinksTable
+                ),
+                String.class,
+                projectId,
+                normalized
+        );
+        // 管理员可能从事件提示中复制 raw actor。先解析到 canonical 再展开完整旅程，
+        // 避免静默只返回登录前的一半事件。
+        String canonicalActor = canonicalMatches.isEmpty() ? normalized : canonicalMatches.getFirst();
+        return jdbcTemplate.queryForList(
+                String.format(
+                        "SELECT source_actor_id::text FROM %s WHERE project_id = ? "
+                                + "AND canonical_actor_id = ?::uuid UNION SELECT ?",
+                        actorLinksTable
+                ),
+                String.class,
+                projectId,
+                canonicalActor,
+                canonicalActor
+        );
+    }
+
+    private static String textProperty(JsonNode properties, String key) {
+        if (properties == null || !properties.isObject()) {
+            return null;
+        }
+        JsonNode value = properties.get(key);
+        return value == null || !value.isString() ? null : value.asString();
+    }
+
+    private record RawAdminEventRecord(
+            String eventId,
+            String eventType,
+            Long eventTimestamp,
+            String createdAt,
+            String deviceId,
+            String userId,
+            String sessionId,
+            JsonNode properties
+    ) {}
 
     private ProjectContext requireProject(String projectId) {
         String normalizedProjectId = normalizeProjectId(projectId);
