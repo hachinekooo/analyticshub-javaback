@@ -7,7 +7,10 @@ import com.github.analyticshub.database.project.ProjectSchemaMigrator;
 import com.github.analyticshub.dto.AdminFunnelGroupResult;
 import com.github.analyticshub.dto.AdminFunnelResponse;
 import com.github.analyticshub.dto.AdminAppVersionDistributionResponse;
+import com.github.analyticshub.dto.AdminEventRecord;
 import com.github.analyticshub.dto.AdminEventsResponse;
+import com.github.analyticshub.dto.AdminEventJourneyResponse;
+import com.github.analyticshub.dto.AdminJourneyEventRecord;
 import com.github.analyticshub.dto.AdminMetricsOverviewResponse;
 import com.github.analyticshub.dto.AdminMetricsTrendResponse;
 import com.github.analyticshub.dto.AdminRetentionResponse;
@@ -20,11 +23,14 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import java.sql.Timestamp;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -409,7 +415,7 @@ class AdminProductAnalyticsServicePostgresIT {
                 "{\"identity_scope\":\"anonymous\"}"
         );
         insertEvent(
-                cloudActor.toString(),
+                cloudActor.toString().toUpperCase(),
                 UUID.randomUUID(),
                 "cloud_open",
                 "2026-01-01T02:00:00Z",
@@ -457,7 +463,7 @@ class AdminProductAnalyticsServicePostgresIT {
         assertThat(response.items()).filteredOn(item -> item.eventType().equals("cloud_open"))
                 .singleElement()
                 .satisfies(item -> {
-                    assertThat(item.userId()).isEqualTo(cloudActor.toString());
+                    assertThat(item.userId()).isEqualTo(cloudActor.toString().toUpperCase());
                     assertThat(item.identityScope()).isEqualTo("cloud_account");
                     assertThat(item.actorLinked()).isFalse();
                 });
@@ -514,6 +520,207 @@ class AdminProductAnalyticsServicePostgresIT {
                 null
         )).isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("resolvedActorId 格式无效");
+    }
+
+    @Test
+    void eventJourneyUsesTheSelectedEventAsAnchorAndJoinsIdentityStages() {
+        UUID anonymousActor = UUID.randomUUID();
+        UUID cloudActor = UUID.randomUUID();
+        UUID sharedDevice = UUID.randomUUID();
+        insertLink(anonymousActor, cloudActor, "2026-01-01T01:00:00Z");
+        insertEvent(
+                anonymousActor.toString(), sharedDevice, "anonymous_open",
+                "2026-01-01T01:10:00Z", "{\"identity_scope\":\"anonymous\"}"
+        );
+        String anchorEventId = insertEventReturningId(
+                anonymousActor.toString(), sharedDevice, "authoring_started",
+                "2026-01-01T02:00:00Z",
+                "{\"identity_scope\":\"anonymous\",\"entry_point\":\"compose\","
+                        + "\"letterContent\":\"private text\"}"
+        );
+        insertEvent(
+                cloudActor.toString(), sharedDevice, "cloud_auth_succeeded",
+                "2026-01-01T02:20:00Z", "{\"identity_scope\":\"cloud_account\"}"
+        );
+        insertEvent(
+                cloudActor.toString(), sharedDevice, "letter_created",
+                "2026-01-01T02:40:00Z", "{\"identity_scope\":\"cloud_account\"}"
+        );
+        insertEvent(
+                cloudActor.toString(), sharedDevice, "outside_window",
+                "2026-01-01T04:30:00Z", "{\"identity_scope\":\"cloud_account\"}"
+        );
+        insertEvent(
+                UUID.randomUUID().toString(), UUID.randomUUID(), "unrelated",
+                "2026-01-01T02:10:00Z", "{\"identity_scope\":\"anonymous\"}"
+        );
+
+        AdminEventJourneyResponse response = new AdminEventJourneyService(
+                dataSourceManager,
+                JsonMapper.builder().build(),
+                actorIdentityResolver
+        ).getJourney(PROJECT_ID, anchorEventId, 60, 60);
+
+        assertThat(response.anchorEventId()).isEqualTo(anchorEventId);
+        assertThat(response.subjectType()).isEqualTo("actor");
+        assertThat(response.resolvedActorId()).isEqualTo(cloudActor.toString());
+        assertThat(response.total()).isEqualTo(4L);
+        assertThat(response.truncated()).isFalse();
+        assertThat(response.items()).extracting(AdminJourneyEventRecord::eventType)
+                .containsExactly(
+                        "anonymous_open",
+                        "authoring_started",
+                        "cloud_auth_succeeded",
+                        "letter_created"
+                );
+        assertThat(response.items()).allSatisfy(item ->
+                assertThat(item.resolvedActorId()).isEqualTo(cloudActor.toString())
+        );
+    }
+
+    @Test
+    void eventJourneyKeepsTheAnchorWhenMoreThanTwoHundredEventsShareItsTimestamp() {
+        UUID actor = UUID.randomUUID();
+        UUID device = UUID.randomUUID();
+        String occurredAt = "2026-01-01T02:00:00Z";
+        for (int index = 0; index < 205; index++) {
+            insertEvent(actor.toString(), device, "concurrent_" + index, occurredAt, "{}");
+        }
+        String anchorEventId = insertEventReturningId(
+                actor.toString(), device, "selected_anchor", occurredAt, "{}"
+        );
+
+        AdminEventJourneyResponse response = new AdminEventJourneyService(
+                dataSourceManager,
+                JsonMapper.builder().build(),
+                actorIdentityResolver
+        ).getJourney(PROJECT_ID, anchorEventId, 15, 15);
+
+        assertThat(response.total()).isEqualTo(206L);
+        assertThat(response.truncated()).isTrue();
+        assertThat(response.items()).hasSize(200);
+        assertThat(response.items()).extracting(AdminJourneyEventRecord::eventId)
+                .contains(anchorEventId);
+    }
+
+    @Test
+    void eventJourneyUsesDatabaseInsertionOrderWhenOccurrenceTimesAreEqual() {
+        UUID actor = UUID.randomUUID();
+        UUID device = UUID.randomUUID();
+        String occurredAt = "2026-01-01T02:00:00Z";
+        insertEvent(actor.toString(), device, "first_received", occurredAt, "{}");
+        String anchorEventId = insertEventReturningId(
+                actor.toString(), device, "second_received", occurredAt, "{}"
+        );
+        insertEvent(actor.toString(), device, "third_received", occurredAt, "{}");
+
+        AdminEventJourneyResponse response = new AdminEventJourneyService(
+                dataSourceManager,
+                JsonMapper.builder().build(),
+                actorIdentityResolver
+        ).getJourney(PROJECT_ID, anchorEventId, 15, 15);
+
+        assertThat(response.items()).extracting(AdminJourneyEventRecord::eventType)
+                .containsExactly("first_received", "second_received", "third_received");
+    }
+
+    @Test
+    void eventJourneyNormalizesHistoricalUppercaseUuidActors() {
+        UUID anonymousActor = UUID.randomUUID();
+        UUID cloudActor = UUID.randomUUID();
+        UUID device = UUID.randomUUID();
+        insertLink(anonymousActor, cloudActor, "2026-01-01T01:00:00Z");
+        insertEvent(
+                anonymousActor.toString(), device, "anonymous_open",
+                "2026-01-01T01:30:00Z", "{\"identity_scope\":\"anonymous\"}"
+        );
+        String anchorEventId = insertEventReturningId(
+                cloudActor.toString(), device, "cloud_auth_succeeded",
+                "2026-01-01T02:00:00Z", "{\"identity_scope\":\"cloud_account\"}"
+        );
+        jdbcTemplate.update(
+                "UPDATE " + quoted(PREFIX + "events") + " SET user_id = UPPER(user_id) WHERE event_id = ?",
+                anchorEventId
+        );
+
+        AdminEventJourneyResponse response = new AdminEventJourneyService(
+                dataSourceManager,
+                JsonMapper.builder().build(),
+                actorIdentityResolver
+        ).getJourney(PROJECT_ID, anchorEventId, 60, 60);
+
+        assertThat(response.resolvedActorId()).isEqualTo(cloudActor.toString());
+        assertThat(response.total()).isEqualTo(2L);
+        assertThat(response.items()).extracting(AdminJourneyEventRecord::eventType)
+                .containsExactly("anonymous_open", "cloud_auth_succeeded");
+        assertThat(response.items()).extracting(AdminJourneyEventRecord::eventId)
+                .contains(anchorEventId);
+    }
+
+    @Test
+    void eventJourneyDefersOneOversizedPropertyPayloadAndLoadsItExplicitly() {
+        UUID actor = UUID.randomUUID();
+        UUID device = UUID.randomUUID();
+        String largeValue = "x".repeat(70 * 1024);
+        String eventId = insertEventReturningId(
+                actor.toString(),
+                device,
+                "oversized_diagnostic_event",
+                "2026-01-01T02:00:00Z",
+                "{\"debug_blob\":\"" + largeValue + "\","
+                        + "\"identity_scope\":\"" + largeValue + "\"}"
+        );
+        AdminEventJourneyService service = new AdminEventJourneyService(
+                dataSourceManager,
+                JsonMapper.builder().build(),
+                actorIdentityResolver
+        );
+
+        AdminEventJourneyResponse journey = service.getJourney(PROJECT_ID, eventId, 15, 15);
+
+        assertThat(journey.items()).singleElement().satisfies(item -> {
+            assertThat(item.properties()).isNull();
+            assertThat(item.propertiesDeferred()).isTrue();
+            assertThat(item.propertiesLoadable()).isTrue();
+            assertThat(item.propertiesBytes()).isGreaterThan(70 * 1024);
+        });
+        assertThat(service.getEventProperties(PROJECT_ID, eventId).properties()
+                .get("debug_blob").asString()).hasSize(70 * 1024);
+        assertThat(service.getEventProperties(PROJECT_ID, eventId).properties()
+                .get("identity_scope").asString()).hasSize(70 * 1024);
+    }
+
+    @Test
+    void eventJourneyRejectsExplicitLoadingBeyondTheOnlineSafetyLimit() {
+        UUID actor = UUID.randomUUID();
+        UUID device = UUID.randomUUID();
+        byte[] randomBytes = new byte[1_600_000];
+        new Random(42L).nextBytes(randomBytes);
+        String largeValue = Base64.getEncoder().encodeToString(randomBytes);
+        String eventId = insertEventReturningId(
+                actor.toString(),
+                device,
+                "pathological_diagnostic_event",
+                "2026-01-01T02:00:00Z",
+                "{\"debug_blob\":\"" + largeValue + "\"}"
+        );
+        AdminEventJourneyService service = new AdminEventJourneyService(
+                dataSourceManager,
+                JsonMapper.builder().build(),
+                actorIdentityResolver
+        );
+
+        AdminEventJourneyResponse journey = service.getJourney(PROJECT_ID, eventId, 15, 15);
+
+        assertThat(journey.items()).singleElement().satisfies(item -> {
+            assertThat(item.properties()).isNull();
+            assertThat(item.propertiesDeferred()).isTrue();
+            assertThat(item.propertiesLoadable()).isFalse();
+            assertThat(item.propertiesBytes()).isGreaterThan(2 * 1024 * 1024);
+        });
+        assertThatThrownBy(() -> service.getEventProperties(PROJECT_ID, eventId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("事件属性超过在线查看上限");
     }
 
     @Test
@@ -705,7 +912,7 @@ class AdminProductAnalyticsServicePostgresIT {
             String createdAt,
             String properties
     ) {
-        insertEvent(userId, deviceId, eventType, createdAt, createdAt, properties);
+        insertEventReturningId(userId, deviceId, eventType, createdAt, createdAt, properties);
     }
 
     private void insertEvent(
@@ -716,21 +923,63 @@ class AdminProductAnalyticsServicePostgresIT {
             String receivedAt,
             String properties
     ) {
+        insertEventReturningId(userId, deviceId, eventType, occurredAt, receivedAt, properties);
+    }
+
+    private String insertEventReturningId(
+            String userId,
+            UUID deviceId,
+            String eventType,
+            String occurredAt,
+            String properties
+    ) {
+        return insertEventReturningId(userId, deviceId, eventType, occurredAt, occurredAt, properties);
+    }
+
+    private String insertEventReturningId(
+            String userId,
+            UUID deviceId,
+            String eventType,
+            String occurredAt,
+            String receivedAt,
+            String properties
+    ) {
         Instant occurrence = Instant.parse(occurredAt);
         Instant received = Instant.parse(receivedAt);
+        String eventId = "evt_" + UUID.randomUUID();
+        int propertiesSizeBytes = properties == null
+                ? 0
+                : properties.getBytes(StandardCharsets.UTF_8).length;
+        String identityScope = null;
+        if (properties != null) {
+            try {
+                var identityScopeNode = JsonMapper.builder().build().readTree(properties).get("identity_scope");
+                if (identityScopeNode != null
+                        && identityScopeNode.isString()
+                        && identityScopeNode.asString().length() <= 64) {
+                    identityScope = identityScopeNode.asString();
+                }
+            } catch (Exception ignored) {
+                // 测试辅助方法允许无属性或非对象 JSON；生产写入由 EventService 统一校验。
+            }
+        }
         jdbcTemplate.update(
                 "INSERT INTO " + quoted(PREFIX + "events") + " "
-                        + "(event_id, device_id, user_id, event_type, event_timestamp, properties, project_id, created_at) "
-                        + "VALUES (?, ?::uuid, ?, ?, ?, ?::jsonb, ?, ?)",
-                "evt_" + UUID.randomUUID(),
+                        + "(event_id, device_id, user_id, event_type, event_timestamp, properties, "
+                        + "properties_size_bytes, identity_scope, project_id, created_at) "
+                        + "VALUES (?, ?::uuid, ?, ?, ?, ?::jsonb, ?, ?, ?, ?)",
+                eventId,
                 deviceId.toString(),
                 userId,
                 eventType,
                 occurrence.toEpochMilli(),
                 properties,
+                propertiesSizeBytes,
+                identityScope,
                 PROJECT_ID,
                 Timestamp.from(received)
         );
+        return eventId;
     }
 
     private void insertLink(UUID sourceActorId, UUID canonicalActorId, String linkedAt) {

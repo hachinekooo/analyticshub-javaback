@@ -62,6 +62,61 @@ public class ActorIdentityResolver {
         return Map.copyOf(resolved);
     }
 
+    /**
+     * 将管理员输入的 raw 或 canonical actor 展开为同一归一身份下的全部直接成员。
+     *
+     * <p>当前 identity link 契约只允许一跳关联，因此这里先将 source 解析为 canonical，
+     * 再返回 canonical 与它的全部 source。事件列表和锚点旅程必须复用这一边界，
+     * 避免各自实现后产生不同的身份查询口径。</p>
+     */
+    public List<String> resolveActorMembers(
+            JdbcTemplate jdbcTemplate,
+            String linkTable,
+            String projectId,
+            String actorId
+    ) {
+        String normalized = UUID.fromString(actorId).toString();
+        List<String> canonicalMatches = jdbcTemplate.queryForList(
+                String.format(
+                        "SELECT canonical_actor_id::text FROM %s WHERE project_id = ? "
+                                + "AND source_actor_id = ?::uuid",
+                        linkTable
+                ),
+                String.class,
+                projectId,
+                normalized
+        );
+        String canonicalActor = canonicalMatches.isEmpty() ? normalized : canonicalMatches.getFirst();
+        return jdbcTemplate.queryForList(
+                String.format(
+                        "SELECT source_actor_id::text FROM %s WHERE project_id = ? "
+                                + "AND canonical_actor_id = ?::uuid UNION SELECT ?",
+                        linkTable
+                ),
+                String.class,
+                projectId,
+                canonicalActor,
+                canonicalActor
+        );
+    }
+
+    /**
+     * 判断两个 actor 表达是否指向同一身份；UUID 大小写差异不构成 alias 关联。
+     */
+    public boolean representsSameActor(String first, String second) {
+        if (first == null || second == null) {
+            return first == null && second == null;
+        }
+        if (first.equals(second)) {
+            return true;
+        }
+        try {
+            return UUID.fromString(first).equals(UUID.fromString(second));
+        } catch (IllegalArgumentException ignored) {
+            return false;
+        }
+    }
+
     private static NormalizedActors normalizeActors(Collection<String> actorIds) {
         Map<String, String> rawToNormalized = new LinkedHashMap<>();
         Set<String> uuidValues = new LinkedHashSet<>();
