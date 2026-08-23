@@ -237,9 +237,7 @@ public class EventService {
         }
 
         String projectId = context.getProjectId();
-        String actorId = context.getUserId() == null || context.getUserId().isBlank()
-                ? context.getDevice().getDeviceId().toString()
-                : context.getUserId();
+        String actorId = resolveIdempotencyActorId(context);
         // 幂等约束描述的是“同一 actor 的同一业务事件”，不能把客户端键提升为 Project 全局唯一。
         // eventType 同时进入摘要，避免通用采集方误把同一个原始键复用于不同事件时互相吞并。
         String scopedKey = actorId + "\0" + event.eventType() + "\0" + event.idempotencyKey();
@@ -306,6 +304,16 @@ public class EventService {
         log.log(System.Logger.Level.WARNING, "已修复孤立的事件幂等占位: projectId={0}",
                 LogValueSanitizer.projectId(projectId));
         return null;
+    }
+
+    private String resolveIdempotencyActorId(RequestContext context) {
+        if (context.getIdempotencyActorId() != null && !context.getIdempotencyActorId().isBlank()) {
+            return context.getIdempotencyActorId();
+        }
+        if (context.getUserId() != null && !context.getUserId().isBlank()) {
+            return context.getUserId();
+        }
+        return context.getDevice().getDeviceId().toString();
     }
 
     private PreparedEvent prepareEvent(EventTrackRequest request) {

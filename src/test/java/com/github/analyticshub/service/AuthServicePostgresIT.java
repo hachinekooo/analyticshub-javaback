@@ -237,6 +237,7 @@ class AuthServicePostgresIT {
         assertThat(result.status()).isEqualTo(200);
         assertThat(result.chainInvoked()).isTrue();
         assertThat(result.contextUserId()).isEqualTo(USER_ID);
+        assertThat(result.idempotencyActorId()).isEqualTo(USER_ID.toUpperCase());
     }
 
     @Test
@@ -482,6 +483,7 @@ class AuthServicePostgresIT {
         MockHttpServletResponse response = new MockHttpServletResponse();
         AtomicBoolean chainInvoked = new AtomicBoolean(false);
         AtomicReference<String> contextUserId = new AtomicReference<>();
+        AtomicReference<String> idempotencyActorId = new AtomicReference<>();
 
         ApiAuthenticationFilter filter = new ApiAuthenticationFilter(
                 dataSourceManager,
@@ -492,12 +494,14 @@ class AuthServicePostgresIT {
         filter.doFilter(request, response, (filteredRequest, filteredResponse) -> {
             chainInvoked.set(true);
             contextUserId.set(RequestContext.get().getUserId());
+            idempotencyActorId.set(RequestContext.get().getIdempotencyActorId());
         });
         return new AuthenticationResult(
                 response.getStatus(),
                 response.getContentAsString(),
                 chainInvoked.get(),
-                contextUserId.get()
+                contextUserId.get(),
+                idempotencyActorId.get()
         );
     }
 
@@ -528,7 +532,13 @@ class AuthServicePostgresIT {
             String previousExpiresAt
     ) {}
 
-    private record AuthenticationResult(int status, String body, boolean chainInvoked, String contextUserId) {}
+    private record AuthenticationResult(
+            int status,
+            String body,
+            boolean chainInvoked,
+            String contextUserId,
+            String idempotencyActorId
+    ) {}
 
     private record RegistrationAttempt(DeviceRegisterResponse response, BusinessException error) {
     }

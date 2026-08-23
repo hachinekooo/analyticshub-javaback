@@ -8,6 +8,7 @@ import com.github.analyticshub.dto.EventTrackResponse;
 import com.github.analyticshub.entity.Device;
 import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
 import com.github.analyticshub.security.RequestContext;
+import com.github.analyticshub.util.CryptoUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -198,6 +199,44 @@ class EventServicePostgresIT {
                 "SELECT event_id FROM event_it_events",
                 String.class
         )).isEqualTo(response.eventId());
+    }
+
+    @Test
+    void uppercaseActorRetryKeepsThePreUpgradeIdempotencyReservation() {
+        UUID actorId = UUID.randomUUID();
+        String legacyActorExpression = actorId.toString().toUpperCase(java.util.Locale.ROOT);
+        EventTrackRequest request = request("item_completed", "completion:pre-upgrade");
+        String originalEventId = "evt_pre_upgrade";
+        jdbcTemplate.update(
+                "INSERT INTO event_it_events (event_id, device_id, user_id, event_type, "
+                        + "event_timestamp, properties, project_id, created_at) "
+                        + "VALUES (?, ?::uuid, ?, ?, ?, '{}'::jsonb, ?, NOW())",
+                originalEventId,
+                RequestContext.get().getDevice().getDeviceId().toString(),
+                legacyActorExpression,
+                request.eventType(),
+                request.timestamp(),
+                "test_project"
+        );
+        String legacyScopedKey = legacyActorExpression + "\0" + request.eventType()
+                + "\0" + request.idempotencyKey();
+        jdbcTemplate.update(
+                "INSERT INTO event_it_idempotency_keys "
+                        + "(project_id, key_hash, request_hash, event_id) VALUES (?, ?, ?, ?)",
+                "test_project",
+                CryptoUtils.sha256Hex(legacyScopedKey),
+                "legacy_request_hash",
+                originalEventId
+        );
+        RequestContext.get().setUserId(actorId.toString());
+        RequestContext.get().setIdempotencyActorId(legacyActorExpression);
+
+        EventTrackResponse retry = eventService.trackEvent(request);
+
+        assertThat(retry.eventId()).isEqualTo(originalEventId);
+        assertThat(count("event_it_events")).isEqualTo(1);
+        assertThat(count("event_it_idempotency_keys")).isEqualTo(1);
+        verify(counterService, never()).processEventAutoIncrements(any(), any(), any());
     }
 
     @Test

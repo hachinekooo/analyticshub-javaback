@@ -216,6 +216,8 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
             // 签名仍按客户端原始 Header 校验；进入业务上下文后统一 UUID 表达，
             // 避免大小写差异把同一统计身份拆成两段旅程。
             context.setUserId(UUID.fromString(userId).toString());
+            // 幂等摘要保持使用已验签的原始表达，兼容升级前已经写入的 reservation。
+            context.setIdempotencyActorId(userId);
             context.setDataSource(dataSource);
             context.setTablePrefix(projectConfig.tablePrefix());
             RequestContext.set(context);

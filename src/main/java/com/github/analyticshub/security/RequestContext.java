@@ -14,6 +14,7 @@ public class RequestContext {
     private String projectId;
     private Device device;
     private String userId;
+    private String idempotencyActorId;
     private DataSource dataSource;
     private String tablePrefix;
 
@@ -54,6 +55,21 @@ public class RequestContext {
 
     public void setUserId(String userId) {
         this.userId = userId;
+    }
+
+    /**
+     * 返回参与事件幂等摘要的 actor 原始表达。
+     *
+     * <p>认证链路会保留已验签的 Header 文本，避免服务升级时仅因 UUID
+     * 大小写规范化而改变既有幂等键。事件存储与查询仍使用 {@link #userId}
+     * 的规范化表达。</p>
+     */
+    public String getIdempotencyActorId() {
+        return idempotencyActorId;
+    }
+
+    public void setIdempotencyActorId(String idempotencyActorId) {
+        this.idempotencyActorId = idempotencyActorId;
     }
 
     public DataSource getDataSource() {
