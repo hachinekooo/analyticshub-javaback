@@ -213,7 +213,9 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
             RequestContext context = new RequestContext();
             context.setProjectId(projectId);
             context.setDevice(device);
-            context.setUserId(userId);
+            // 签名仍按客户端原始 Header 校验；进入业务上下文后统一 UUID 表达，
+            // 避免大小写差异把同一统计身份拆成两段旅程。
+            context.setUserId(UUID.fromString(userId).toString());
             context.setDataSource(dataSource);
             context.setTablePrefix(projectConfig.tablePrefix());
             RequestContext.set(context);

@@ -223,6 +223,23 @@ class AuthServicePostgresIT {
     }
 
     @Test
+    void authenticatedUuidIsNormalizedOnlyAfterTheOriginalHeaderSignaturePasses() throws Exception {
+        DeviceRegisterResponse credentials = authService.registerDevice(PROJECT_ID, registerRequest());
+
+        AuthenticationResult result = authenticate(
+                credentials.apiKey(),
+                credentials.secretKey(),
+                "/api/v1/events/track",
+                "{}",
+                USER_ID.toUpperCase()
+        );
+
+        assertThat(result.status()).isEqualTo(200);
+        assertThat(result.chainInvoked()).isTrue();
+        assertThat(result.contextUserId()).isEqualTo(USER_ID);
+    }
+
+    @Test
     void expiredPreviousCredentialsFailHmacAuthentication() throws Exception {
         DeviceRegisterResponse first = authService.registerDevice(PROJECT_ID, registerRequest());
         setAuthenticatedRequestContext(first);
@@ -439,9 +456,19 @@ class AuthServicePostgresIT {
             String path,
             String body
     ) throws Exception {
+        return authenticate(apiKey, secretKey, path, body, USER_ID);
+    }
+
+    private AuthenticationResult authenticate(
+            String apiKey,
+            String secretKey,
+            String path,
+            String body,
+            String userId
+    ) throws Exception {
         String timestamp = Long.toString(System.currentTimeMillis());
         String signatureData = CryptoUtils.buildSignatureData(
-                "POST", path, timestamp, DEVICE_ID, USER_ID, body
+                "POST", path, timestamp, DEVICE_ID, userId, body
         );
         MockHttpServletRequest request = new MockHttpServletRequest("POST", path);
         request.setContentType("application/json");
@@ -449,11 +476,12 @@ class AuthServicePostgresIT {
         request.addHeader("X-Project-ID", PROJECT_ID);
         request.addHeader("X-API-Key", apiKey);
         request.addHeader("X-Device-ID", DEVICE_ID);
-        request.addHeader("X-User-ID", USER_ID);
+        request.addHeader("X-User-ID", userId);
         request.addHeader("X-Timestamp", timestamp);
         request.addHeader("X-Signature", CryptoUtils.generateSignature(signatureData, secretKey));
         MockHttpServletResponse response = new MockHttpServletResponse();
         AtomicBoolean chainInvoked = new AtomicBoolean(false);
+        AtomicReference<String> contextUserId = new AtomicReference<>();
 
         ApiAuthenticationFilter filter = new ApiAuthenticationFilter(
                 dataSourceManager,
@@ -461,11 +489,15 @@ class AuthServicePostgresIT {
                 300_000,
                 1_048_576
         );
-        filter.doFilter(request, response, (filteredRequest, filteredResponse) -> chainInvoked.set(true));
+        filter.doFilter(request, response, (filteredRequest, filteredResponse) -> {
+            chainInvoked.set(true);
+            contextUserId.set(RequestContext.get().getUserId());
+        });
         return new AuthenticationResult(
                 response.getStatus(),
                 response.getContentAsString(),
-                chainInvoked.get()
+                chainInvoked.get(),
+                contextUserId.get()
         );
     }
 
@@ -496,7 +528,7 @@ class AuthServicePostgresIT {
             String previousExpiresAt
     ) {}
 
-    private record AuthenticationResult(int status, String body, boolean chainInvoked) {}
+    private record AuthenticationResult(int status, String body, boolean chainInvoked, String contextUserId) {}
 
     private record RegistrationAttempt(DeviceRegisterResponse response, BusinessException error) {
     }
