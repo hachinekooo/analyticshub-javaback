@@ -10,7 +10,7 @@
     </parent>
     <groupId>com.github</groupId>
     <artifactId>analyticshub</artifactId>
-    <version>1.1.0</version>
+    <version>1.1.1</version>
     <name>analyticshub-javaback</name>
     <description>Open-source multi-project analytics operations backend</description>
     <url>https://github.com/hachinekooo/analyticshub-javaback</url>
