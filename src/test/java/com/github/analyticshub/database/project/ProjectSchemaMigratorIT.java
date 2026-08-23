@@ -70,8 +70,8 @@ class ProjectSchemaMigratorIT {
         ProjectSchemaMigrationResult result = migrator.migrate(dataSource, schema, "analytics_");
 
         assertThat(result.initialVersion()).isNull();
-        assertThat(result.currentVersion()).isEqualTo("7");
-        assertThat(result.migrationsExecuted()).isEqualTo(7);
+        assertThat(result.currentVersion()).isEqualTo("8");
+        assertThat(result.migrationsExecuted()).isEqualTo(8);
         assertThat(result.legacyBaselineApplied()).isFalse();
         assertThat(result.historyTable()).isEqualTo("analytics_flyway_history");
         assertThat(result.tables()).containsExactly(
@@ -90,11 +90,17 @@ class ProjectSchemaMigratorIT {
         assertAllTablesExist(schema, result.tables());
         assertThat(tableExists(schema, result.historyTable())).isTrue();
         assertThat(indexNames(schema, "analytics_%"))
-                .contains("analytics_ix_evt_proj_ts", "analytics_ix_evt_proj_dev_ts");
+                .contains(
+                        "analytics_ix_evt_proj_ts",
+                        "analytics_ix_evt_proj_dev_ts",
+                        "analytics_ix_evt_proj_user_ts",
+                        "analytics_ix_evt_norm_usr_ts",
+                        "analytics_ix_evt_meta_pending"
+                );
 
         ProjectSchemaStatus status = migrator.inspect(dataSource, schema, "analytics_");
         assertThat(status.current()).isTrue();
-        assertThat(status.currentVersion()).isEqualTo("7");
+        assertThat(status.currentVersion()).isEqualTo("8");
         assertThat(status.pendingMigrations()).isZero();
         assertThat(status.migrationHistoryValid()).isTrue();
         assertThat(status.allTablesExist()).isTrue();
@@ -108,7 +114,7 @@ class ProjectSchemaMigratorIT {
 
         assertThat(status.current()).isFalse();
         assertThat(status.currentVersion()).isNull();
-        assertThat(status.pendingMigrations()).isEqualTo(7);
+        assertThat(status.pendingMigrations()).isEqualTo(8);
         assertThat(status.historyTableExists()).isFalse();
         assertThat(status.migrationHistoryValid()).isFalse();
         assertThat(status.tables().values()).allMatch(exists -> !exists);
@@ -165,16 +171,17 @@ class ProjectSchemaMigratorIT {
         UUID deviceId = UUID.randomUUID();
         jdbcTemplate.update("""
                 INSERT INTO %s.%sevents
-                    (event_id, device_id, user_id, event_type, event_timestamp, project_id)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (event_id, device_id, user_id, event_type, event_timestamp, properties, project_id)
+                VALUES (?, ?, ?, ?, ?, ?::jsonb, ?)
                 """.formatted(quoted(schema), prefix),
-                "event-before-upgrade", deviceId, "legacy-user", "legacy_event", 1L, "legacy-project");
+                "event-before-upgrade", deviceId, "legacy-user", "legacy_event", 1L,
+                "{\"identity_scope\":\"anonymous\",\"entry_point\":\"legacy\"}", "legacy-project");
 
         ProjectSchemaMigrationResult result = migrator.migrate(dataSource, schema, prefix);
 
         assertThat(result.initialVersion()).isEqualTo("1");
-        assertThat(result.currentVersion()).isEqualTo("7");
-        assertThat(result.migrationsExecuted()).isEqualTo(6);
+        assertThat(result.currentVersion()).isEqualTo("8");
+        assertThat(result.migrationsExecuted()).isEqualTo(7);
         assertThat(result.legacyBaselineApplied()).isTrue();
         assertThat(tableExists(schema, prefix + "idempotency_keys")).isTrue();
         assertThat(jdbcTemplate.queryForObject(
@@ -182,7 +189,7 @@ class ProjectSchemaMigratorIT {
                 Integer.class,
                 "event-before-upgrade"
         )).isEqualTo(1);
-        assertThat(historyVersions(schema, result.historyTable())).containsExactly("1", "2", "3", "4", "5", "6", "7");
+        assertThat(historyVersions(schema, result.historyTable())).containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
     }
 
     @Test
@@ -192,11 +199,11 @@ class ProjectSchemaMigratorIT {
 
         ProjectSchemaMigrationResult rerun = migrator.migrate(dataSource, schema, "repeat_");
 
-        assertThat(rerun.initialVersion()).isEqualTo("7");
-        assertThat(rerun.currentVersion()).isEqualTo("7");
+        assertThat(rerun.initialVersion()).isEqualTo("8");
+        assertThat(rerun.currentVersion()).isEqualTo("8");
         assertThat(rerun.migrationsExecuted()).isZero();
         assertThat(rerun.legacyBaselineApplied()).isFalse();
-        assertThat(historyVersions(schema, rerun.historyTable())).containsExactly("1", "2", "3", "4", "5", "6", "7");
+        assertThat(historyVersions(schema, rerun.historyTable())).containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
     }
 
     @Test
@@ -206,8 +213,8 @@ class ProjectSchemaMigratorIT {
         ProjectSchemaMigrationResult alpha = migrator.migrate(dataSource, schema, "alpha_");
         ProjectSchemaMigrationResult beta = migrator.migrate(dataSource, schema, "beta_");
 
-        assertThat(alpha.migrationsExecuted()).isEqualTo(7);
-        assertThat(beta.migrationsExecuted()).isEqualTo(7);
+        assertThat(alpha.migrationsExecuted()).isEqualTo(8);
+        assertThat(beta.migrationsExecuted()).isEqualTo(8);
         assertThat(alpha.historyTable()).isEqualTo("alpha_flyway_history");
         assertThat(beta.historyTable()).isEqualTo("beta_flyway_history");
         assertAllTablesExist(schema, alpha.tables());
@@ -231,11 +238,11 @@ class ProjectSchemaMigratorIT {
                 "concurrent_"
         );
 
-        assertThat(results).allSatisfy(result -> assertThat(result.currentVersion()).isEqualTo("7"));
+        assertThat(results).allSatisfy(result -> assertThat(result.currentVersion()).isEqualTo("8"));
         assertThat(results).extracting(ProjectSchemaMigrationResult::migrationsExecuted)
-                .containsExactlyInAnyOrder(0, 7);
+                .containsExactlyInAnyOrder(0, 8);
         assertThat(historyVersions(schema, "concurrent_flyway_history"))
-                .containsExactly("1", "2", "3", "4", "5", "6", "7");
+                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
     }
 
     @Test
@@ -247,11 +254,11 @@ class ProjectSchemaMigratorIT {
         List<ProjectSchemaMigrationResult> results = migrateConcurrently(schema, prefix, prefix);
 
         assertThat(results).extracting(ProjectSchemaMigrationResult::migrationsExecuted)
-                .containsExactlyInAnyOrder(0, 6);
+                .containsExactlyInAnyOrder(0, 7);
         assertThat(results).extracting(ProjectSchemaMigrationResult::legacyBaselineApplied)
                 .containsExactlyInAnyOrder(false, true);
         assertThat(historyVersions(schema, prefix + "flyway_history"))
-                .containsExactly("1", "2", "3", "4", "5", "6", "7");
+                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
     }
 
     @Test
@@ -264,14 +271,14 @@ class ProjectSchemaMigratorIT {
         assertThat(results).extracting(ProjectSchemaMigrationResult::tablePrefix)
                 .containsExactlyInAnyOrder("left_", "right_");
         assertThat(results).allSatisfy(result -> {
-            assertThat(result.currentVersion()).isEqualTo("7");
+            assertThat(result.currentVersion()).isEqualTo("8");
             assertAllTablesExist(schema, result.tables());
         });
         assertThat(historyVersions(schema, "left_flyway_history"))
-                .endsWith("1", "2", "3", "4", "5", "6", "7")
+                .endsWith("1", "2", "3", "4", "5", "6", "7", "8")
                 .doesNotHaveDuplicates();
         assertThat(historyVersions(schema, "right_flyway_history"))
-                .endsWith("1", "2", "3", "4", "5", "6", "7")
+                .endsWith("1", "2", "3", "4", "5", "6", "7", "8")
                 .doesNotHaveDuplicates();
     }
 
@@ -287,6 +294,23 @@ class ProjectSchemaMigratorIT {
         assertThat(result.tables()).allMatch(table -> table.length() <= 63);
         assertAllTablesExist(schema, result.tables());
         assertThat(tableExists(schema, result.historyTable())).isTrue();
+    }
+
+    @Test
+    void maximumPrefixesWithTheSameFirstThirtyNineCharactersKeepDistinctIndexes() {
+        String schema = nextSchema("max_prefix_indexes");
+        String prefixA = "p".repeat(39) + "a";
+        String prefixB = "p".repeat(39) + "b";
+
+        migrator.migrate(dataSource, schema, prefixA);
+        migrator.migrate(dataSource, schema, prefixB);
+
+        assertThat(indexNames(schema, "p%"))
+                .contains(
+                        prefixA + "ix_evt_norm_usr_ts",
+                        prefixB + "ix_evt_norm_usr_ts"
+                )
+                .allMatch(name -> name.length() <= 63);
     }
 
     @Test

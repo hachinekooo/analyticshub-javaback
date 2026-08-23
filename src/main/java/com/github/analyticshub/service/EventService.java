@@ -17,6 +17,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -40,17 +41,20 @@ public class EventService {
     private final ObjectMapper objectMapper;
     private final CounterService counterService;
     private final ProjectTransactionExecutor projectTransactions;
+    private final EventMetadataSchemaSupport metadataSchemaSupport;
 
     public EventService(
             MultiDataSourceManager dataSourceManager,
             ObjectMapper objectMapper,
             CounterService counterService,
-            ProjectTransactionExecutor projectTransactions
+            ProjectTransactionExecutor projectTransactions,
+            EventMetadataSchemaSupport metadataSchemaSupport
     ) {
         this.dataSourceManager = dataSourceManager;
         this.objectMapper = objectMapper;
         this.counterService = counterService;
         this.projectTransactions = projectTransactions;
+        this.metadataSchemaSupport = metadataSchemaSupport;
     }
 
     /**
@@ -64,7 +68,16 @@ public class EventService {
 
         EventWriteResult result = projectTransactions.execute(
                 context.getDataSource(),
-                jdbcTemplate -> writeEvent(jdbcTemplate, context, eventsTable, idempotencyTable, event)
+                jdbcTemplate -> writeEvent(
+                        jdbcTemplate,
+                        context,
+                        eventsTable,
+                        idempotencyTable,
+                        event,
+                        metadataSchemaSupport.supportsMetadataColumns(
+                                jdbcTemplate, context.getProjectId(), eventsTable
+                        )
+                )
         );
 
         String eventTypeForLog = LogValueSanitizer.eventType(event.eventType());
@@ -115,6 +128,9 @@ public class EventService {
         String eventsTable = dataSourceManager.getTableName(context.getProjectId(), "events");
         String idempotencyTable = dataSourceManager.getTableName(context.getProjectId(), "idempotency_keys");
         Integer acceptedCount = projectTransactions.execute(context.getDataSource(), jdbcTemplate -> {
+            boolean supportsMetadata = metadataSchemaSupport.supportsMetadataColumns(
+                    jdbcTemplate, context.getProjectId(), eventsTable
+            );
             int accepted = 0;
             for (PreparedEvent event : preparedEvents) {
                 EventWriteResult result = writeEvent(
@@ -122,7 +138,8 @@ public class EventService {
                         context,
                         eventsTable,
                         idempotencyTable,
-                        event
+                        event,
+                        supportsMetadata
                 );
                 if (result.inserted()) {
                     accepted++;
@@ -140,7 +157,8 @@ public class EventService {
             RequestContext context,
             String eventsTable,
             String idempotencyTable,
-            PreparedEvent event
+            PreparedEvent event,
+            boolean supportsMetadata
     ) {
         String existingEventId = reserveIdempotencyKey(
                 jdbcTemplate,
@@ -153,24 +171,11 @@ public class EventService {
             return new EventWriteResult(existingEventId, false);
         }
 
-        String insertSql = String.format(
-                "INSERT INTO %s " +
-                        "(event_id, device_id, user_id, session_id, event_type, event_timestamp, properties, project_id, created_at) " +
-                        "VALUES (?, ?::uuid, ?, ?::uuid, ?, ?, ?::jsonb, ?, ?)",
-                eventsTable
-        );
-        jdbcTemplate.update(
-                insertSql,
-                event.eventId(),
-                context.getDevice().getDeviceId().toString(),
-                context.getUserId(),
-                event.sessionId(),
-                event.eventType(),
-                event.timestamp(),
-                event.propertiesJson(),
-                context.getProjectId(),
-                Timestamp.from(Instant.now())
-        );
+        if (supportsMetadata) {
+            writeV8Event(jdbcTemplate, context, eventsTable, event);
+        } else {
+            writeLegacyEvent(jdbcTemplate, context, eventsTable, event);
+        }
 
         // Counter 仍是同步投影；失败必须回滚事件，不能留下永久不一致。
         counterService.processEventAutoIncrements(
@@ -179,6 +184,42 @@ public class EventService {
                 event.properties()
         );
         return new EventWriteResult(event.eventId(), true);
+    }
+
+    private void writeV8Event(JdbcTemplate jdbcTemplate,
+                              RequestContext context,
+                              String eventsTable,
+                              PreparedEvent event) {
+        jdbcTemplate.update(
+                String.format(
+                        "INSERT INTO %s (event_id, device_id, user_id, session_id, event_type, "
+                                + "event_timestamp, properties, properties_size_bytes, identity_scope, "
+                                + "project_id, created_at) "
+                                + "VALUES (?, ?::uuid, ?, ?::uuid, ?, ?, ?::jsonb, ?, ?, ?, ?)",
+                        eventsTable
+                ),
+                event.eventId(), context.getDevice().getDeviceId().toString(), context.getUserId(),
+                event.sessionId(), event.eventType(), event.timestamp(), event.propertiesJson(),
+                event.propertiesSizeBytes(), event.identityScope(), context.getProjectId(),
+                Timestamp.from(Instant.now())
+        );
+    }
+
+    private void writeLegacyEvent(JdbcTemplate jdbcTemplate,
+                                  RequestContext context,
+                                  String eventsTable,
+                                  PreparedEvent event) {
+        jdbcTemplate.update(
+                String.format(
+                        "INSERT INTO %s (event_id, device_id, user_id, session_id, event_type, "
+                                + "event_timestamp, properties, project_id, created_at) "
+                                + "VALUES (?, ?::uuid, ?, ?::uuid, ?, ?, ?::jsonb, ?, ?)",
+                        eventsTable
+                ),
+                event.eventId(), context.getDevice().getDeviceId().toString(), context.getUserId(),
+                event.sessionId(), event.eventType(), event.timestamp(), event.propertiesJson(),
+                context.getProjectId(), Timestamp.from(Instant.now())
+        );
     }
 
     /**
@@ -293,6 +334,15 @@ public class EventService {
         String requestHash = idempotencyKey == null
                 ? null
                 : createRequestHash(request, propertiesJson);
+        int propertiesSizeBytes = propertiesJson == null
+                ? 0
+                : propertiesJson.getBytes(StandardCharsets.UTF_8).length;
+        Object identityScopeValue = request.properties() == null
+                ? null
+                : request.properties().get("identity_scope");
+        String identityScope = identityScopeValue instanceof String value && value.length() <= 64
+                ? value
+                : null;
 
         return new PreparedEvent(
                 CryptoUtils.generateEventId(),
@@ -300,6 +350,8 @@ public class EventService {
                 request.timestamp(),
                 request.properties(),
                 propertiesJson,
+                propertiesSizeBytes,
+                identityScope,
                 request.sessionId() == null ? null : request.sessionId().toString(),
                 idempotencyKey,
                 requestHash
@@ -396,6 +448,8 @@ public class EventService {
             Long timestamp,
             Map<String, Object> properties,
             String propertiesJson,
+            int propertiesSizeBytes,
+            String identityScope,
             String sessionId,
             String idempotencyKey,
             String requestHash

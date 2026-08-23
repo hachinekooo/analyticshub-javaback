@@ -67,6 +67,8 @@ class EventServicePostgresIT {
                     event_type VARCHAR(100) NOT NULL CHECK (event_type <> 'force_failure'),
                     event_timestamp BIGINT NOT NULL,
                     properties JSONB,
+                    properties_size_bytes INTEGER,
+                    identity_scope VARCHAR(64),
                     project_id VARCHAR(50) NOT NULL,
                     created_at TIMESTAMPTZ NOT NULL
                 )
@@ -91,7 +93,8 @@ class EventServicePostgresIT {
                 dataSourceManager,
                 JsonMapper.builder().build(),
                 counterService,
-                new ProjectTransactionExecutor()
+                new ProjectTransactionExecutor(),
+                new EventMetadataSchemaSupport()
         );
 
         RequestContext context = new RequestContext();
@@ -122,6 +125,56 @@ class EventServicePostgresIT {
         verify(counterService).processEventAutoIncrements(
                 eq("test_project"), eq("item_completed"), eq(Map.of("status", "completed"))
         );
+    }
+
+    @Test
+    void eventWritePersistsLogicalPropertyMetadataForBoundedJourneyQueries() {
+        EventTrackRequest request = new EventTrackRequest(
+                "cloud_auth_succeeded",
+                System.currentTimeMillis(),
+                Map.of("identity_scope", "cloud_account", "status", "completed"),
+                null,
+                null
+        );
+
+        EventTrackResponse response = eventService.trackEvent(request);
+
+        Map<String, Object> metadata = jdbcTemplate.queryForMap(
+                "SELECT properties_size_bytes, identity_scope FROM event_it_events WHERE event_id = ?",
+                response.eventId()
+        );
+        assertThat(metadata.get("properties_size_bytes")).isEqualTo(55);
+        assertThat(metadata.get("identity_scope")).isEqualTo("cloud_account");
+    }
+
+    @Test
+    void v7EventTableKeepsAcceptingEventsUntilTheExplicitV8Migration() {
+        jdbcTemplate.execute("ALTER TABLE event_it_events DROP COLUMN properties_size_bytes");
+        jdbcTemplate.execute("ALTER TABLE event_it_events DROP COLUMN identity_scope");
+
+        EventTrackResponse legacyResponse = eventService.trackEvent(request("legacy_write", null));
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT event_type FROM event_it_events WHERE event_id = ?",
+                String.class,
+                legacyResponse.eventId()
+        )).isEqualTo("legacy_write");
+
+        jdbcTemplate.execute("ALTER TABLE event_it_events ADD COLUMN properties_size_bytes INTEGER");
+        jdbcTemplate.execute("ALTER TABLE event_it_events ADD COLUMN identity_scope VARCHAR(64)");
+        EventTrackResponse migratedResponse = eventService.trackEvent(new EventTrackRequest(
+                "v8_write",
+                System.currentTimeMillis(),
+                Map.of("identity_scope", "anonymous"),
+                null,
+                null
+        ));
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT identity_scope FROM event_it_events WHERE event_id = ?",
+                String.class,
+                migratedResponse.eventId()
+        )).isEqualTo("anonymous");
     }
 
     @Test

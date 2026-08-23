@@ -194,6 +194,15 @@ app:
       scheduler-fixed-delay-ms: ${WORK_ORDER_OUTBOX_SCHEDULER_FIXED_DELAY_MS:60000}
       scheduler-batch-size: ${WORK_ORDER_OUTBOX_SCHEDULER_BATCH_SIZE:20}
 
+  analytics:
+    event-property-backfill:
+      # V8 之前的事件在服务启动后小批次补齐查询元数据，不进入 Flyway 启动事务。
+      enabled: ${EVENT_PROPERTY_BACKFILL_ENABLED:true}
+      initial-delay-ms: ${EVENT_PROPERTY_BACKFILL_INITIAL_DELAY_MS:1000}
+      fixed-delay-ms: ${EVENT_PROPERTY_BACKFILL_FIXED_DELAY_MS:5000}
+      batch-size: ${EVENT_PROPERTY_BACKFILL_BATCH_SIZE:20}
+      max-batches-per-run: ${EVENT_PROPERTY_BACKFILL_MAX_BATCHES_PER_RUN:10}
+
   project-datasource:
     # Pools are created lazily per project. Keep minimumIdle at zero so an
     # operations center with many projects does not reserve N connections each.

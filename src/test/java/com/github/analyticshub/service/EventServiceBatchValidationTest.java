@@ -20,7 +20,8 @@ class EventServiceBatchValidationTest {
                 mock(MultiDataSourceManager.class),
                 JsonMapper.builder().build(),
                 mock(CounterService.class),
-                new ProjectTransactionExecutor()
+                new ProjectTransactionExecutor(),
+                new EventMetadataSchemaSupport()
         );
 
         assertThatThrownBy(() -> service.trackEventsBatch(

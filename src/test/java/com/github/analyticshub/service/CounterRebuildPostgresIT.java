@@ -101,7 +101,10 @@ class CounterRebuildPostgresIT {
         ProjectTransactionExecutor transactions = new ProjectTransactionExecutor();
         semantics = identitySemantics();
         counterService = new CounterService(dataSourceManager, objectMapper, transactions, semantics);
-        eventService = new EventService(dataSourceManager, objectMapper, counterService, transactions);
+        eventService = new EventService(
+                dataSourceManager, objectMapper, counterService, transactions,
+                new EventMetadataSchemaSupport()
+        );
         RequestContext.set(requestContext());
     }
 
