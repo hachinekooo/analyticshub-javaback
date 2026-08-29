@@ -40,6 +40,8 @@ public class AdminDashboardService {
     private final DashboardDefinitionValidator definitionValidator;
     private final DashboardOverviewMetricPolicy overviewMetricPolicy;
     private final DashboardCounterPolicy counterPolicy;
+    private final DashboardGovernedMetricPolicy governedMetricPolicy;
+    private final AnalysisPackOwnershipService analyticsWriteLock;
 
     public AdminDashboardService(
             AnalyticsProjectMapper projectMapper,
@@ -47,7 +49,9 @@ public class AdminDashboardService {
             ObjectMapper objectMapper,
             DashboardDefinitionValidator definitionValidator,
             DashboardOverviewMetricPolicy overviewMetricPolicy,
-            DashboardCounterPolicy counterPolicy
+            DashboardCounterPolicy counterPolicy,
+            DashboardGovernedMetricPolicy governedMetricPolicy,
+            AnalysisPackOwnershipService analyticsWriteLock
     ) {
         this.projectMapper = projectMapper;
         this.jdbcTemplate = jdbcTemplate;
@@ -55,6 +59,8 @@ public class AdminDashboardService {
         this.definitionValidator = definitionValidator;
         this.overviewMetricPolicy = overviewMetricPolicy;
         this.counterPolicy = counterPolicy;
+        this.governedMetricPolicy = governedMetricPolicy;
+        this.analyticsWriteLock = analyticsWriteLock;
     }
 
     public List<AdminDashboardRecord> list(String projectId) {
@@ -91,8 +97,13 @@ public class AdminDashboardService {
         definitionValidator.validate(request.schemaVersion(), definition);
 
         lockProject(normalizedProjectId);
+        // Dashboard 引用校验与指标停用必须持有同一项目级事务锁，避免并发写入失效引用。
+        analyticsWriteLock.acquireProjectDefinitionWriteLock(normalizedProjectId);
         List<AdminDashboardRecord> existingRows = find(normalizedProjectId, normalizedKey);
         AdminDashboardRecord existing = existingRows.isEmpty() ? null : existingRows.getFirst();
+        boolean active = request.isActive() == null
+                ? existing == null || existing.isActive()
+                : request.isActive();
         overviewMetricPolicy.validateForWrite(
                 normalizedProjectId,
                 definition,
@@ -103,9 +114,12 @@ public class AdminDashboardService {
                 definition,
                 existing == null ? null : objectMapper.valueToTree(existing.definition())
         );
-        boolean active = request.isActive() == null
-                ? existing == null || existing.isActive()
-                : request.isActive();
+        governedMetricPolicy.validateForWrite(
+                normalizedProjectId,
+                definition,
+                existing == null ? null : objectMapper.valueToTree(existing.definition()),
+                active
+        );
         boolean defaultDashboard = request.isDefault() == null
                 ? existing != null && existing.isDefault()
                 : request.isDefault();

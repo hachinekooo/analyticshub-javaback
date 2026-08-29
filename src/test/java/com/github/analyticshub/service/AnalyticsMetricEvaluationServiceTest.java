@@ -5,6 +5,7 @@ import com.github.analyticshub.config.MultiDataSourceManager;
 import com.github.analyticshub.dto.AnalyticsMetricDefinitionResponse;
 import com.github.analyticshub.dto.AnalyticsMetricResultClassification;
 import com.github.analyticshub.dto.AnalyticsMetricType;
+import com.github.analyticshub.dto.AnalyticsPropertyDataType;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
 import org.junit.jupiter.api.Test;
@@ -29,6 +30,61 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class AnalyticsMetricEvaluationServiceTest {
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void propertyBreakdownReturnsTypedEmptyResultWithoutInventingRows() {
+        var objectMapper = JsonMapper.builder().build();
+        AnalysisConfigurationService configuration = mock(AnalysisConfigurationService.class);
+        when(configuration.getMetric("project", "mode_mix")).thenReturn(
+                new AnalyticsMetricDefinitionResponse(
+                        "project", "mode_mix", Map.of("en", "Mode mix"),
+                        AnalyticsMetricType.PROPERTY_BREAKDOWN,
+                        objectMapper.readTree("""
+                                {"semanticEvent":"authoring.started","aggregation":"EVENT_COUNT",
+                                 "groupBy":"authoring_mode","missingValuePolicy":"INCLUDE",
+                                 "valueLabels":{"light":{"zh-CN":"轻量写信","en":"Light Authoring"}}}
+                                """),
+                        null, true, Instant.EPOCH, Instant.EPOCH
+                )
+        );
+        SemanticDictionaryService semantics = mock(SemanticDictionaryService.class);
+        when(semantics.resolveActiveEventAliases("project", List.of("authoring.started")))
+                .thenReturn(Map.of("authoring.started", List.of("authoring_started")));
+        AnalyticsPropertyFilterService filters = mock(AnalyticsPropertyFilterService.class);
+        when(filters.requireGroupable("project", "authoring_mode"))
+                .thenReturn(AnalyticsPropertyDataType.STRING);
+        when(filters.compile(eq("project"), any(), eq("properties")))
+                .thenReturn(AnalyticsPropertyFilterService.CompiledPropertyFilters.empty());
+        MultiDataSourceManager dataSources = mock(MultiDataSourceManager.class);
+        DataSource projectDataSource = mock(DataSource.class);
+        when(dataSources.getProjectConfig("project")).thenReturn(new MultiDataSourceManager.ProjectConfig(
+                "project", "Project", "localhost", 5432, "db", "analytics",
+                "user", "password", "analytics_", true
+        ));
+        when(dataSources.getDataSource("project")).thenReturn(projectDataSource);
+        when(dataSources.getTableName("project", "events")).thenReturn("analytics_events");
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.queryForObject(contains("bounded_candidates"), eq(Long.class), any(Object[].class)))
+                .thenReturn(0L);
+        when(jdbc.query(anyString(), any(RowMapper.class), any(Object[].class))).thenReturn(List.of());
+        ProjectTransactionExecutor transactions = mock(ProjectTransactionExecutor.class);
+        when(transactions.executeReadOnly(eq(projectDataSource), anyInt(), any()))
+                .thenAnswer(invocation -> ((Function<JdbcTemplate, Object>) invocation.getArgument(2)).apply(jdbc));
+        AnalyticsMetricEvaluationService service = new AnalyticsMetricEvaluationService(
+                configuration, mock(AdminProductAnalyticsService.class), filters, semantics,
+                new ActorIdentityResolver(), dataSources, new AnalyticsQueryProperties(),
+                transactions, objectMapper
+        );
+
+        var result = service.evaluate(
+                "project", "mode_mix", "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z"
+        );
+
+        assertThat(result.result().path("resultKind").asString()).isEqualTo("property_breakdown");
+        assertThat(result.result().path("rows")).isEmpty();
+        assertThat(result.result().path("totalMeasure").asLong()).isZero();
+    }
 
     @Test
     void crossVersionMetricResultIsExplicitlyDiagnostic() {

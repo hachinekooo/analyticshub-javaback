@@ -234,6 +234,10 @@ public class AnalyticsPropertyDefinitionService {
         if (journeyKey != null && !hasCapability(definitions.get(journeyKey), true)) {
             blockers.add(owner + " journeyKey=" + journeyKey);
         }
+        String propertyKey = textOrNull(config.get("propertyKey"));
+        if (propertyKey != null && !hasNumericSummaryCapability(definitions.get(propertyKey))) {
+            blockers.add(owner + " propertyKey=" + propertyKey);
+        }
     }
 
     private static boolean hasCapability(
@@ -242,6 +246,15 @@ public class AnalyticsPropertyDefinitionService {
     ) {
         return definition != null && definition.active() && !definition.sensitive()
                 && (journeyKey ? definition.journeyKey() : definition.groupable());
+    }
+
+    private static boolean hasNumericSummaryCapability(
+            AnalyticsPropertyDefinitionResponse definition
+    ) {
+        return definition != null && definition.active() && !definition.sensitive()
+                && definition.filterable()
+                && (definition.dataType() == com.github.analyticshub.dto.AnalyticsPropertyDataType.INTEGER
+                    || definition.dataType() == com.github.analyticshub.dto.AnalyticsPropertyDataType.NUMBER);
     }
 
     @Transactional(readOnly = true)
@@ -342,7 +355,8 @@ public class AnalyticsPropertyDefinitionService {
             String metricKey = resultSet.getString("metric_key");
             if (excludedMetricKeys.contains(metricKey)) return;
             JsonNode definition = objectMapper.readTree(resultSet.getString("definition"));
-            if ((checkFilter && filterReferences(definition, propertyKey))
+            if ((checkFilter && (filterReferences(definition, propertyKey)
+                    || propertyKey.equals(textOrNull(definition.get("propertyKey")))))
                     || (checkGroup && propertyKey.equals(textOrNull(definition.get("groupBy"))))
                     || (checkJourney && propertyKey.equals(textOrNull(definition.get("journeyKey"))))) {
                 throw invalid("属性 " + propertyKey + " 仍被指标 " + metricKey + " 使用，不能停用对应能力");

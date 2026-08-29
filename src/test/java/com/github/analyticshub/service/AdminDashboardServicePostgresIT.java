@@ -98,7 +98,9 @@ class AdminDashboardServicePostgresIT {
                 objectMapper,
                 new DashboardDefinitionValidator(),
                 new DashboardOverviewMetricPolicy(semanticDictionaryService),
-                new DashboardCounterPolicy(counterService)
+                new DashboardCounterPolicy(counterService),
+                new DashboardGovernedMetricPolicy(mock(AnalysisConfigurationService.class)),
+                new AnalysisPackOwnershipService(jdbcTemplate, objectMapper)
         );
     }
 

@@ -1,6 +1,7 @@
 package com.github.analyticshub.service;
 
 import com.github.analyticshub.dto.AnalysisPackImportRequest;
+import com.github.analyticshub.dto.AnalyticsPropertyDataType;
 import com.github.analyticshub.exception.BusinessException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,6 +23,7 @@ class AnalysisConfigurationServiceTest {
 
     private ObjectMapper objectMapper;
     private AnalysisConfigurationService service;
+    private AnalyticsPropertyFilterService propertyFilterService;
 
     @BeforeEach
     void setUp() {
@@ -32,13 +34,15 @@ class AnalysisConfigurationServiceTest {
         AnalyticsPropertyDefinitionService properties = new AnalyticsPropertyDefinitionService(
                 jdbcTemplate, objectMapper, mock(AnalysisPackOwnershipService.class)
         );
+        propertyFilterService = mock(AnalyticsPropertyFilterService.class);
         service = new AnalysisConfigurationService(
                 jdbcTemplate,
                 objectMapper,
                 properties,
-                mock(AnalyticsPropertyFilterService.class),
+                propertyFilterService,
                 mock(SemanticDictionaryService.class),
-                mock(AnalysisPackOwnershipService.class)
+                mock(AnalysisPackOwnershipService.class),
+                mock(AnalyticsMetricDependencyService.class)
         );
     }
 
@@ -133,5 +137,44 @@ class AnalysisConfigurationServiceTest {
                         assertThat(exception.getCode()).isEqualTo("INVALID_ANALYSIS_CONFIGURATION")
                 )
                 .hasMessageContaining("schemaScopeReason");
+    }
+
+    @Test
+    void propertyBreakdownRejectsNestedOrNonTextBusinessLabels() throws Exception {
+        when(propertyFilterService.requireGroupable("project", "opening_action"))
+                .thenReturn(AnalyticsPropertyDataType.STRING);
+        AnalysisPackImportRequest request = new AnalysisPackImportRequest(
+                1,
+                Map.of("en", "Invalid label pack"),
+                objectMapper.readTree("""
+                        {
+                          "schemaVersion": 1,
+                          "properties": [],
+                          "metrics": [{
+                            "metricKey": "opening.action_mix",
+                            "displayName": {"en": "Opening action mix"},
+                            "metricType": "PROPERTY_BREAKDOWN",
+                            "definition": {
+                              "semanticEvent": "letter.opening.completed",
+                              "aggregation": "EVENT_COUNT",
+                              "groupBy": "opening_action",
+                              "missingValuePolicy": "EXCLUDE",
+                              "valueLabels": {
+                                "skip": {"zh-CN": {"nested": "不允许"}}
+                              }
+                            },
+                            "active": true
+                          }]
+                        }
+                        """),
+                false
+        );
+
+        assertThatThrownBy(() -> service.importPack("project", "invalid.labels", request))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo("INVALID_ANALYSIS_CONFIGURATION")
+                )
+                .hasMessageContaining("valueLabels")
+                .hasMessageContaining("多语言名称");
     }
 }

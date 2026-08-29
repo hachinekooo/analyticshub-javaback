@@ -62,6 +62,7 @@ public class AnalysisConfigurationService {
     private final AnalyticsPropertyFilterService propertyFilterService;
     private final SemanticDictionaryService semanticDictionaryService;
     private final AnalysisPackOwnershipService packOwnershipService;
+    private final AnalyticsMetricDependencyService metricDependencyService;
 
     public AnalysisConfigurationService(
             JdbcTemplate jdbcTemplate,
@@ -69,7 +70,8 @@ public class AnalysisConfigurationService {
             AnalyticsPropertyDefinitionService propertyDefinitionService,
             AnalyticsPropertyFilterService propertyFilterService,
             SemanticDictionaryService semanticDictionaryService,
-            AnalysisPackOwnershipService packOwnershipService
+            AnalysisPackOwnershipService packOwnershipService,
+            AnalyticsMetricDependencyService metricDependencyService
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
@@ -77,6 +79,7 @@ public class AnalysisConfigurationService {
         this.propertyFilterService = propertyFilterService;
         this.semanticDictionaryService = semanticDictionaryService;
         this.packOwnershipService = packOwnershipService;
+        this.metricDependencyService = metricDependencyService;
     }
 
     @Transactional(readOnly = true)
@@ -186,6 +189,9 @@ public class AnalysisConfigurationService {
             TrustedSchemaPolicy trustedSchemaPolicy
     ) {
         validateMetricRequest(project, request, trustedSchemaPolicy);
+        if (!request.active()) {
+            metricDependencyService.requireUnusedByActiveDashboards(project, Set.of(key));
+        }
         jdbcTemplate.update("""
                 INSERT INTO analytics_metric_definitions
                     (project_id, metric_key, display_name, metric_type, definition, description, is_active)
@@ -422,6 +428,7 @@ public class AnalysisConfigurationService {
                 iterable(existing.manifest().path("metrics")), "metricKey"
         );
         removedMetrics.removeAll(metricKeys);
+        metricDependencyService.requireUnusedByActiveDashboards(projectId, removedMetrics);
         for (String metricKey : removedMetrics) {
             jdbcTemplate.update("""
                     UPDATE analytics_metric_definitions
@@ -654,6 +661,14 @@ public class AnalysisConfigurationService {
             case RETENTION -> Set.of(
                     "cohortEvent", "returnEvent", "days", "propertyFilters", "schemaScope", "schemaScopeReason"
             );
+            case PROPERTY_BREAKDOWN -> Set.of(
+                    "semanticEvent", "aggregation", "groupBy", "missingValuePolicy",
+                    "valueLabels", "propertyFilters", "schemaScope", "schemaScopeReason"
+            );
+            case NUMERIC_PROPERTY_SUMMARY -> Set.of(
+                    "semanticEvent", "propertyKey", "unit", "propertyFilters",
+                    "schemaScope", "schemaScopeReason"
+            );
         };
         requireOnlyFields(request.definition(), allowed, "definition");
         JsonNode propertyFilters = request.definition().get("propertyFilters");
@@ -709,12 +724,73 @@ public class AnalysisConfigurationService {
                     }
                 });
             }
+            case PROPERTY_BREAKDOWN -> {
+                requireSemanticEvents(
+                        projectId,
+                        List.of(requiredText(request.definition(), "semanticEvent", 100))
+                );
+                String aggregation = requiredText(request.definition(), "aggregation", 40);
+                if (!Set.of("EVENT_COUNT", "UNIQUE_ACTORS").contains(aggregation)) {
+                    throw invalid("PROPERTY_BREAKDOWN.aggregation 只支持 EVENT_COUNT / UNIQUE_ACTORS");
+                }
+                if (propertyFilterService.requireGroupable(
+                        projectId,
+                        requiredText(request.definition(), "groupBy", 80)
+                ) == null) {
+                    throw invalid("PROPERTY_BREAKDOWN 需要先启用属性治理并登记 groupBy 属性");
+                }
+                String missingPolicy = requiredText(
+                        request.definition(), "missingValuePolicy", 40
+                );
+                if (!Set.of("INCLUDE", "EXCLUDE").contains(missingPolicy)) {
+                    throw invalid("PROPERTY_BREAKDOWN.missingValuePolicy 只支持 INCLUDE / EXCLUDE");
+                }
+                validateBreakdownValueLabels(request.definition().get("valueLabels"));
+            }
+            case NUMERIC_PROPERTY_SUMMARY -> {
+                requireSemanticEvents(
+                        projectId,
+                        List.of(requiredText(request.definition(), "semanticEvent", 100))
+                );
+                if (propertyFilterService.requireNumericSummary(
+                        projectId,
+                        requiredText(request.definition(), "propertyKey", 80)
+                ) == null) {
+                    throw invalid("NUMERIC_PROPERTY_SUMMARY 需要先启用属性治理并登记数值属性");
+                }
+                String unit = requiredText(request.definition(), "unit", 40);
+                if (!Set.of("MILLISECONDS", "COUNT", "NUMBER").contains(unit)) {
+                    throw invalid("NUMERIC_PROPERTY_SUMMARY.unit 只支持 MILLISECONDS / COUNT / NUMBER");
+                }
+            }
         }
         validateMetricSchemaScope(request.active(), request.definition(), trustedSchemaPolicy);
     }
 
     private void requireSemanticEvents(String projectId, List<String> semanticKeys) {
         semanticDictionaryService.resolveActiveEventAliases(projectId, semanticKeys);
+    }
+
+    private static void validateBreakdownValueLabels(JsonNode labels) {
+        if (labels == null || labels.isNull()) return;
+        if (!labels.isObject() || labels.size() > 100) {
+            throw invalid("PROPERTY_BREAKDOWN.valueLabels 必须是最多 100 项的 object");
+        }
+        labels.properties().forEach(entry -> {
+            if (entry.getKey().isBlank() || entry.getKey().length() > 256
+                    || !entry.getValue().isObject() || entry.getValue().isEmpty()
+                    || entry.getValue().size() > 16) {
+                throw invalid("PROPERTY_BREAKDOWN.valueLabels 包含无效值域定义");
+            }
+            entry.getValue().properties().forEach(label -> {
+                if (!label.getKey().matches("^(?:default|[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*)$")
+                        || !label.getValue().isString()
+                        || label.getValue().asString().isBlank()
+                        || label.getValue().asString().length() > 200) {
+                    throw invalid("PROPERTY_BREAKDOWN.valueLabels 包含无效多语言名称");
+                }
+            });
+        });
     }
 
     private static String optionalText(JsonNode node, String field) {
@@ -744,6 +820,9 @@ public class AnalysisConfigurationService {
     private static void rejectExecutableFields(JsonNode node, String path) {
         if (node.isObject()) {
             node.properties().forEach(entry -> {
+                // valueLabels 的对象 key 是受限业务值（例如 imported），不是可执行字段名；
+                // 其结构与文本长度由 PROPERTY_BREAKDOWN 专用校验器负责。
+                if ("valueLabels".equals(entry.getKey())) return;
                 String key = entry.getKey().toLowerCase(java.util.Locale.ROOT);
                 if (key.contains("sql") || key.contains("script") || key.contains("url")
                         || key.contains("html") || key.contains("import")) {

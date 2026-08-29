@@ -97,6 +97,14 @@ public class AnalyticsPropertyFilterService {
         requireCapability(projectId, propertyKey, Capability.JOURNEY_KEY);
     }
 
+    public AnalyticsPropertyDataType requireNumericSummary(String projectId, String propertyKey) {
+        AnalyticsPropertyDataType type = requireCapability(projectId, propertyKey, Capability.NUMERIC_SUMMARY);
+        if (type != AnalyticsPropertyDataType.INTEGER && type != AnalyticsPropertyDataType.NUMBER) {
+            throw invalid("数值摘要只支持 INTEGER / NUMBER 属性: " + propertyKey);
+        }
+        return type;
+    }
+
     private AnalyticsPropertyDataType requireCapability(String projectId, String propertyKey, Capability capability) {
         if (propertyKey == null || propertyKey.isBlank()) {
             return null;
@@ -108,7 +116,11 @@ public class AnalyticsPropertyFilterService {
         AnalyticsPropertyDefinitionResponse definition = definitionService
                 .requireCapabilities(projectId, List.of(propertyKey)).get(propertyKey);
         boolean allowed = definition != null && definition.active() && !definition.sensitive()
-                && (capability == Capability.GROUPABLE ? definition.groupable() : definition.journeyKey());
+                && switch (capability) {
+                    case GROUPABLE -> definition.groupable();
+                    case JOURNEY_KEY -> definition.journeyKey();
+                    case NUMERIC_SUMMARY -> definition.filterable();
+                };
         if (!allowed) {
             throw invalid("属性未启用" + capability.displayName + "能力: " + propertyKey);
         }
@@ -188,7 +200,8 @@ public class AnalyticsPropertyFilterService {
 
     private enum Capability {
         GROUPABLE("分组"),
-        JOURNEY_KEY("旅程关联");
+        JOURNEY_KEY("旅程关联"),
+        NUMERIC_SUMMARY("数值摘要");
 
         private final String displayName;
 

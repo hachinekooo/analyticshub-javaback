@@ -156,6 +156,23 @@ class DashboardDefinitionValidatorTest {
     }
 
     @Test
+    void schemaVersionTwoAllowsMultipleGovernedMetricInstances() throws Exception {
+        var definition = objectMapper.readTree("""
+                {
+                  "schemaVersion": 2,
+                  "widgets": [
+                    {"id":"mode","type":"core.governedMetric","layout":{"x":0,"y":0,"w":6,"h":4},
+                     "config":{"metricKey":"authoring.mode_mix"}},
+                    {"id":"entry","type":"core.governedMetric","layout":{"x":6,"y":0,"w":6,"h":4},
+                     "config":{"metricKey":"authoring.entry_mix"}}
+                  ]
+                }
+                """);
+
+        assertThatCode(() -> validator.validate(2, definition)).doesNotThrowAnyException();
+    }
+
+    @Test
     void rejectsDuplicateWidgetIdsAndInvalidGridBounds() throws Exception {
         var duplicate = objectMapper.readTree("""
                 {

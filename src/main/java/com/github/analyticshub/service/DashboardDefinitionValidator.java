@@ -26,7 +26,7 @@ import java.util.regex.Pattern;
 @Component
 public class DashboardDefinitionValidator {
 
-    static final int CURRENT_SCHEMA_VERSION = 1;
+    static final int CURRENT_SCHEMA_VERSION = 2;
     private static final int MAX_DEFINITION_BYTES = 256 * 1024;
     private static final int MAX_WIDGETS = 50;
     private static final Pattern LOCALE_PATTERN = Pattern.compile(
@@ -63,7 +63,8 @@ public class DashboardDefinitionValidator {
             "core.events",
             "core.devices",
             "core.sessions",
-            "core.traffic"
+            "core.traffic",
+            "core.governedMetric"
     );
 
     private static final Map<String, Set<String>> TYPE_CONFIG_FIELDS = Map.ofEntries(
@@ -80,7 +81,8 @@ public class DashboardDefinitionValidator {
             Map.entry("core.events", Set.of("eventType", "pageSize")),
             Map.entry("core.devices", Set.of("pageSize")),
             Map.entry("core.sessions", Set.of("pageSize")),
-            Map.entry("core.traffic", Set.of("metricType", "pageSize"))
+            Map.entry("core.traffic", Set.of("metricType", "pageSize")),
+            Map.entry("core.governedMetric", Set.of("metricKey"))
     );
 
     private final Map<String, RegisteredExtension> extensions;
@@ -132,8 +134,8 @@ public class DashboardDefinitionValidator {
     }
 
     public void validate(int schemaVersion, JsonNode definition) {
-        if (schemaVersion != CURRENT_SCHEMA_VERSION) {
-            fail("当前仅支持 dashboard schemaVersion=1");
+        if (schemaVersion < 1 || schemaVersion > CURRENT_SCHEMA_VERSION) {
+            fail("当前仅支持 dashboard schemaVersion=1 / 2");
         }
         if (definition == null || !definition.isObject()) {
             fail("definition 必须是 JSON object");
@@ -163,7 +165,7 @@ public class DashboardDefinitionValidator {
         Set<String> widgetIds = new HashSet<>();
         Set<String> widgetTypes = new HashSet<>();
         for (int index = 0; index < widgets.size(); index++) {
-            validateWidget(widgets.get(index), index, widgetIds, widgetTypes);
+            validateWidget(widgets.get(index), index, schemaVersion, widgetIds, widgetTypes);
         }
     }
 
@@ -194,6 +196,7 @@ public class DashboardDefinitionValidator {
     private void validateWidget(
             JsonNode widget,
             int index,
+            int schemaVersion,
             Set<String> widgetIds,
             Set<String> widgetTypes
     ) {
@@ -215,8 +218,9 @@ public class DashboardDefinitionValidator {
         if (!CORE_WIDGET_TYPES.contains(type) && !extensions.containsKey(type)) {
             fail("不支持的 widget type: " + type);
         }
-        if (!widgetTypes.add(type)) {
-            fail("dashboard schemaVersion=1 中同一 widget type 只能出现一次: " + type);
+        if (!widgetTypes.add(type)
+                && (schemaVersion == 1 || !"core.governedMetric".equals(type))) {
+            fail("当前 schema 中同一 widget type 只能出现一次: " + type);
         }
         validateLayout(widget.get("layout"), path + ".layout");
         validateConfig(type, widget.get("config"), path + ".config");
@@ -251,7 +255,7 @@ public class DashboardDefinitionValidator {
     private void validateConfig(String type, JsonNode config, String path) {
         RegisteredExtension registered = extensions.get(type);
         if (config == null || config.isNull()) {
-            if (Set.of("core.productFunnel", "core.retention").contains(type)
+            if (Set.of("core.productFunnel", "core.retention", "core.governedMetric").contains(type)
                     || (registered != null && registered.configRequired())) {
                 fail(path + " 是 " + type + " 的必填 object");
             }
@@ -332,6 +336,8 @@ public class DashboardDefinitionValidator {
                 validateOptionalEventKey(config, "metricType", path);
                 validateOptionalInteger(config, "pageSize", 1, 200, path);
             }
+            case "core.governedMetric" ->
+                    requireAnalyticsKey(config.get("metricKey"), 100, path + ".metricKey");
             default -> {
                 // Widgets without type-specific configuration only accept the common title.
             }

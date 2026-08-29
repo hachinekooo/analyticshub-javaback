@@ -204,6 +204,7 @@ app:
       max-candidate-rows: ${ANALYTICS_QUERY_MAX_CANDIDATE_ROWS:200000}
       max-data-quality-rows: ${ANALYTICS_QUERY_MAX_DATA_QUALITY_ROWS:50000}
       max-funnel-groups: ${ANALYTICS_QUERY_MAX_FUNNEL_GROUPS:1000}
+      max-metric-breakdown-groups: ${ANALYTICS_QUERY_MAX_METRIC_BREAKDOWN_GROUPS:100}
       max-dimension-value-length: ${ANALYTICS_QUERY_MAX_DIMENSION_VALUE_LENGTH:256}
       timeout-seconds: ${ANALYTICS_QUERY_TIMEOUT_SECONDS:15}
     event-property-backfill:

@@ -16,6 +16,7 @@ public class AnalyticsQueryProperties {
     private int maxCandidateRows = 200_000;
     private int maxDataQualityRows = 50_000;
     private int maxFunnelGroups = 1_000;
+    private int maxMetricBreakdownGroups = 100;
     private int maxDimensionValueLength = 256;
     private int timeoutSeconds = 15;
 
@@ -49,6 +50,17 @@ public class AnalyticsQueryProperties {
 
     public void setMaxFunnelGroups(int maxFunnelGroups) {
         this.maxFunnelGroups = positive(maxFunnelGroups, "max-funnel-groups");
+    }
+
+    public int getMaxMetricBreakdownGroups() {
+        return maxMetricBreakdownGroups;
+    }
+
+    public void setMaxMetricBreakdownGroups(int maxMetricBreakdownGroups) {
+        this.maxMetricBreakdownGroups = positive(
+                maxMetricBreakdownGroups,
+                "max-metric-breakdown-groups"
+        );
     }
 
     public int getMaxDimensionValueLength() {

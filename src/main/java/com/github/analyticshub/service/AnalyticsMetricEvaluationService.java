@@ -20,8 +20,11 @@ import javax.sql.DataSource;
 import java.time.Duration;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** 按已验证的 metricKey 计算通用指标，Dashboard 不再自行拼事件名和 SQL。 */
 @Service
@@ -95,6 +98,12 @@ public class AnalyticsMetricEvaluationService {
                     optionalDays(metric.definition()),
                     serializedFilters(metric.definition())
             ));
+            case PROPERTY_BREAKDOWN -> evaluatePropertyBreakdown(
+                    projectId, metric.definition(), range
+            );
+            case NUMERIC_PROPERTY_SUMMARY -> evaluateNumericPropertySummary(
+                    projectId, metric.definition(), range
+            );
         };
         boolean crossVersionDiagnostic = "CROSS_VERSION_VERIFIED".equals(
                 optionalText(metric.definition(), "schemaScope")
@@ -113,6 +122,207 @@ public class AnalyticsMetricEvaluationService {
                 result
         );
     }
+
+    private JsonNode evaluatePropertyBreakdown(
+            String projectId,
+            JsonNode definition,
+            AdminQueryUtils.Range range
+    ) {
+        String propertyKey = requiredText(definition, "groupBy");
+        String aggregation = requiredText(definition, "aggregation");
+        boolean includeMissing = "INCLUDE".equals(requiredText(definition, "missingValuePolicy"));
+        var propertyType = propertyFilterService.requireGroupable(projectId, propertyKey);
+        if (propertyType == null) {
+            throw new BusinessException("INVALID_ANALYTICS_METRIC", "属性分布缺少受治理的 groupBy 属性");
+        }
+        String dataType = propertyType.name();
+        List<MetricCandidate> candidates = loadMetricCandidates(projectId, definition, range);
+
+        Map<String, Long> measures;
+        if ("UNIQUE_ACTORS".equals(aggregation)) {
+            measures = groupedUniqueActors(projectId, propertyKey, includeMissing, candidates);
+        } else {
+            Map<String, Long> counts = new LinkedHashMap<>();
+            for (MetricCandidate candidate : candidates) {
+                String value = normalizedDimensionValue(candidate.properties(), propertyKey);
+                if (value == null && !includeMissing) continue;
+                counts.merge(value == null ? "" : value, 1L, Long::sum);
+            }
+            measures = counts;
+        }
+        if (measures.size() > queryProperties.getMaxMetricBreakdownGroups()) {
+            throw new BusinessException(
+                    "ANALYTICS_METRIC_GROUP_BUDGET_EXCEEDED",
+                    "属性分布超过最大分组数 " + queryProperties.getMaxMetricBreakdownGroups()
+            );
+        }
+        long total = measures.values().stream().mapToLong(Long::longValue).sum();
+        ObjectNode result = objectMapper.createObjectNode();
+        result.put("resultKind", "property_breakdown");
+        result.put("aggregation", aggregation);
+        result.put("propertyKey", propertyKey);
+        result.put("dataType", dataType);
+        result.put("totalMeasure", total);
+        var rows = result.putArray("rows");
+        measures.entrySet().stream()
+                .sorted(Map.Entry.<String, Long>comparingByValue().reversed()
+                        .thenComparing(Map.Entry.comparingByKey()))
+                .forEach(entry -> {
+                    ObjectNode row = rows.addObject();
+                    boolean missing = entry.getKey().isEmpty();
+                    if (missing) row.putNull("value"); else row.put("value", entry.getKey());
+                    JsonNode displayName = definition.path("valueLabels").get(entry.getKey());
+                    if (!missing && displayName != null && displayName.isObject()) {
+                        row.set("displayName", displayName.deepCopy());
+                    }
+                    row.put("missing", missing);
+                    row.put("measure", entry.getValue());
+                    row.put("share", total == 0 ? 0D : (double) entry.getValue() / total);
+                });
+        return result;
+    }
+
+    private JsonNode evaluateNumericPropertySummary(
+            String projectId,
+            JsonNode definition,
+            AdminQueryUtils.Range range
+    ) {
+        String propertyKey = requiredText(definition, "propertyKey");
+        var propertyType = propertyFilterService.requireNumericSummary(projectId, propertyKey);
+        if (propertyType == null) {
+            throw new BusinessException("INVALID_ANALYTICS_METRIC", "数值摘要缺少受治理的数值属性");
+        }
+        String dataType = propertyType.name();
+        List<Double> values = loadMetricCandidates(projectId, definition, range).stream()
+                .map(candidate -> candidate.properties().get(propertyKey))
+                .filter(value -> value != null && value.isNumber())
+                .map(JsonNode::asDouble)
+                .filter(Double::isFinite)
+                .sorted()
+                .toList();
+        ObjectNode result = objectMapper.createObjectNode();
+        result.put("resultKind", "numeric_property_summary");
+        result.put("propertyKey", propertyKey);
+        result.put("dataType", dataType);
+        result.put("unit", requiredText(definition, "unit"));
+        result.put("sampleCount", values.size());
+        if (values.isEmpty()) {
+            result.putNull("average");
+            result.putNull("median");
+            result.putNull("p90");
+            result.putNull("min");
+            result.putNull("max");
+            return result;
+        }
+        result.put("average", values.stream().mapToDouble(Double::doubleValue).average().orElse(0D));
+        result.put("median", percentile(values, 0.5D));
+        result.put("p90", percentile(values, 0.9D));
+        result.put("min", values.getFirst());
+        result.put("max", values.getLast());
+        return result;
+    }
+
+    private List<MetricCandidate> loadMetricCandidates(
+            String projectId,
+            JsonNode definition,
+            AdminQueryUtils.Range range
+    ) {
+        MultiDataSourceManager.ProjectConfig config = dataSourceManager.getProjectConfig(projectId);
+        if (config == null || !Boolean.TRUE.equals(config.isActive())) {
+            throw BusinessException.projectInactive();
+        }
+        List<String> aliases = semanticDictionaryService.resolveActiveEventAliases(
+                projectId, List.of(requiredText(definition, "semanticEvent"))
+        ).values().stream().findFirst().orElse(List.of());
+        if (aliases.isEmpty()) return List.of();
+        AnalyticsPropertyFilterService.CompiledPropertyFilters filters = propertyFilterService.compile(
+                projectId, serializedFilters(definition), "properties"
+        );
+        DataSource dataSource = dataSourceManager.getDataSource(projectId);
+        String eventsTable = dataSourceManager.getTableName(projectId, "events");
+        return executeMetricQuery(dataSource, jdbc -> {
+            String placeholders = String.join(",", aliases.stream().map(ignored -> "?").toList());
+            List<Object> arguments = new ArrayList<>();
+            arguments.add(projectId);
+            arguments.add(range.start().toEpochMilli());
+            arguments.add(range.end().toEpochMilli());
+            arguments.addAll(aliases);
+            arguments.addAll(filters.arguments());
+            String filterSql = filters.isEmpty() ? "" : " AND " + filters.sql();
+            enforceMatchingEventBudget(jdbc, eventsTable, placeholders, filterSql, arguments);
+            return jdbc.query(
+                    "SELECT COALESCE(NULLIF(BTRIM(user_id), ''), device_id::text) actor_id, properties::text"
+                            + " FROM " + eventsTable
+                            + " WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ?"
+                            + " AND event_type IN (" + placeholders + ")" + filterSql,
+                    (rs, rowNum) -> new MetricCandidate(
+                            rs.getString("actor_id"), readProperties(rs.getString("properties"))
+                    ),
+                    arguments.toArray()
+            );
+        });
+    }
+
+    private Map<String, Long> groupedUniqueActors(
+            String projectId,
+            String propertyKey,
+            boolean includeMissing,
+            List<MetricCandidate> candidates
+    ) {
+        if (candidates.isEmpty()) return Map.of();
+        DataSource dataSource = dataSourceManager.getDataSource(projectId);
+        String linksTable = dataSourceManager.getTableName(projectId, "actor_identity_links");
+        Map<String, String> canonical = executeMetricQuery(dataSource, jdbc ->
+                actorIdentityResolver.resolveCanonicalActors(
+                        jdbc,
+                        linksTable,
+                        projectId,
+                        candidates.stream().map(MetricCandidate::actorId).distinct().toList()
+                )
+        );
+        Map<String, Set<String>> grouped = new LinkedHashMap<>();
+        for (MetricCandidate candidate : candidates) {
+            String value = normalizedDimensionValue(candidate.properties(), propertyKey);
+            if (value == null && !includeMissing) continue;
+            grouped.computeIfAbsent(value == null ? "" : value, ignored -> new LinkedHashSet<>())
+                    .add(canonical.getOrDefault(candidate.actorId(), candidate.actorId()));
+        }
+        Map<String, Long> result = new LinkedHashMap<>();
+        grouped.forEach((value, actors) -> result.put(value, (long) actors.size()));
+        return result;
+    }
+
+    private JsonNode readProperties(String encoded) {
+        try {
+            JsonNode properties = objectMapper.readTree(encoded);
+            return properties != null && properties.isObject()
+                    ? properties
+                    : objectMapper.createObjectNode();
+        } catch (Exception exception) {
+            return objectMapper.createObjectNode();
+        }
+    }
+
+    private String normalizedDimensionValue(JsonNode properties, String propertyKey) {
+        JsonNode value = properties.get(propertyKey);
+        if (value == null || value.isNull() || value.isObject() || value.isArray()) return null;
+        String normalized = value.isString() ? value.asString().strip() : value.asString();
+        if (normalized.isEmpty()) return null;
+        if (normalized.length() > queryProperties.getMaxDimensionValueLength()) {
+            throw new BusinessException(
+                    "ANALYTICS_DIMENSION_VALUE_TOO_LONG",
+                    "属性分组值超过最大长度 " + queryProperties.getMaxDimensionValueLength()
+            );
+        }
+        return normalized;
+    }
+
+    private static double percentile(List<Double> sortedValues, double percentile) {
+        int index = (int) Math.ceil(percentile * sortedValues.size()) - 1;
+        return sortedValues.get(Math.max(0, Math.min(index, sortedValues.size() - 1)));
+    }
+
+    private record MetricCandidate(String actorId, JsonNode properties) {}
 
     private JsonNode evaluateEventAggregate(
             String projectId,

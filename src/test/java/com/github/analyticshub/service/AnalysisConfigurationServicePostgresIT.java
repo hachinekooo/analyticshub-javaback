@@ -2,11 +2,14 @@ package com.github.analyticshub.service;
 
 import com.github.analyticshub.dto.AnalysisPackImportRequest;
 import com.github.analyticshub.dto.AnalysisPackVersionSnapshot;
+import com.github.analyticshub.dto.AdminDashboardUpsertRequest;
 import com.github.analyticshub.dto.AnalyticsPropertyDataType;
 import com.github.analyticshub.dto.AnalyticsPropertyDefinitionRequest;
 import com.github.analyticshub.dto.AnalyticsMetricDefinitionRequest;
 import com.github.analyticshub.dto.AnalyticsMetricType;
 import com.github.analyticshub.exception.BusinessException;
+import com.github.analyticshub.entity.AnalyticsProject;
+import com.github.analyticshub.mapper.AnalyticsProjectMapper;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,13 +27,16 @@ import tools.jackson.databind.json.JsonMapper;
 import javax.sql.DataSource;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -53,6 +59,7 @@ class AnalysisConfigurationServicePostgresIT {
     private AnalysisConfigurationService service;
     private AnalyticsPropertyDefinitionService propertyDefinitionService;
     private AnalyticsPropertyFilterService propertyFilterService;
+    private AdminDashboardService dashboardService;
 
     @BeforeEach
     void setUp() {
@@ -96,7 +103,17 @@ class AnalysisConfigurationServicePostgresIT {
         });
         service = new AnalysisConfigurationService(
                 jdbcTemplate, objectMapper, propertyDefinitionService, propertyFilterService, semantics,
-                ownershipService
+                ownershipService, new AnalyticsMetricDependencyService(jdbcTemplate)
+        );
+        AnalyticsProject project = new AnalyticsProject();
+        project.setProjectId(PROJECT_ID);
+        AnalyticsProjectMapper projectMapper = mock(AnalyticsProjectMapper.class);
+        when(projectMapper.selectOne(any())).thenReturn(project);
+        dashboardService = new AdminDashboardService(
+                projectMapper, jdbcTemplate, objectMapper, new DashboardDefinitionValidator(),
+                new DashboardOverviewMetricPolicy(mock(SemanticDictionaryService.class)),
+                new DashboardCounterPolicy(mock(CounterService.class)),
+                new DashboardGovernedMetricPolicy(service), ownershipService
         );
     }
 
@@ -121,6 +138,132 @@ class AnalysisConfigurationServicePostgresIT {
                 "SELECT pack_version FROM analytics_analysis_packs WHERE project_id = ? AND pack_key = ?",
                 Integer.class, PROJECT_ID, "product.baseline"
         )).isEqualTo(2);
+    }
+
+    @Test
+    void packCannotDeactivateMetricReferencedByAnActiveDashboard() {
+        inTransaction(() -> service.importPack(
+                PROJECT_ID, "product.baseline", request(1, manifest("channel", "opens"))
+        ));
+        jdbcTemplate.update("""
+                INSERT INTO analytics_dashboards
+                    (project_id, dashboard_key, display_name, schema_version, definition, is_active)
+                VALUES (?, 'operations', '{"en":"Operations"}'::jsonb, 2,
+                        '{"schemaVersion":2,"widgets":[{"id":"opens","type":"core.governedMetric","config":{"metricKey":"opens"}}]}'::jsonb,
+                        TRUE)
+                """, PROJECT_ID);
+
+        assertThatThrownBy(() -> inTransaction(() -> service.importPack(
+                PROJECT_ID, "product.baseline", request(2, manifest("channel", null))
+        ))).isInstanceOfSatisfying(BusinessException.class, exception -> {
+            assertThat(exception.getCode()).isEqualTo("ANALYTICS_METRIC_IN_USE");
+            assertThat(exception.getDetails().get("metricKeys")).isEqualTo(List.of("opens"));
+            assertThat(exception.getDetails().get("dashboardKeys")).isEqualTo(List.of("operations"));
+        });
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT is_active FROM analytics_metric_definitions WHERE project_id = ? AND metric_key = ?",
+                Boolean.class, PROJECT_ID, "opens"
+        )).isTrue();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT pack_version FROM analytics_analysis_packs WHERE project_id = ? AND pack_key = ?",
+                Integer.class, PROJECT_ID, "product.baseline"
+        )).isEqualTo(1);
+    }
+
+    @Test
+    void inactiveDashboardCannotBeReactivatedAfterItsMetricIsDeactivated() throws Exception {
+        AnalyticsMetricDefinitionRequest activeMetric = new AnalyticsMetricDefinitionRequest(
+                Map.of("en", "Lifecycle metric"), AnalyticsMetricType.EVENT_COUNT,
+                objectMapper.readTree("{\"semanticEvent\":\"app.open\"}"), null, true
+        );
+        inTransaction(() -> service.upsertMetric(PROJECT_ID, "lifecycle.metric", activeMetric));
+        Map<String, Object> definition = Map.of(
+                "schemaVersion", 2,
+                "widgets", List.of(Map.of(
+                        "id", "lifecycle", "type", "core.governedMetric",
+                        "layout", Map.of("x", 0, "y", 0, "w", 6, "h", 6),
+                        "config", Map.of("metricKey", "lifecycle.metric")
+                ))
+        );
+        AdminDashboardUpsertRequest inactiveDashboard = new AdminDashboardUpsertRequest(
+                Map.of("en", "Lifecycle dashboard"), null, 2,
+                definition, null, false, false
+        );
+        inTransaction(() -> dashboardService.upsert(PROJECT_ID, "lifecycle", inactiveDashboard));
+
+        AnalyticsMetricDefinitionRequest inactiveMetric = new AnalyticsMetricDefinitionRequest(
+                activeMetric.displayName(), activeMetric.metricType(), activeMetric.definition(), null, false
+        );
+        inTransaction(() -> service.upsertMetric(PROJECT_ID, "lifecycle.metric", inactiveMetric));
+        AdminDashboardUpsertRequest reactivation = new AdminDashboardUpsertRequest(
+                inactiveDashboard.displayName(), null, 2,
+                definition, 1L, false, true
+        );
+
+        assertThatThrownBy(() -> inTransaction(() -> dashboardService.upsert(
+                PROJECT_ID, "lifecycle", reactivation
+        ))).isInstanceOfSatisfying(BusinessException.class, exception ->
+                assertThat(exception.getCode()).isEqualTo("DASHBOARD_GOVERNED_METRIC_UNAVAILABLE")
+        );
+        assertThat(dashboardService.get(PROJECT_ID, "lifecycle").isActive()).isFalse();
+    }
+
+    @Test
+    void concurrentDashboardReferenceAndMetricDeactivationNeverCommitAnInvalidPair() throws Exception {
+        AnalyticsMetricDefinitionRequest activeMetric = new AnalyticsMetricDefinitionRequest(
+                Map.of("en", "Race metric"), AnalyticsMetricType.EVENT_COUNT,
+                objectMapper.readTree("{\"semanticEvent\":\"app.open\"}"), null, true
+        );
+        inTransaction(() -> service.upsertMetric(PROJECT_ID, "race.metric", activeMetric));
+        AnalyticsMetricDefinitionRequest inactiveMetric = new AnalyticsMetricDefinitionRequest(
+                activeMetric.displayName(), activeMetric.metricType(), activeMetric.definition(), null, false
+        );
+        AdminDashboardUpsertRequest dashboard = new AdminDashboardUpsertRequest(
+                Map.of("en", "Race dashboard"), null, 2,
+                Map.of(
+                        "schemaVersion", 2,
+                        "widgets", List.of(Map.of(
+                                "id", "race", "type", "core.governedMetric",
+                                "layout", Map.of("x", 0, "y", 0, "w", 6, "h", 6),
+                                "config", Map.of("metricKey", "race.metric")
+                        ))
+                ),
+                null, false, true
+        );
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<String> dashboardAttempt = executor.submit(() -> raceAttempt(ready, start, () ->
+                    dashboardService.upsert(PROJECT_ID, "race", dashboard)
+            ));
+            Future<String> deactivationAttempt = executor.submit(() -> raceAttempt(ready, start, () ->
+                    service.upsertMetric(PROJECT_ID, "race.metric", inactiveMetric)
+            ));
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+
+            List<String> outcomes = List.of(
+                    dashboardAttempt.get(10, TimeUnit.SECONDS),
+                    deactivationAttempt.get(10, TimeUnit.SECONDS)
+            );
+            assertThat(outcomes).filteredOn("success"::equals).hasSize(1);
+            assertThat(outcomes).anyMatch(code -> Set.of(
+                    "ANALYTICS_METRIC_IN_USE", "DASHBOARD_GOVERNED_METRIC_UNAVAILABLE"
+            ).contains(code));
+        }
+
+        boolean metricActive = jdbcTemplate.queryForObject(
+                "SELECT is_active FROM analytics_metric_definitions WHERE project_id = ? AND metric_key = ?",
+                Boolean.class, PROJECT_ID, "race.metric"
+        );
+        int activeDashboardCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM analytics_dashboards WHERE project_id = ? AND dashboard_key = 'race' AND is_active = TRUE",
+                Integer.class, PROJECT_ID
+        );
+        assertThat((metricActive && activeDashboardCount == 1)
+                || (!metricActive && activeDashboardCount == 0)).isTrue();
     }
 
     @Test
@@ -585,6 +728,21 @@ class AnalysisConfigurationServicePostgresIT {
     private void inTransaction(Runnable operation) {
         new TransactionTemplate(new DataSourceTransactionManager(dataSource))
                 .executeWithoutResult(status -> operation.run());
+    }
+
+    private String raceAttempt(
+            CountDownLatch ready,
+            CountDownLatch start,
+            Runnable operation
+    ) throws InterruptedException {
+        ready.countDown();
+        start.await();
+        try {
+            inTransaction(operation);
+            return "success";
+        } catch (BusinessException exception) {
+            return exception.getCode();
+        }
     }
 
     private AnalysisPackImportRequest request(int version, JsonNode manifest) {

@@ -30,7 +30,8 @@ import java.util.Map;
 @Service
 public class AnalyticsDataQualityService {
 
-    private static final int MAX_PROPERTY_COVERAGE_ITEMS = 50;
+    // 承载中等规模产品的核心运营维度，同时保留单次质量扫描上限。
+    private static final int MAX_PROPERTY_COVERAGE_ITEMS = 64;
     private static final int MAX_DISTRIBUTION_VALUES = 200;
 
     private final MultiDataSourceManager dataSourceManager;
