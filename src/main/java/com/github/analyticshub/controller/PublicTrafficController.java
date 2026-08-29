@@ -5,7 +5,6 @@ import com.github.analyticshub.dto.TrafficMetricTrackRequest;
 import com.github.analyticshub.dto.TrafficMetricTrackResponse;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.service.TrafficMetricService;
-import com.github.analyticshub.security.ClientIpResolver;
 import com.github.analyticshub.util.CryptoUtils;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
@@ -14,6 +13,7 @@ import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -22,12 +22,16 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import com.github.analyticshub.dto.TrafficMetricSummaryResponse;
 import com.github.analyticshub.service.TrafficMetricStatsService;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.JsonNodeFactory;
 import tools.jackson.databind.node.ObjectNode;
 
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/public/traffic")
@@ -35,17 +39,17 @@ public class PublicTrafficController {
 
     private final TrafficMetricService trafficMetricService;
     private final TrafficMetricStatsService trafficMetricStatsService;
-    private final ClientIpResolver clientIpResolver;
     private final String publicToken;
+    private final Set<String> sameOriginHosts;
 
     public PublicTrafficController(TrafficMetricService trafficMetricService,
                                    TrafficMetricStatsService trafficMetricStatsService,
-                                   ClientIpResolver clientIpResolver,
-                                   @Value("${app.traffic.public-token:}") String publicToken) {
+                                   @Value("${app.traffic.public-token:}") String publicToken,
+                                   @Value("${app.traffic.same-origin-hosts:}") String sameOriginHosts) {
         this.trafficMetricService = trafficMetricService;
         this.trafficMetricStatsService = trafficMetricStatsService;
-        this.clientIpResolver = clientIpResolver;
         this.publicToken = publicToken == null ? "" : publicToken;
+        this.sameOriginHosts = parseConfiguredHosts(sameOriginHosts);
     }
 
     @GetMapping("/summary")
@@ -76,30 +80,16 @@ public class PublicTrafficController {
         }
         UUID resolvedDeviceId = resolveOrAssignDeviceId(httpServletRequest, httpServletResponse);
 
-        String clientIp = clientIpResolver.resolve(httpServletRequest);
         String userAgent = httpServletRequest.getHeader("User-Agent");
         String referrer = resolveReferer(request, httpServletRequest);
         boolean bot = isBot(userAgent);
 
-        // 如果是机器人，可以在 metadata 中记录
-        TrafficMetricTrackRequest enrichedRequest = request;
-        if (bot || (referrer != null && !referrer.equals(request.referrer()))) {
-            ObjectNode metadata = mutableMetadata(request.metadata());
-            if (bot) metadata.put("isBot", true);
-            if (referrer != null) metadata.put("resolvedReferrer", referrer);
-            
-            enrichedRequest = new TrafficMetricTrackRequest(
-                    request.metricType(),
-                    request.pagePath(),
-                    referrer != null ? referrer : request.referrer(),
-                    request.timestamp(),
-                    request.sessionId(),
-                    metadata
-            );
-        }
+        TrafficMetricTrackRequest enrichedRequest = normalizePublicRequest(request, referrer, bot);
 
         return ApiResponse.success(
-                trafficMetricService.trackPublic(projectId, resolvedDeviceId, userId, enrichedRequest, clientIp, userAgent)
+                // 官网公开流量只保留已声明的页面字段；IP 仅进入常规服务器日志，
+                // 完整 User-Agent 与稳定 IP 哈希不写入原始流量事件。
+                trafficMetricService.trackPublic(projectId, resolvedDeviceId, userId, enrichedRequest, null, null)
         );
     }
 
@@ -121,7 +111,6 @@ public class PublicTrafficController {
         }
         UUID resolvedDeviceId = resolveOrAssignDeviceId(httpServletRequest, httpServletResponse);
 
-        String clientIp = clientIpResolver.resolve(httpServletRequest);
         String userAgent = httpServletRequest.getHeader("User-Agent");
         boolean bot = isBot(userAgent);
 
@@ -138,22 +127,7 @@ public class PublicTrafficController {
                 continue;
             }
             String referrer = resolveReferer(item, httpServletRequest);
-            if (bot || (referrer != null && !referrer.equals(item.referrer()))) {
-                ObjectNode metadata = mutableMetadata(item.metadata());
-                if (bot) metadata.put("isBot", true);
-                if (referrer != null) metadata.put("resolvedReferrer", referrer);
-                
-                processedItems[i] = new TrafficMetricTrackRequest(
-                        item.metricType(),
-                        item.pagePath(),
-                        referrer != null ? referrer : item.referrer(),
-                        item.timestamp(),
-                        item.sessionId(),
-                        metadata
-                );
-            } else {
-                processedItems[i] = item;
-            }
+            processedItems[i] = normalizePublicRequest(item, referrer, bot);
         }
 
         int accepted = trafficMetricService.trackPublicBatch(
@@ -161,8 +135,8 @@ public class PublicTrafficController {
                 resolvedDeviceId,
                 userId,
                 processedItems,
-                clientIp,
-                userAgent
+                null,
+                null
         );
         if (accepted == 0) {
             throw new BusinessException("NO_VALID_ITEMS", "批量请求中没有可写入的数据（请确认 metricType 字段）");
@@ -172,6 +146,13 @@ public class PublicTrafficController {
                 "accepted", accepted,
                 "rejected", items.length - accepted
         ));
+    }
+
+    @DeleteMapping("/identity")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void clearTrafficIdentity(HttpServletRequest request, HttpServletResponse response) {
+        checkPublicToken(request);
+        response.addCookie(createDeviceIdCookie("", 0, request));
     }
 
     private void checkPublicToken(HttpServletRequest request) {
@@ -204,19 +185,122 @@ public class PublicTrafficController {
         return result == 0;
     }
 
-    private static ObjectNode mutableMetadata(JsonNode metadata) {
-        return metadata != null && metadata.isObject()
-                ? (ObjectNode) metadata.deepCopy()
-                : JsonNodeFactory.instance.objectNode();
+    private static TrafficMetricTrackRequest normalizePublicRequest(
+            TrafficMetricTrackRequest request,
+            String referrer,
+            boolean bot
+    ) {
+        ObjectNode metadata = bot ? JsonNodeFactory.instance.objectNode().put("isBot", true) : null;
+        return new TrafficMetricTrackRequest(
+                request.metricType(),
+                sanitizePagePath(request.pagePath()),
+                referrer,
+                request.timestamp(),
+                request.sessionId(),
+                metadata
+        );
     }
 
-    private static String resolveReferer(TrafficMetricTrackRequest request, HttpServletRequest httpServletRequest) {
+    private String resolveReferer(TrafficMetricTrackRequest request, HttpServletRequest httpServletRequest) {
         String referrer = request.referrer();
         if (referrer != null && !referrer.isBlank()) {
-            return referrer.trim();
+            return sanitizeReferrer(referrer);
         }
         String headerReferer = httpServletRequest.getHeader("Referer");
-        return (headerReferer == null || headerReferer.isBlank()) ? null : headerReferer.trim();
+        return sanitizeReferrer(headerReferer);
+    }
+
+    private String sanitizeReferrer(String rawReferrer) {
+        if (rawReferrer == null || rawReferrer.isBlank()) {
+            return null;
+        }
+        String value = rawReferrer.trim();
+        if (value.startsWith("//")) {
+            try {
+                URI uri = new URI(value);
+                String host = normalizeHost(uri.getHost());
+                if (host == null) return null;
+                if (sameOriginHosts.contains(host)) {
+                    String path = uri.getRawPath();
+                    return path == null || path.isBlank() ? "/" : path;
+                }
+                return host;
+            } catch (URISyntaxException ignored) {
+                return null;
+            }
+        }
+        if (value.startsWith("/")) {
+            int boundary = firstBoundary(value);
+            return value.substring(0, boundary);
+        }
+
+        try {
+            URI uri = new URI(value);
+            String referrerHost = normalizeHost(uri.getHost());
+            if (referrerHost == null) {
+                return sanitizeHostOnly(value);
+            }
+            if (sameOriginHosts.contains(referrerHost)) {
+                String path = uri.getRawPath();
+                return path == null || path.isBlank() ? "/" : path;
+            }
+            return referrerHost;
+        } catch (URISyntaxException ignored) {
+            return sanitizeHostOnly(value);
+        }
+    }
+
+    private static String sanitizePagePath(String rawPath) {
+        if (rawPath == null || rawPath.isBlank()) return null;
+        String value = rawPath.trim();
+        if (value.startsWith("/")) {
+            return value.substring(0, firstBoundary(value));
+        }
+        try {
+            URI uri = new URI(value);
+            String path = uri.getRawPath();
+            return path == null || path.isBlank() ? "/" : path;
+        } catch (URISyntaxException ignored) {
+            return null;
+        }
+    }
+
+    private static int firstBoundary(String value) {
+        int queryIndex = value.indexOf('?');
+        int fragmentIndex = value.indexOf('#');
+        if (queryIndex < 0) return fragmentIndex < 0 ? value.length() : fragmentIndex;
+        if (fragmentIndex < 0) return queryIndex;
+        return Math.min(queryIndex, fragmentIndex);
+    }
+
+    private static String sanitizeHostOnly(String value) {
+        int boundary = firstBoundary(value);
+        String candidate = value.substring(0, boundary);
+        int slashIndex = candidate.indexOf('/');
+        if (slashIndex >= 0) candidate = candidate.substring(0, slashIndex);
+        return normalizeHost(candidate);
+    }
+
+    private static Set<String> parseConfiguredHosts(String rawHosts) {
+        if (rawHosts == null || rawHosts.isBlank()) {
+            return Set.of();
+        }
+        return java.util.Arrays.stream(rawHosts.split(","))
+                .map(PublicTrafficController::normalizeHost)
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.toUnmodifiableSet());
+    }
+
+    private static String normalizeHost(String value) {
+        if (value == null || value.isBlank()) return null;
+        String host = value.trim().toLowerCase(Locale.ROOT);
+        if (host.startsWith("[")) {
+            int end = host.indexOf(']');
+            return end >= 0 ? host.substring(0, end + 1) : null;
+        }
+        int portIndex = host.indexOf(':');
+        if (portIndex >= 0) host = host.substring(0, portIndex);
+        return host.matches("[a-z0-9.-]+") ? host : null;
     }
 
     private static boolean isBot(String userAgent) {
@@ -256,12 +340,17 @@ public class PublicTrafficController {
         }
 
         UUID assigned = UUID.randomUUID();
-        Cookie cookie = new Cookie("ah_did", assigned.toString());
+        response.addCookie(createDeviceIdCookie(assigned.toString(), 15552000, request));
+        return assigned;
+    }
+
+    private static Cookie createDeviceIdCookie(String value, int maxAge, HttpServletRequest request) {
+        Cookie cookie = new Cookie("ah_did", value);
         cookie.setPath("/");
-        cookie.setMaxAge(31536000);
+        cookie.setMaxAge(maxAge);
         cookie.setHttpOnly(true);
-        
-        // 适配 Nginx 代理下的 HTTPS 识别
+
+        // 适配 Nginx 代理下的 HTTPS 识别。
         boolean secure = request.isSecure();
         String forwardedProto = request.getHeader("X-Forwarded-Proto");
         if (forwardedProto != null && forwardedProto.equalsIgnoreCase("https")) {
@@ -269,8 +358,7 @@ public class PublicTrafficController {
         }
         cookie.setSecure(secure);
         cookie.setAttribute("SameSite", "Lax");
-        response.addCookie(cookie);
-        return assigned;
+        return cookie;
     }
 
     private static String resolveProjectId(HttpServletRequest request, String queryId) {

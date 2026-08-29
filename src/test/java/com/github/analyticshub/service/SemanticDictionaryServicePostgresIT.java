@@ -31,6 +31,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.nullable;
 
 @Testcontainers
 class SemanticDictionaryServicePostgresIT {
@@ -92,8 +95,22 @@ class SemanticDictionaryServicePostgresIT {
         when(dataSourceManager.getTableName("project_a", "events")).thenReturn("events");
         when(dataSourceManager.getTableName("project_b", "events")).thenReturn("events");
 
-        service = new SemanticDictionaryService(systemJdbcTemplate, dataSourceManager, JsonMapper.builder().build());
-        adminMetricsService = new AdminMetricsService(dataSourceManager, service, new ActorIdentityResolver());
+        JsonMapper objectMapper = JsonMapper.builder().build();
+        service = new SemanticDictionaryService(
+                systemJdbcTemplate,
+                dataSourceManager,
+                objectMapper,
+                new AnalyticsSemanticDependencyService(systemJdbcTemplate),
+                new AnalysisPackOwnershipService(systemJdbcTemplate, objectMapper)
+        );
+        AnalyticsPropertyFilterService propertyFilterService = mock(AnalyticsPropertyFilterService.class);
+        when(propertyFilterService.compile(eq("project_a"), nullable(String.class), anyString()))
+                .thenReturn(AnalyticsPropertyFilterService.CompiledPropertyFilters.empty());
+        adminMetricsService = new AdminMetricsService(
+                dataSourceManager, service, new ActorIdentityResolver(), propertyFilterService,
+                new com.github.analyticshub.config.AnalyticsQueryProperties(),
+                new com.github.analyticshub.projectdb.ProjectTransactionExecutor()
+        );
         systemTransaction = new TransactionTemplate(new DataSourceTransactionManager(systemDataSource));
     }
 
@@ -287,6 +304,139 @@ class SemanticDictionaryServicePostgresIT {
                 "project_a",
                 List.of("custom.content.completed")
         )).containsEntry("custom.content.completed", List.of());
+    }
+
+    @Test
+    void activeMetricsBlockSemanticDeactivationAndDeletion() {
+        upsert(
+                "project_a",
+                "custom.content.completed",
+                SemanticAliasUpdateMode.REPLACE,
+                List.of("content_completed"),
+                "Content completed"
+        );
+        systemJdbcTemplate.update("""
+                INSERT INTO analytics_metric_definitions
+                    (project_id, metric_key, display_name, metric_type, definition, is_active)
+                VALUES (?, ?, CAST(? AS jsonb), 'EVENT_COUNT', CAST(? AS jsonb), TRUE)
+                """,
+                "project_a",
+                "content.completed.count",
+                "{\"default\":\"Completed content\"}",
+                "{\"semanticEvent\":\"custom.content.completed\"}"
+        );
+        SemanticDefinitionUpsertRequest inactive = new SemanticDefinitionUpsertRequest(
+                SemanticSourceKind.EVENT_TYPE,
+                Map.of("default", "Content completed"),
+                "engagement",
+                "A generic analytics definition",
+                false,
+                SemanticAliasUpdateMode.PRESERVE,
+                null
+        );
+
+        assertThatThrownBy(() -> systemTransaction.executeWithoutResult(status ->
+                service.upsertDefinition("project_a", "custom.content.completed", inactive)
+        )).isInstanceOfSatisfying(BusinessException.class, exception ->
+                assertThat(exception.getCode()).isEqualTo("SEMANTIC_DEFINITION_IN_USE")
+        );
+        assertThatThrownBy(() -> systemTransaction.executeWithoutResult(status ->
+                service.deleteDefinition("project_a", "EVENT_TYPE", "custom.content.completed")
+        )).isInstanceOfSatisfying(BusinessException.class, exception ->
+                assertThat(exception.getCode()).isEqualTo("SEMANTIC_DEFINITION_IN_USE")
+        );
+        assertThat(service.getDefinition(
+                "project_a", "EVENT_TYPE", "custom.content.completed"
+        ).isActive()).isTrue();
+    }
+
+    @Test
+    void activeMetricsBlockOnlyRealAliasReplacementAndKeepOriginalMapping() {
+        upsert(
+                "project_a",
+                "custom.content.completed",
+                SemanticAliasUpdateMode.REPLACE,
+                List.of("content_completed.v1"),
+                "Content completed"
+        );
+        systemJdbcTemplate.update("""
+                INSERT INTO analytics_metric_definitions
+                    (project_id, metric_key, display_name, metric_type, definition, is_active)
+                VALUES (?, ?, CAST(? AS jsonb), 'EVENT_COUNT', CAST(? AS jsonb), TRUE)
+                """,
+                "project_a",
+                "content.completed.count",
+                "{\"default\":\"Completed content\"}",
+                "{\"semanticEvent\":\"custom.content.completed\"}"
+        );
+
+        // 幂等保存同一映射不改变指标口径，应继续允许。
+        upsert(
+                "project_a",
+                "custom.content.completed",
+                SemanticAliasUpdateMode.REPLACE,
+                List.of("content_completed.v1"),
+                "Updated display"
+        );
+
+        assertThatThrownBy(() -> upsert(
+                "project_a",
+                "custom.content.completed",
+                SemanticAliasUpdateMode.REPLACE,
+                List.of("content_completed.v2"),
+                "Updated display"
+        )).isInstanceOfSatisfying(BusinessException.class, exception ->
+                assertThat(exception.getCode()).isEqualTo("SEMANTIC_DEFINITION_IN_USE")
+        );
+        assertThat(service.getDefinition(
+                "project_a", "EVENT_TYPE", "custom.content.completed"
+        ).aliases()).containsExactly("content_completed.v1");
+    }
+
+    @Test
+    void activeDashboardsBlockSemanticAliasReplacementAndDeletion() {
+        upsert(
+                "project_a",
+                "custom.content.completed",
+                SemanticAliasUpdateMode.REPLACE,
+                List.of("content_completed.v1"),
+                "Content completed"
+        );
+        systemJdbcTemplate.update("""
+                INSERT INTO analytics_dashboards
+                    (project_id, dashboard_key, display_name, schema_version, definition, is_active)
+                VALUES (?, ?, CAST(? AS jsonb), 1, CAST(? AS jsonb), TRUE)
+                """,
+                "project_a",
+                "operating.dashboard",
+                "{\"default\":\"Operating dashboard\"}",
+                """
+                {"widgets":[
+                  {"id":"funnel","type":"core.productFunnel","config":{"steps":["custom.content.completed","custom.shared"]}},
+                  {"id":"retention","type":"core.retention","config":{"cohortEvent":"custom.started","returnEvent":"custom.content.completed","days":[1]}}
+                ]}
+                """
+        );
+
+        assertThatThrownBy(() -> upsert(
+                "project_a",
+                "custom.content.completed",
+                SemanticAliasUpdateMode.REPLACE,
+                List.of("content_completed.v2"),
+                "Content completed"
+        )).isInstanceOfSatisfying(BusinessException.class, exception -> {
+            assertThat(exception.getCode()).isEqualTo("SEMANTIC_DEFINITION_IN_USE");
+            assertThat(exception.getDetails().get("dashboardKeys"))
+                    .isEqualTo(List.of("operating.dashboard"));
+        });
+        assertThatThrownBy(() -> systemTransaction.executeWithoutResult(status ->
+                service.deleteDefinition("project_a", "EVENT_TYPE", "custom.content.completed")
+        )).isInstanceOfSatisfying(BusinessException.class, exception ->
+                assertThat(exception.getCode()).isEqualTo("SEMANTIC_DEFINITION_IN_USE")
+        );
+        assertThat(service.getDefinition(
+                "project_a", "EVENT_TYPE", "custom.content.completed"
+        ).aliases()).containsExactly("content_completed.v1");
     }
 
     private void upsert(

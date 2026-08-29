@@ -9,7 +9,7 @@ public record AdminMetricsOverviewResponse(
         String projectId,
         String rangeStart,
         String rangeEnd,
-        long devicesTotal,
+        long devicesInventoryTotal,
         long devicesActive,
         long usersActive,
         long cloudAccountsCreated,

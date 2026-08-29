@@ -114,6 +114,8 @@ X-Signature: hmac_signature_here
 
 `idempotencyKey` 是可选的 client-generated key（客户端生成键），最大 256 字符。服务端按 `actor + eventType + key` 建立幂等作用域；同一业务事实重试时返回首次 `eventId`，即使重试时间或公共属性发生变化也不会重复写入。不同 actor 或不同事件类型使用相同原始 key 时互不冲突。批量接口中的每个 item 独立使用自己的 key；单批最多 100 条。
 
+`properties` 是顶层 JSON object，接入预算为：序列化后不超过 32 KiB、递归属性键不超过 128 个、嵌套深度不超过 6 层、单个数组不超过 128 项、单个字符串不超过 4096 字符、属性键不超过 100 字符。单条接口超限时返回 `EVENT_PROPERTIES_TOO_LARGE` 或 `INVALID_EVENT_PROPERTIES`，不写入事件，也不触发派生计数。这是统一的采集安全边界，不增加项目级双模式；升级前应用真实客户端 payload 核对 UTF-8 字节数和形状上限。
+
 ### 3. 批量事件追踪
 
 ```http
@@ -145,9 +147,23 @@ X-Signature: hmac_signature_here
 ```json
 {
   "success": true,
+  "data": {
+    "receivedCount": 2,
+    "acceptedCount": 1,
+    "insertedCount": 1,
+    "duplicateCount": 0,
+    "rejectedCount": 1,
+    "rejectionCounts": {
+      "INVALID_EVENT_PROPERTIES": 1
+    }
+  },
   "timestamp": "2026-02-12T10:00:00.000Z"
 }
 ```
+
+批量接口沿用 best-effort validation（逐项尽力校验）合同：格式无效或超预算的 item 会被跳过，其余 item 在同一事务中写入，派生计数只处理实际新写入的事件。
+
+`acceptedCount` 包含幂等命中，`insertedCount` 只表示新增事件，`duplicateCount` 表示已成功处理但未重复写入的 item。`rejectionCounts` 只返回有界的错误代码计数，不返回属性内容。SDK 应检查 `rejectedCount`，不应把 HTTP 201 解释为“批内每一项都已接收”。批次全部无效时仍返回 HTTP 201，但摘要会明确显示 `acceptedCount=0`。
 
 ### 4. 会话上传
 
@@ -244,10 +260,10 @@ POST /api/v1/traffic-metrics/batch
 
 - **认证**：无需 HMAC 签名。可选配置 `X-Traffic-Token`。
 - **项目识别**：支持通过请求头 `X-Project-ID` 或 URL 参数 `projectId` 传递（如 `?projectId=your_project`）。
-- **设备识别优先级**：canonical UUID 格式的 `X-Device-ID` → 同源 `ah_did` Cookie → 服务端生成新 UUID 并写入 `SameSite=Lax` first-party Cookie。
+- **设备识别优先级**：canonical UUID 格式的 `X-Device-ID` → 同源 `ah_did` Cookie → 服务端生成新 UUID 并写入 host-only、`HttpOnly`、`SameSite=Lax` first-party Cookie。Cookie 最长保留 180 天。
 - **同源接入**：无需维护设备 ID；浏览器会复用 `ah_did` Cookie，可零配置完成 UV 识别。
 - **跨域接入**：SDK 应在站点自己的 `localStorage` 生成并保存稳定 UUID，每次通过 `X-Device-ID` 传递。浏览器可能拦截或分区第三方 Cookie，因此不能把 `credentials: 'include'` 当作可靠的跨域 UV 方案。
-- **元数据**：服务端会自动解析 `userAgent`、机器人标记 (`isBot`)，并自动补全 `referrer`（基于 Header Fallback）。
+- **公开端点最小化**：服务端会移除 `pagePath` 与 `referrer` 中的 query/hash；站内来源仅保留路径，站外来源仅保留主机名。公开请求自带的 metadata 不会直接落库，服务端最多补充 `isBot` 布尔值；完整 User-Agent 与稳定 IP 哈希不写入公开流量事件。
 
 跨域 SDK 示例：
 
@@ -271,6 +287,8 @@ await fetch('https://analytics.example.com/api/public/traffic/track', {
 ```
 
 `X-Device-ID` 必须是小写、带连字符的 canonical UUID；格式非法时接口返回 HTTP 400，不会回退到 Cookie 或随机 ID。
+
+同源网站撤回访问统计同意后，应调用 `DELETE /api/public/traffic/identity`。该端点会通过过期的 host-only Cookie 清除服务端分配的 `ah_did`，不删除已经完成的聚合统计。
 
 **查询汇总数据（供官网展示实时 PV/UV）：**
 

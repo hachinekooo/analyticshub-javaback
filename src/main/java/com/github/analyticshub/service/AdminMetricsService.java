@@ -1,6 +1,7 @@
 package com.github.analyticshub.service;
 
 import com.github.analyticshub.config.MultiDataSourceManager;
+import com.github.analyticshub.config.AnalyticsQueryProperties;
 import com.github.analyticshub.dto.AdminAppVersionDistributionItem;
 import com.github.analyticshub.dto.AdminAppVersionDistributionResponse;
 import com.github.analyticshub.dto.AdminMetricsOverviewResponse;
@@ -9,11 +10,17 @@ import com.github.analyticshub.dto.AdminMetricsTopEventsResponse;
 import com.github.analyticshub.dto.AdminMetricsTrendPoint;
 import com.github.analyticshub.dto.AdminMetricsTrendResponse;
 import com.github.analyticshub.exception.BusinessException;
+import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.QueryTimeoutException;
+import org.springframework.transaction.TransactionTimedOutException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.sql.DataSource;
 import java.sql.Timestamp;
+import java.sql.SQLException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -42,18 +49,46 @@ public class AdminMetricsService {
     private final MultiDataSourceManager dataSourceManager;
     private final SemanticDictionaryService semanticDictionaryService;
     private final ActorIdentityResolver actorIdentityResolver;
+    private final AnalyticsPropertyFilterService propertyFilterService;
+    private final AnalyticsQueryProperties queryProperties;
+    private final ProjectTransactionExecutor projectTransactions;
 
     public AdminMetricsService(
             MultiDataSourceManager dataSourceManager,
             SemanticDictionaryService semanticDictionaryService,
-            ActorIdentityResolver actorIdentityResolver
+            ActorIdentityResolver actorIdentityResolver,
+            AnalyticsPropertyFilterService propertyFilterService,
+            AnalyticsQueryProperties queryProperties,
+            ProjectTransactionExecutor projectTransactions
     ) {
         this.dataSourceManager = dataSourceManager;
         this.semanticDictionaryService = semanticDictionaryService;
         this.actorIdentityResolver = actorIdentityResolver;
+        this.propertyFilterService = propertyFilterService;
+        this.queryProperties = queryProperties;
+        this.projectTransactions = projectTransactions;
     }
 
     public AdminMetricsOverviewResponse getOverview(String projectId, String from, String to) {
+        return getOverview(projectId, from, to, null);
+    }
+
+    public AdminMetricsOverviewResponse getOverview(
+            String projectId,
+            String from,
+            String to,
+            String propertyFilters
+    ) {
+        return executeInteractive(projectId, from, to,
+                () -> getOverviewQuery(projectId, from, to, propertyFilters));
+    }
+
+    private AdminMetricsOverviewResponse getOverviewQuery(
+            String projectId,
+            String from,
+            String to,
+            String propertyFilters
+    ) {
         String normalizedProjectId = normalizeProjectId(projectId);
         AdminQueryUtils.Range range = AdminQueryUtils.resolveRange(from, to);
         ProjectContext context = requireProject(normalizedProjectId);
@@ -63,37 +98,56 @@ public class AdminMetricsService {
         String sessionsTable = dataSourceManager.getTableName(normalizedProjectId, "sessions");
         String eventsTable = dataSourceManager.getTableName(normalizedProjectId, "events");
         String actorLinksTable = dataSourceManager.getTableName(normalizedProjectId, "actor_identity_links");
+        AnalyticsPropertyFilterService.CompiledPropertyFilters filters =
+                propertyFilterService.compile(normalizedProjectId, propertyFilters, "properties");
 
         Timestamp start = Timestamp.from(range.start());
         Timestamp end = Timestamp.from(range.end());
         long eventStart = range.start().toEpochMilli();
         long eventEnd = range.end().toEpochMilli();
+        enforceEventScanBudget(
+                jdbcTemplate, eventsTable, normalizedProjectId, eventStart, eventEnd, filters
+        );
+        if (filters.isEmpty()) {
+            enforceSessionScanBudget(jdbcTemplate, sessionsTable, normalizedProjectId, start, end);
+        }
 
-        long devicesTotal = queryCount(jdbcTemplate,
+        // 项目设备库存不属于事件属性分群；字段名明确其不参与 propertyFilters。
+        long devicesInventoryTotal = queryCount(jdbcTemplate,
                 "SELECT COUNT(*) FROM %s WHERE project_id = ?",
                 devicesTable, normalizedProjectId);
+        List<Object> eventArguments = eventArguments(normalizedProjectId, eventStart, eventEnd, filters);
+        String eventFilterSql = filters.isEmpty() ? "" : " AND " + filters.sql();
         // 活跃设备由区间内真实事件决定；注册/凭据轮换时间不能代替使用行为。
-        long devicesActive = queryCount(jdbcTemplate,
-                "SELECT COUNT(DISTINCT device_id) FROM %s "
-                        + "WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ?",
-                eventsTable, normalizedProjectId, eventStart, eventEnd);
-        long sessionsTotal = queryCount(jdbcTemplate,
-                "SELECT COUNT(*) FROM %s WHERE project_id = ? AND session_start_time >= ? AND session_start_time < ?",
-                sessionsTable, normalizedProjectId, start, end);
-        long eventsTotal = queryCount(jdbcTemplate,
-                "SELECT COUNT(*) FROM %s WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ?",
-                eventsTable, normalizedProjectId, eventStart, eventEnd);
+        long devicesActive = queryCountSql(jdbcTemplate,
+                "SELECT COUNT(DISTINCT device_id) FROM " + eventsTable
+                        + " WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ?"
+                        + eventFilterSql,
+                eventArguments.toArray());
+        long sessionsTotal = filters.isEmpty()
+                ? queryCount(jdbcTemplate,
+                        "SELECT COUNT(*) FROM %s WHERE project_id = ? AND session_start_time >= ? AND session_start_time < ?",
+                        sessionsTable, normalizedProjectId, start, end)
+                : queryCountSql(jdbcTemplate,
+                        "SELECT COUNT(DISTINCT session_id) FROM " + eventsTable
+                                + " WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ?"
+                                + " AND session_id IS NOT NULL" + eventFilterSql,
+                        eventArguments.toArray());
+        long eventsTotal = queryCountSql(jdbcTemplate,
+                "SELECT COUNT(*) FROM " + eventsTable
+                        + " WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ?"
+                        + eventFilterSql,
+                eventArguments.toArray());
+        List<Object> activeActorArguments = new ArrayList<>(eventArguments);
+        activeActorArguments.add(queryProperties.getMaxCandidateRows() + 1);
         List<String> activeActorIds = jdbcTemplate.query(
-                String.format(
-                        "SELECT DISTINCT user_id FROM %s "
-                                + "WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ?",
-                        eventsTable
-                ),
+                "SELECT DISTINCT user_id FROM " + eventsTable
+                        + " WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ?"
+                        + eventFilterSql + " LIMIT ?",
                 (resultSet, rowNumber) -> resultSet.getString(1),
-                normalizedProjectId,
-                eventStart,
-                eventEnd
+                activeActorArguments.toArray()
         );
+        enforceCandidateBudget(activeActorIds.size());
         long usersActive = actorIdentityResolver.resolveCanonicalActors(
                         jdbcTemplate,
                         actorLinksTable,
@@ -114,7 +168,8 @@ public class AdminMetricsService {
                 normalizedProjectId,
                 eventStart,
                 eventEnd,
-                accountAliases.getOrDefault(ACCOUNT_CREATED_SEMANTIC_KEY, List.of())
+                accountAliases.getOrDefault(ACCOUNT_CREATED_SEMANTIC_KEY, List.of()),
+                filters
         );
         long cloudAccountsRecreated = queryEventCount(
                 jdbcTemplate,
@@ -122,12 +177,33 @@ public class AdminMetricsService {
                 normalizedProjectId,
                 eventStart,
                 eventEnd,
-                accountAliases.getOrDefault(ACCOUNT_RECREATED_SEMANTIC_KEY, List.of())
+                accountAliases.getOrDefault(ACCOUNT_RECREATED_SEMANTIC_KEY, List.of()),
+                filters
         );
 
-        double avgDuration = queryAvg(jdbcTemplate,
-                "SELECT COALESCE(AVG(session_duration_ms), 0) FROM %s WHERE project_id = ? AND session_start_time >= ? AND session_start_time < ?",
-                sessionsTable, normalizedProjectId, start, end);
+        double avgDuration;
+        if (filters.isEmpty()) {
+            avgDuration = queryAvg(jdbcTemplate,
+                    "SELECT COALESCE(AVG(session_duration_ms), 0) FROM %s WHERE project_id = ? AND session_start_time >= ? AND session_start_time < ?",
+                    sessionsTable, normalizedProjectId, start, end);
+        } else {
+            List<Object> avgArguments = new ArrayList<>(eventArguments);
+            avgArguments.add(normalizedProjectId);
+            avgArguments.add(start);
+            avgArguments.add(end);
+            Number result = jdbcTemplate.queryForObject(
+                    "SELECT COALESCE(AVG(s.session_duration_ms), 0) FROM " + sessionsTable + " s "
+                            + "JOIN (SELECT DISTINCT session_id FROM " + eventsTable + " e "
+                            + "WHERE e.project_id = ? AND e.event_timestamp >= ? AND e.event_timestamp < ? "
+                            + "AND e.session_id IS NOT NULL"
+                            + eventFilterSql.replace("properties", "e.properties") + ") matched "
+                            + "ON matched.session_id = s.session_id "
+                            + "WHERE s.project_id = ? AND s.session_start_time >= ? AND s.session_start_time < ?",
+                    Number.class,
+                    avgArguments.toArray()
+            );
+            avgDuration = result == null ? 0d : result.doubleValue();
+        }
         long avgSessionDurationMs = Math.round(avgDuration);
         double avgEventsPerSession = sessionsTotal == 0 ? 0 : ((double) eventsTotal / (double) sessionsTotal);
 
@@ -135,7 +211,7 @@ public class AdminMetricsService {
                 normalizedProjectId,
                 range.start().toString(),
                 range.end().toString(),
-                devicesTotal,
+                devicesInventoryTotal,
                 devicesActive,
                 usersActive,
                 cloudAccountsCreated,
@@ -149,6 +225,27 @@ public class AdminMetricsService {
     }
 
     public AdminMetricsTrendResponse getTrends(String projectId, String from, String to, String granularity) {
+        return getTrends(projectId, from, to, granularity, null);
+    }
+
+    public AdminMetricsTrendResponse getTrends(
+            String projectId,
+            String from,
+            String to,
+            String granularity,
+            String propertyFilters
+    ) {
+        return executeInteractive(projectId, from, to,
+                () -> getTrendsQuery(projectId, from, to, granularity, propertyFilters));
+    }
+
+    private AdminMetricsTrendResponse getTrendsQuery(
+            String projectId,
+            String from,
+            String to,
+            String granularity,
+            String propertyFilters
+    ) {
         String normalizedProjectId = normalizeProjectId(projectId);
         AdminQueryUtils.Range range = AdminQueryUtils.resolveRange(from, to);
         Granularity bucket = Granularity.from(granularity);
@@ -158,24 +255,41 @@ public class AdminMetricsService {
         String sessionsTable = dataSourceManager.getTableName(normalizedProjectId, "sessions");
         String eventsTable = dataSourceManager.getTableName(normalizedProjectId, "events");
         String actorLinksTable = dataSourceManager.getTableName(normalizedProjectId, "actor_identity_links");
+        AnalyticsPropertyFilterService.CompiledPropertyFilters filters =
+                propertyFilterService.compile(normalizedProjectId, propertyFilters, "properties");
 
         Timestamp start = Timestamp.from(range.start());
         Timestamp end = Timestamp.from(range.end());
         long eventStart = range.start().toEpochMilli();
         long eventEnd = range.end().toEpochMilli();
+        enforceEventScanBudget(
+                jdbcTemplate, eventsTable, normalizedProjectId, eventStart, eventEnd, filters
+        );
+        if (filters.isEmpty()) {
+            enforceSessionScanBudget(jdbcTemplate, sessionsTable, normalizedProjectId, start, end);
+        }
+        String eventFilterSql = filters.isEmpty() ? "" : " AND " + filters.sql();
+        List<Object> bucketArguments = new ArrayList<>();
+        bucketArguments.add(bucket.value());
+        bucketArguments.add(normalizedProjectId);
+        bucketArguments.add(eventStart);
+        bucketArguments.add(eventEnd);
+        bucketArguments.addAll(filters.arguments());
 
         Map<Instant, Long> eventBuckets = queryBucketCounts(jdbcTemplate,
                 "SELECT date_trunc(?, to_timestamp(event_timestamp / 1000.0), 'UTC') AS bucket, "
                         + "COUNT(*) AS total FROM %s " +
-                        "WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ? " +
+                        "WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ? "
+                        + eventFilterSql + " " +
                         "GROUP BY bucket ORDER BY bucket",
-                eventsTable, bucket.value(), normalizedProjectId, eventStart, eventEnd);
+                eventsTable, bucketArguments.toArray());
         Map<Instant, Long> activeDeviceBuckets = queryBucketCounts(jdbcTemplate,
                 "SELECT date_trunc(?, to_timestamp(event_timestamp / 1000.0), 'UTC') AS bucket, "
                         + "COUNT(DISTINCT device_id) AS total FROM %s "
                         + "WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ? "
+                        + eventFilterSql + " "
                         + "GROUP BY bucket ORDER BY bucket",
-                eventsTable, bucket.value(), normalizedProjectId, eventStart, eventEnd);
+                eventsTable, bucketArguments.toArray());
 
         Map<Instant, Long> activeUserBuckets = queryActiveUserBuckets(
                 jdbcTemplate,
@@ -184,7 +298,8 @@ public class AdminMetricsService {
                 normalizedProjectId,
                 eventStart,
                 eventEnd,
-                bucket
+                bucket,
+                filters
         );
         Map<String, List<String>> accountAliases = semanticDictionaryService.resolveAvailableActiveEventAliases(
                 normalizedProjectId,
@@ -197,7 +312,8 @@ public class AdminMetricsService {
                 eventStart,
                 eventEnd,
                 bucket,
-                accountAliases.getOrDefault(ACCOUNT_CREATED_SEMANTIC_KEY, List.of())
+                accountAliases.getOrDefault(ACCOUNT_CREATED_SEMANTIC_KEY, List.of()),
+                filters
         );
         Map<Instant, Long> accountRecreatedBuckets = queryEventBucketCounts(
                 jdbcTemplate,
@@ -206,14 +322,36 @@ public class AdminMetricsService {
                 eventStart,
                 eventEnd,
                 bucket,
-                accountAliases.getOrDefault(ACCOUNT_RECREATED_SEMANTIC_KEY, List.of())
+                accountAliases.getOrDefault(ACCOUNT_RECREATED_SEMANTIC_KEY, List.of()),
+                filters
         );
 
-        Map<Instant, Long> sessionBuckets = queryBucketCounts(jdbcTemplate,
-                "SELECT date_trunc(?, session_start_time, 'UTC') AS bucket, COUNT(*) AS total FROM %s " +
-                        "WHERE project_id = ? AND session_start_time >= ? AND session_start_time < ? " +
-                        "GROUP BY bucket ORDER BY bucket",
-                sessionsTable, bucket.value(), normalizedProjectId, start, end);
+        Map<Instant, Long> sessionBuckets;
+        if (filters.isEmpty()) {
+            sessionBuckets = queryBucketCounts(jdbcTemplate,
+                    "SELECT date_trunc(?, session_start_time, 'UTC') AS bucket, COUNT(*) AS total FROM %s " +
+                            "WHERE project_id = ? AND session_start_time >= ? AND session_start_time < ? " +
+                            "GROUP BY bucket ORDER BY bucket",
+                    sessionsTable, bucket.value(), normalizedProjectId, start, end);
+        } else {
+            List<Object> sessionArguments = new ArrayList<>();
+            sessionArguments.add(bucket.value());
+            sessionArguments.addAll(eventArguments(normalizedProjectId, eventStart, eventEnd, filters));
+            sessionArguments.add(normalizedProjectId);
+            sessionArguments.add(start);
+            sessionArguments.add(end);
+            sessionBuckets = queryBucketCounts(jdbcTemplate,
+                    "SELECT date_trunc(?, s.session_start_time, 'UTC') AS bucket, COUNT(*) AS total FROM %s s "
+                            + "JOIN (SELECT DISTINCT session_id FROM " + eventsTable + " e "
+                            + "WHERE e.project_id = ? AND e.event_timestamp >= ? AND e.event_timestamp < ? "
+                            + "AND e.session_id IS NOT NULL"
+                            + eventFilterSql.replace("properties", "e.properties") + ") matched "
+                            + "ON matched.session_id = s.session_id "
+                            + "WHERE s.project_id = ? AND s.session_start_time >= ? AND s.session_start_time < ? "
+                            + "GROUP BY bucket ORDER BY bucket",
+                    sessionsTable,
+                    sessionArguments.toArray());
+        }
 
         List<AdminMetricsTrendPoint> points = new ArrayList<>();
         ZonedDateTime cursor = bucket.truncate(range.start());
@@ -255,28 +393,59 @@ public class AdminMetricsService {
             Integer limit,
             String aggregation
     ) {
+        return getTopEvents(projectId, from, to, limit, aggregation, null);
+    }
+
+    public AdminMetricsTopEventsResponse getTopEvents(
+            String projectId,
+            String from,
+            String to,
+            Integer limit,
+            String aggregation,
+            String propertyFilters
+    ) {
+        return executeInteractive(projectId, from, to,
+                () -> getTopEventsQuery(projectId, from, to, limit, aggregation, propertyFilters));
+    }
+
+    private AdminMetricsTopEventsResponse getTopEventsQuery(
+            String projectId,
+            String from,
+            String to,
+            Integer limit,
+            String aggregation,
+            String propertyFilters
+    ) {
         String normalizedProjectId = normalizeProjectId(projectId);
         AdminQueryUtils.Range range = AdminQueryUtils.resolveRange(from, to);
         ProjectContext context = requireProject(normalizedProjectId);
         JdbcTemplate jdbcTemplate = new JdbcTemplate(context.dataSource());
 
         String eventsTable = dataSourceManager.getTableName(normalizedProjectId, "events");
+        AnalyticsPropertyFilterService.CompiledPropertyFilters filters =
+                propertyFilterService.compile(normalizedProjectId, propertyFilters, "properties");
         long eventStart = range.start().toEpochMilli();
         long eventEnd = range.end().toEpochMilli();
+        enforceEventScanBudget(
+                jdbcTemplate, eventsTable, normalizedProjectId, eventStart, eventEnd, filters
+        );
 
         int topN = (limit == null || limit < 1) ? 10 : Math.min(limit, 50);
         String aggregationMode = normalizeTopEventsAggregation(aggregation);
 
+        String filterSql = filters.isEmpty() ? "" : " AND " + filters.sql();
         String sql = String.format(
                 "SELECT event_type, COUNT(*) AS total FROM %s " +
-                        "WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ? " +
+                        "WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ? "
+                        + filterSql + " " +
                         "GROUP BY event_type",
                 eventsTable
         );
+        List<Object> arguments = eventArguments(normalizedProjectId, eventStart, eventEnd, filters);
 
         List<AdminMetricsTopEvent> rawItems = jdbcTemplate.query(sql, (rs, rowNum) ->
                         new AdminMetricsTopEvent(rs.getString("event_type"), rs.getLong("total")),
-                normalizedProjectId, eventStart, eventEnd
+                arguments.toArray()
         );
         List<AdminMetricsTopEvent> items;
         if ("semantic".equals(aggregationMode)) {
@@ -320,11 +489,41 @@ public class AdminMetricsService {
             String from,
             String to
     ) {
+        return getAppVersionDistribution(projectId, from, to, null);
+    }
+
+    public AdminAppVersionDistributionResponse getAppVersionDistribution(
+            String projectId,
+            String from,
+            String to,
+            String propertyFilters
+    ) {
+        return executeInteractive(projectId, from, to,
+                () -> getAppVersionDistributionQuery(projectId, from, to, propertyFilters));
+    }
+
+    private AdminAppVersionDistributionResponse getAppVersionDistributionQuery(
+            String projectId,
+            String from,
+            String to,
+            String propertyFilters
+    ) {
         String normalizedProjectId = normalizeProjectId(projectId);
         AdminQueryUtils.Range range = AdminQueryUtils.resolveRange(from, to);
         ProjectContext context = requireProject(normalizedProjectId);
         JdbcTemplate jdbcTemplate = new JdbcTemplate(context.dataSource());
         String eventsTable = dataSourceManager.getTableName(normalizedProjectId, "events");
+        AnalyticsPropertyFilterService.CompiledPropertyFilters filters =
+                propertyFilterService.compile(normalizedProjectId, propertyFilters, "properties");
+        String filterSql = filters.isEmpty() ? "" : " AND " + filters.sql();
+        enforceEventScanBudget(
+                jdbcTemplate,
+                eventsTable,
+                normalizedProjectId,
+                range.start().toEpochMilli(),
+                range.end().toEpochMilli(),
+                filters
+        );
 
         String sql = """
                 WITH latest AS (
@@ -339,7 +538,7 @@ public class AdminMetricsService {
                                ORDER BY event_timestamp DESC, id DESC
                            ) AS row_number
                       FROM %s
-                     WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ?
+                     WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ?%s
                 ), grouped AS (
                     SELECT app_version,
                            CASE WHEN app_version = 'unknown' THEN 'unknown' ELSE build_number END AS build_number,
@@ -357,7 +556,14 @@ public class AdminMetricsService {
                           last_observed_at DESC,
                           app_version DESC,
                           build_number ASC
-                """.formatted(eventsTable);
+                """.formatted(eventsTable, filterSql);
+
+        List<Object> arguments = eventArguments(
+                normalizedProjectId,
+                range.start().toEpochMilli(),
+                range.end().toEpochMilli(),
+                filters
+        );
 
         List<VersionGroup> groups = jdbcTemplate.query(
                 sql,
@@ -367,9 +573,7 @@ public class AdminMetricsService {
                         resultSet.getLong("active_devices"),
                         resultSet.getLong("last_observed_at")
                 ),
-                normalizedProjectId,
-                range.start().toEpochMilli(),
-                range.end().toEpochMilli()
+                arguments.toArray()
         );
         long activeDevices = groups.stream().mapToLong(VersionGroup::activeDevices).sum();
         long versionKnownDevices = groups.stream()
@@ -493,22 +697,29 @@ public class AdminMetricsService {
             String projectId,
             long eventStart,
             long eventEnd,
-            Granularity granularity
+            Granularity granularity,
+            AnalyticsPropertyFilterService.CompiledPropertyFilters filters
     ) {
+        String filterSql = filters.isEmpty() ? "" : " AND " + filters.sql();
+        List<Object> arguments = new ArrayList<>();
+        arguments.add(granularity.value());
+        arguments.add(projectId);
+        arguments.add(eventStart);
+        arguments.add(eventEnd);
+        arguments.addAll(filters.arguments());
+        arguments.add(queryProperties.getMaxCandidateRows() + 1);
         List<BucketActor> rows = jdbcTemplate.query(
                 "SELECT DISTINCT date_trunc(?, to_timestamp(event_timestamp / 1000.0), 'UTC') AS bucket, "
                         + "user_id FROM " + eventsTable + " "
                         + "WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ? "
-                        + "AND user_id IS NOT NULL AND BTRIM(user_id) <> ''",
+                        + "AND user_id IS NOT NULL AND BTRIM(user_id) <> ''" + filterSql + " LIMIT ?",
                 (resultSet, rowNumber) -> new BucketActor(
                         readBucket(resultSet),
                         resultSet.getString("user_id")
                 ),
-                granularity.value(),
-                projectId,
-                eventStart,
-                eventEnd
+                arguments.toArray()
         );
+        enforceCandidateBudget(rows.size());
         List<String> rawActors = rows.stream().map(BucketActor::rawActorId).distinct().toList();
         Map<String, String> canonicalActors = actorIdentityResolver.resolveCanonicalActors(
                 jdbcTemplate,
@@ -533,7 +744,8 @@ public class AdminMetricsService {
             String projectId,
             long eventStart,
             long eventEnd,
-            List<String> eventTypes
+            List<String> eventTypes,
+            AnalyticsPropertyFilterService.CompiledPropertyFilters filters
     ) {
         if (eventTypes.isEmpty()) return 0L;
         String placeholders = String.join(",", java.util.Collections.nCopies(eventTypes.size(), "?"));
@@ -542,11 +754,13 @@ public class AdminMetricsService {
         arguments.add(eventStart);
         arguments.add(eventEnd);
         arguments.addAll(eventTypes);
+        arguments.addAll(filters.arguments());
+        String filterSql = filters.isEmpty() ? "" : " AND " + filters.sql();
         return queryCountSql(
                 jdbcTemplate,
                 "SELECT COUNT(*) FROM " + eventsTable
                         + " WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ?"
-                        + " AND event_type IN (" + placeholders + ")",
+                        + " AND event_type IN (" + placeholders + ")" + filterSql,
                 arguments.toArray()
         );
     }
@@ -558,7 +772,8 @@ public class AdminMetricsService {
             long eventStart,
             long eventEnd,
             Granularity granularity,
-            List<String> eventTypes
+            List<String> eventTypes,
+            AnalyticsPropertyFilterService.CompiledPropertyFilters filters
     ) {
         if (eventTypes.isEmpty()) return Map.of();
         String placeholders = String.join(",", java.util.Collections.nCopies(eventTypes.size(), "?"));
@@ -568,12 +783,15 @@ public class AdminMetricsService {
         arguments.add(eventStart);
         arguments.add(eventEnd);
         arguments.addAll(eventTypes);
+        arguments.addAll(filters.arguments());
+        String filterSql = filters.isEmpty() ? "" : " AND " + filters.sql();
         return queryBucketCounts(
                 jdbcTemplate,
                 "SELECT date_trunc(?, to_timestamp(event_timestamp / 1000.0), 'UTC') AS bucket, "
                         + "COUNT(*) AS total FROM %s WHERE project_id = ? "
                         + "AND event_timestamp >= ? AND event_timestamp < ? "
-                        + "AND event_type IN (" + placeholders + ") GROUP BY bucket ORDER BY bucket",
+                        + "AND event_type IN (" + placeholders + ")" + filterSql
+                        + " GROUP BY bucket ORDER BY bucket",
                 eventsTable,
                 arguments.toArray()
         );
@@ -587,6 +805,113 @@ public class AdminMetricsService {
             Timestamp value = resultSet.getTimestamp("bucket");
             return value == null ? null : value.toInstant();
         }
+    }
+
+    private static List<Object> eventArguments(
+            String projectId,
+            long eventStart,
+            long eventEnd,
+            AnalyticsPropertyFilterService.CompiledPropertyFilters filters
+    ) {
+        List<Object> arguments = new ArrayList<>();
+        arguments.add(projectId);
+        arguments.add(eventStart);
+        arguments.add(eventEnd);
+        arguments.addAll(filters.arguments());
+        return arguments;
+    }
+
+    /**
+     * 聚合查询不能通过 LIMIT 主结果来控制成本，否则会把部分结果伪装成完整统计。
+     * 这里先在同一只读事务内最多探测 max + 1 条候选事件，超限即明确失败。
+     */
+    private void enforceEventScanBudget(
+            JdbcTemplate jdbcTemplate,
+            String eventsTable,
+            String projectId,
+            long eventStart,
+            long eventEnd,
+            AnalyticsPropertyFilterService.CompiledPropertyFilters filters
+    ) {
+        String filterSql = filters.isEmpty() ? "" : " AND " + filters.sql();
+        List<Object> arguments = eventArguments(projectId, eventStart, eventEnd, filters);
+        arguments.add(queryProperties.getMaxCandidateRows() + 1);
+        Long candidateCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM (SELECT 1 FROM " + eventsTable
+                        + " WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ?"
+                        + filterSql + " LIMIT ?) bounded_candidates",
+                Long.class,
+                arguments.toArray()
+        );
+        enforceCandidateBudget(candidateCount == null ? 0L : candidateCount);
+    }
+
+    private void enforceSessionScanBudget(
+            JdbcTemplate jdbcTemplate,
+            String sessionsTable,
+            String projectId,
+            Timestamp start,
+            Timestamp end
+    ) {
+        Long candidateCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM (SELECT 1 FROM " + sessionsTable
+                        + " WHERE project_id = ? AND session_start_time >= ? AND session_start_time < ?"
+                        + " LIMIT ?) bounded_candidates",
+                Long.class,
+                projectId,
+                start,
+                end,
+                queryProperties.getMaxCandidateRows() + 1
+        );
+        enforceCandidateBudget(candidateCount == null ? 0L : candidateCount);
+    }
+
+    private <T> T executeInteractive(
+            String projectId,
+            String from,
+            String to,
+            java.util.function.Supplier<T> operation
+    ) {
+        String normalizedProjectId = normalizeProjectId(projectId);
+        AdminQueryUtils.Range range = AdminQueryUtils.resolveRange(from, to);
+        if (Duration.between(range.start(), range.end())
+                .compareTo(Duration.ofDays(queryProperties.getMaxRangeDays())) > 0) {
+            throw BusinessException.analyticsQueryRangeExceeded(queryProperties.getMaxRangeDays());
+        }
+        ProjectContext context = requireProject(normalizedProjectId);
+        try {
+            // 内层 JdbcTemplate 会复用此处绑定到项目数据源的只读事务与 statement_timeout。
+            return projectTransactions.executeReadOnly(
+                    context.dataSource(),
+                    queryProperties.getTimeoutSeconds(),
+                    ignored -> operation.get()
+            );
+        } catch (QueryTimeoutException | TransactionTimedOutException exception) {
+            throw BusinessException.analyticsQueryTimedOut();
+        } catch (DataAccessException exception) {
+            if (hasSqlState(exception, "57014")) {
+                throw BusinessException.analyticsQueryTimedOut();
+            }
+            throw exception;
+        }
+    }
+
+    private void enforceCandidateBudget(long candidateCount) {
+        if (candidateCount > queryProperties.getMaxCandidateRows()) {
+            throw BusinessException.analyticsQueryBudgetExceeded(queryProperties.getMaxCandidateRows());
+        }
+    }
+
+    private static boolean hasSqlState(Throwable error, String expectedState) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof SQLException sqlException
+                    && expectedState.equals(sqlException.getSQLState())) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private record ProjectContext(MultiDataSourceManager.ProjectConfig config, DataSource dataSource) {}

@@ -29,9 +29,10 @@ public class AdminProductAnalyticsController {
             @RequestParam(value = "to", required = false) String to,
             @RequestParam("steps") String steps,
             @RequestParam(value = "groupBy", required = false) String groupBy,
-            @RequestParam(value = "journeyKey", required = false) String journeyKey) {
+            @RequestParam(value = "journeyKey", required = false) String journeyKey,
+            @RequestParam(value = "propertyFilters", required = false) String propertyFilters) {
         return ApiResponse.success(analyticsService.getFunnel(
-                projectId, from, to, steps, groupBy, journeyKey
+                projectId, from, to, steps, groupBy, journeyKey, propertyFilters
         ));
     }
 
@@ -42,7 +43,10 @@ public class AdminProductAnalyticsController {
             @RequestParam(value = "to", required = false) String to,
             @RequestParam("cohortEvent") String cohortEvent,
             @RequestParam("returnEvent") String returnEvent,
-            @RequestParam(value = "days", required = false) String days) {
-        return ApiResponse.success(analyticsService.getRetention(projectId, from, to, cohortEvent, returnEvent, days));
+            @RequestParam(value = "days", required = false) String days,
+            @RequestParam(value = "propertyFilters", required = false) String propertyFilters) {
+        return ApiResponse.success(analyticsService.getRetention(
+                projectId, from, to, cohortEvent, returnEvent, days, propertyFilters
+        ));
     }
 }

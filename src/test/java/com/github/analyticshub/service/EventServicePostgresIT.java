@@ -5,7 +5,9 @@ import tools.jackson.databind.json.JsonMapper;
 import com.github.analyticshub.config.MultiDataSourceManager;
 import com.github.analyticshub.dto.EventTrackRequest;
 import com.github.analyticshub.dto.EventTrackResponse;
+import com.github.analyticshub.dto.EventBatchTrackSummary;
 import com.github.analyticshub.entity.Device;
+import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
 import com.github.analyticshub.security.RequestContext;
 import com.github.analyticshub.util.CryptoUtils;
@@ -19,6 +21,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import javax.sql.DataSource;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -341,6 +345,90 @@ class EventServicePostgresIT {
         verify(counterService, never()).processEventAutoIncrements(eq("test_project"), eq(" "), any());
     }
 
+    @Test
+    void singleEventRejectsEveryDocumentedPropertyBudget() {
+        assertPropertyFailure(
+                Map.of("payload", "x".repeat(EventService.MAX_PROPERTIES_BYTES)),
+                "EVENT_PROPERTIES_TOO_LARGE"
+        );
+
+        Map<String, Object> tooManyKeys = new LinkedHashMap<>();
+        for (int index = 0; index <= EventService.MAX_PROPERTIES_KEYS; index++) {
+            tooManyKeys.put("key_" + index, index);
+        }
+        assertPropertyFailure(tooManyKeys, "INVALID_EVENT_PROPERTIES");
+        assertPropertyFailure(tooDeepProperties(), "INVALID_EVENT_PROPERTIES");
+        assertPropertyFailure(
+                Map.of("label", "x".repeat(EventService.MAX_PROPERTY_STRING_LENGTH + 1)),
+                "INVALID_EVENT_PROPERTIES"
+        );
+        assertPropertyFailure(
+                Map.of("items", List.copyOf(java.util.Collections.nCopies(
+                        EventService.MAX_PROPERTIES_KEYS + 1, "item"
+                ))),
+                "INVALID_EVENT_PROPERTIES"
+        );
+        assertPropertyFailure(Map.of("k".repeat(101), "value"), "INVALID_EVENT_PROPERTIES");
+
+        assertThat(count("event_it_events")).isZero();
+        verify(counterService, never()).processEventAutoIncrements(any(), any(), any());
+    }
+
+    @Test
+    void mixedBatchPersistsAndProjectsOnlyItemsWithinPropertyBudgets() {
+        EventTrackRequest valid = request("valid_event", null);
+        EventTrackRequest oversized = requestWithProperties(
+                "oversized_event",
+                Map.of("payload", "x".repeat(EventService.MAX_PROPERTIES_BYTES))
+        );
+        EventTrackRequest tooDeep = requestWithProperties("deep_event", tooDeepProperties());
+
+        EventBatchTrackSummary response = eventService.trackEventsBatch(
+                new EventTrackRequest[]{oversized, valid, tooDeep}
+        );
+
+        assertThat(count("event_it_events")).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT event_type FROM event_it_events",
+                String.class
+        )).isEqualTo("valid_event");
+        verify(counterService).processEventAutoIncrements(
+                eq("test_project"), eq("valid_event"), eq(Map.of("status", "completed"))
+        );
+        verify(counterService, never()).processEventAutoIncrements(
+                eq("test_project"), eq("oversized_event"), any()
+        );
+        verify(counterService, never()).processEventAutoIncrements(
+                eq("test_project"), eq("deep_event"), any()
+        );
+        assertThat(response.acceptedCount()).isEqualTo(1);
+        assertThat(response.insertedCount()).isEqualTo(1);
+        assertThat(response.rejectedCount()).isEqualTo(2);
+        assertThat(response.rejectionCounts()).containsEntry("EVENT_PROPERTIES_TOO_LARGE", 1)
+                .containsEntry("INVALID_EVENT_PROPERTIES", 1);
+    }
+
+    @Test
+    void allInvalidBatchKeepsTheExistingBestEffortSuccessContract() {
+        EventTrackRequest oversized = requestWithProperties(
+                "oversized_event",
+                Map.of("payload", "x".repeat(EventService.MAX_PROPERTIES_BYTES))
+        );
+
+        EventBatchTrackSummary response = eventService.trackEventsBatch(
+                new EventTrackRequest[]{oversized, null}
+        );
+
+        assertThat(count("event_it_events")).isZero();
+        assertThat(response.receivedCount()).isEqualTo(2);
+        assertThat(response.acceptedCount()).isZero();
+        assertThat(response.rejectedCount()).isEqualTo(2);
+        assertThat(response.rejectionCounts()).containsEntry("EVENT_PROPERTIES_TOO_LARGE", 1)
+                .containsEntry("EMPTY_BATCH_ITEM", 1);
+        verify(counterService, never()).processEventAutoIncrements(any(), any(), any());
+    }
+
+
     private EventTrackRequest request(String eventType, String idempotencyKey) {
         return new EventTrackRequest(
                 eventType,
@@ -351,8 +439,30 @@ class EventServicePostgresIT {
         );
     }
 
+    private EventTrackRequest requestWithProperties(String eventType, Map<String, Object> properties) {
+        return new EventTrackRequest(eventType, System.currentTimeMillis(), properties, null, null);
+    }
+
+    private void assertPropertyFailure(Map<String, Object> properties, String expectedCode) {
+        assertThatThrownBy(() -> eventService.trackEvent(requestWithProperties("budget_event", properties)))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo(expectedCode)
+                );
+    }
+
+    private static Map<String, Object> tooDeepProperties() {
+        Object nested = "value";
+        for (int depth = 0; depth < EventService.MAX_PROPERTIES_DEPTH; depth++) {
+            nested = Map.of("level_" + depth, nested);
+        }
+        @SuppressWarnings("unchecked")
+        Map<String, Object> properties = (Map<String, Object>) nested;
+        return properties;
+    }
+
     private long count(String table) {
         Long count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + table, Long.class);
         return count == null ? 0L : count;
     }
+
 }

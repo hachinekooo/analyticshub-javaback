@@ -180,6 +180,9 @@ app:
   traffic:
     ip-hash-salt: ${TRAFFIC_IP_HASH_SALT:}
     public-token: ${TRAFFIC_PUBLIC_TOKEN:}
+    # 仅这些运维显式声明的官网 Host 可保留 Referer 路径；其他绝对地址只保留 Host。
+    # 不使用请求 Host 判断同源，避免调用方伪造 Host 泄露外部 Referer 路径。
+    same-origin-hosts: ${TRAFFIC_SAME_ORIGIN_HOSTS:}
 
   email:
     alert-recipient: ${ALERT_EMAIL:}  # 安全告警接收邮箱
@@ -195,6 +198,14 @@ app:
       scheduler-batch-size: ${WORK_ORDER_OUTBOX_SCHEDULER_BATCH_SIZE:20}
 
   analytics:
+    query:
+      # 交互式分析必须返回完整结果；超出预算时明确拒绝，绝不截断后冒充完整报表。
+      max-range-days: ${ANALYTICS_QUERY_MAX_RANGE_DAYS:180}
+      max-candidate-rows: ${ANALYTICS_QUERY_MAX_CANDIDATE_ROWS:200000}
+      max-data-quality-rows: ${ANALYTICS_QUERY_MAX_DATA_QUALITY_ROWS:50000}
+      max-funnel-groups: ${ANALYTICS_QUERY_MAX_FUNNEL_GROUPS:1000}
+      max-dimension-value-length: ${ANALYTICS_QUERY_MAX_DIMENSION_VALUE_LENGTH:256}
+      timeout-seconds: ${ANALYTICS_QUERY_TIMEOUT_SECONDS:15}
     event-property-backfill:
       # V8 之前的事件在服务启动后小批次补齐查询元数据，不进入 Flyway 启动事务。
       enabled: ${EVENT_PROPERTY_BACKFILL_ENABLED:true}

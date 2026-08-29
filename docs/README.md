@@ -20,6 +20,7 @@ agent_notes: 先按任务选择目标文档；索引不替代具体文档
 | 如何加载三种模板的演示数据 | [三模板演示数据](../examples/demo-data/README.md) |
 | 系统库、项目库和认证如何协作 | [架构与认证链路](ARCHITECTURE.md) |
 | 如何新建项目、初始化 Schema 和选择分析模板 | [管理端 API：项目创建、初始化与模板选择](API_MANAGEMENT.md#项目创建初始化与模板选择) |
+| 如何登记属性、定义指标、导入 Analysis Pack 和检查数据质量 | [管理端 API：分析配置](API_MANAGEMENT.md#分析配置与数据质量) |
 | App/官网怎样采集数据 | [采集端 API](API_COLLECTION.md) |
 | 管理后台怎样调用接口 | [管理端 API](API_MANAGEMENT.md) |
 | 怎样处理隐私工单 | [隐私工单处理流程](PRIVACY_WORKFLOW.md) |
@@ -28,6 +29,7 @@ agent_notes: 先按任务选择目标文档；索引不替代具体文档
 | 如何从 1.0.0 升级到 1.0.1 | [1.0.1 升级说明](RELEASE_1.0.1.md) |
 | 如何从 1.0.1 升级到 1.1.0 | [1.1.0 升级说明](RELEASE_1.1.0.md) |
 | 如何从 1.1.0 升级到 1.1.1 | [1.1.1 升级说明](RELEASE_1.1.1.md) |
+| 如何从 1.1.1 升级到 1.1.2 | [1.1.2 升级说明](RELEASE_1.1.2.md) |
 
 ## 文档职责
 
@@ -59,7 +61,8 @@ API 文档较长是因为它们承担完整接口参考职责。处理单个接�
 
 - [1.0.1 升级说明](RELEASE_1.0.1.md)：只服务 1.0.0 → 1.0.1 升级和回滚判断。
 - [1.1.0 升级说明](RELEASE_1.1.0.md)：说明 actor identity、活跃版本指标、项目 V7 迁移和服务凭据配置。
-- [1.1.1 升级说明](RELEASE_1.1.1.md)：说明事件旅程、项目 V8 迁移、历史属性元数据回填和发布顺序。
+- [1.1.1 升级说明](RELEASE_1.1.1.md)：说明事件旅程、Project V8 迁移、历史元数据回填和发布顺序。
+- [1.1.2 升级说明](RELEASE_1.1.2.md)：说明属性与指标治理、Analysis Pack、数据质量、system V7 / Project V9 迁移和查询预算。
 - [维护者 Docker PostgreSQL](本地开发/DOCKER_POSTGRES.md)：维护者本机事实，不代表通用或生产配置。
 - [JDK 25 / Spring Boot 4 迁移记录](归档/JDK25-SpringBoot4-Guide.md)：历史排障材料，不作为当前事实来源。
 - [联系与支持](SUPPORT.md)：社区联系和赞赏，不属于技术文档入口。

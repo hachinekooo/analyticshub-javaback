@@ -61,15 +61,21 @@ public class SemanticDictionaryService {
     private final JdbcTemplate systemJdbcTemplate;
     private final MultiDataSourceManager dataSourceManager;
     private final ObjectMapper objectMapper;
+    private final AnalyticsSemanticDependencyService analyticsDependencies;
+    private final AnalysisPackOwnershipService packOwnershipService;
 
     public SemanticDictionaryService(
             JdbcTemplate systemJdbcTemplate,
             MultiDataSourceManager dataSourceManager,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            AnalyticsSemanticDependencyService analyticsDependencies,
+            AnalysisPackOwnershipService packOwnershipService
     ) {
         this.systemJdbcTemplate = systemJdbcTemplate;
         this.dataSourceManager = dataSourceManager;
         this.objectMapper = objectMapper;
+        this.analyticsDependencies = analyticsDependencies;
+        this.packOwnershipService = packOwnershipService;
     }
 
     @Transactional(readOnly = true)
@@ -129,6 +135,10 @@ public class SemanticDictionaryService {
         String normalizedSemanticKey = validateSemanticKey(semanticKey);
         ValidatedUpsert validated = validateUpsert(request);
         requireProject(normalizedProjectId, false);
+        packOwnershipService.acquireProjectDefinitionWriteLock(normalizedProjectId);
+        if (!validated.active()) {
+            analyticsDependencies.requireUnusedByActiveAnalytics(normalizedProjectId, normalizedSemanticKey);
+        }
 
         List<SemanticDefinitionOrigin> existingOrigins = systemJdbcTemplate.query(
                 "SELECT definition_origin FROM analytics_semantic_definitions "
@@ -143,6 +153,16 @@ public class SemanticDictionaryService {
                 : existingOrigins.getFirst();
 
         if (validated.aliasMode() == SemanticAliasUpdateMode.REPLACE) {
+            if (!existingOrigins.isEmpty() && aliasesWillChange(
+                    normalizedProjectId,
+                    validated.sourceKind(),
+                    normalizedSemanticKey,
+                    validated.aliases()
+            )) {
+                // active metric 的计算口径依赖当前原始事件集合；先停用依赖指标，
+                // 才能修改映射，避免配置仍显示可用但 KPI 已静默换口径。
+                analyticsDependencies.requireUnusedByActiveAnalytics(normalizedProjectId, normalizedSemanticKey);
+            }
             rejectAliasesOwnedByAnotherDefinition(
                     normalizedProjectId,
                     validated.sourceKind(),
@@ -191,6 +211,8 @@ public class SemanticDictionaryService {
         SemanticSourceKind normalizedSourceKind = parseSourceKind(sourceKind);
         String normalizedSemanticKey = validateSemanticKey(semanticKey);
         requireProject(normalizedProjectId, false);
+        packOwnershipService.acquireProjectDefinitionWriteLock(normalizedProjectId);
+        analyticsDependencies.requireUnusedByActiveAnalytics(normalizedProjectId, normalizedSemanticKey);
 
         SemanticDefinitionResponse definition = requireDefinition(
                 normalizedProjectId,
@@ -523,6 +545,26 @@ public class SemanticDictionaryService {
             throw semanticNotFound(semanticKey);
         }
         return definitions.getFirst();
+    }
+
+    private boolean aliasesWillChange(
+            String projectId,
+            SemanticSourceKind sourceKind,
+            String semanticKey,
+            List<String> replacement
+    ) {
+        List<String> current = systemJdbcTemplate.queryForList(
+                """
+                SELECT raw_key
+                  FROM analytics_semantic_aliases
+                 WHERE project_id = ? AND source_kind = ? AND semantic_key = ?
+                """,
+                String.class,
+                projectId,
+                sourceKind.name(),
+                semanticKey
+        );
+        return !new LinkedHashSet<>(current).equals(new LinkedHashSet<>(replacement));
     }
 
     private void rejectAliasesOwnedByAnotherDefinition(

@@ -1,18 +1,23 @@
 package com.github.analyticshub.service;
 
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
+import com.github.analyticshub.config.AnalyticsQueryProperties;
 import com.github.analyticshub.config.MultiDataSourceManager;
 import com.github.analyticshub.dto.AdminFunnelGroupResult;
 import com.github.analyticshub.dto.AdminFunnelResponse;
 import com.github.analyticshub.dto.AdminFunnelStepResult;
 import com.github.analyticshub.dto.AdminRetentionBucket;
 import com.github.analyticshub.dto.AdminRetentionResponse;
+import com.github.analyticshub.dto.AnalyticsPropertyDataType;
 import com.github.analyticshub.exception.BusinessException;
+import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.QueryTimeoutException;
+import org.springframework.transaction.TransactionTimedOutException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.sql.DataSource;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -41,20 +46,26 @@ public class AdminProductAnalyticsService {
     private static final String JOURNEY_FUNNEL_ATTRIBUTION_MODEL = "first_touch_journey";
 
     private final MultiDataSourceManager dataSourceManager;
-    private final ObjectMapper objectMapper;
     private final SemanticDictionaryService semanticDictionaryService;
     private final ActorIdentityResolver actorIdentityResolver;
+    private final AnalyticsQueryProperties queryProperties;
+    private final ProjectTransactionExecutor projectTransactions;
+    private final AnalyticsPropertyFilterService propertyFilterService;
 
     public AdminProductAnalyticsService(
             MultiDataSourceManager dataSourceManager,
-            ObjectMapper objectMapper,
             SemanticDictionaryService semanticDictionaryService,
-            ActorIdentityResolver actorIdentityResolver
+            ActorIdentityResolver actorIdentityResolver,
+            AnalyticsQueryProperties queryProperties,
+            ProjectTransactionExecutor projectTransactions,
+            AnalyticsPropertyFilterService propertyFilterService
     ) {
         this.dataSourceManager = dataSourceManager;
-        this.objectMapper = objectMapper;
         this.semanticDictionaryService = semanticDictionaryService;
         this.actorIdentityResolver = actorIdentityResolver;
+        this.queryProperties = queryProperties;
+        this.projectTransactions = projectTransactions;
+        this.propertyFilterService = propertyFilterService;
     }
 
     public AdminFunnelResponse getFunnel(
@@ -64,7 +75,7 @@ public class AdminProductAnalyticsService {
             String steps,
             String groupBy
     ) {
-        return getFunnel(projectId, from, to, steps, groupBy, null);
+        return getFunnel(projectId, from, to, steps, groupBy, null, null);
     }
 
     public AdminFunnelResponse getFunnel(
@@ -75,8 +86,21 @@ public class AdminProductAnalyticsService {
             String groupBy,
             String journeyKey
     ) {
+        return getFunnel(projectId, from, to, steps, groupBy, journeyKey, null);
+    }
+
+    public AdminFunnelResponse getFunnel(
+            String projectId,
+            String from,
+            String to,
+            String steps,
+            String groupBy,
+            String journeyKey,
+            String propertyFilters
+    ) {
         String normalizedProjectId = normalizeProjectId(projectId);
         AdminQueryUtils.Range range = AdminQueryUtils.resolveRange(from, to);
+        validateInteractiveRange(range.start(), range.end());
         List<String> semanticSteps = parseEventList(steps, MAX_FUNNEL_STEPS, "steps");
         if (semanticSteps.size() < 2) {
             throw new IllegalArgumentException("steps 至少需要 2 个不同事件");
@@ -84,24 +108,37 @@ public class AdminProductAnalyticsService {
         SemanticSelection selection = resolveSelection(normalizedProjectId, semanticSteps);
         String normalizedGroupBy = normalizePropertyKey(groupBy);
         String normalizedJourneyKey = normalizePropertyKey(journeyKey);
+        AnalyticsPropertyDataType resolvedGroupDataType = propertyFilterService
+                .requireGroupable(normalizedProjectId, normalizedGroupBy);
+        AnalyticsPropertyDataType groupDataType = resolvedGroupDataType;
+        propertyFilterService.requireJourneyKey(normalizedProjectId, normalizedJourneyKey);
+        AnalyticsPropertyFilterService.CompiledPropertyFilters compiledFilters =
+                propertyFilterService.compile(normalizedProjectId, propertyFilters, "properties");
 
-        JdbcTemplate jdbcTemplate = new JdbcTemplate(requireProject(normalizedProjectId).dataSource());
+        DataSource dataSource = requireProject(normalizedProjectId).dataSource();
         String eventsTable = dataSourceManager.getTableName(normalizedProjectId, "events");
-        List<EventRow> rows = queryEvents(
-                jdbcTemplate,
-                eventsTable,
-                normalizedProjectId,
-                range.start(),
-                range.end(),
-                selection.rawKeys()
-        );
-        rows = canonicalize(rows, selection.rawToSemantic());
-        rows = resolveCanonicalActors(jdbcTemplate, normalizedProjectId, rows);
+        List<EventRow> rows = executeInteractiveQuery(dataSource, jdbcTemplate -> {
+            List<EventRow> queriedRows = queryEvents(
+                    jdbcTemplate,
+                    eventsTable,
+                    normalizedProjectId,
+                    range.start(),
+                    range.end(),
+                    selection.rawKeys(),
+                    normalizedGroupBy,
+                    groupDataType,
+                    normalizedJourneyKey,
+                    compiledFilters
+            );
+            queriedRows = canonicalize(queriedRows, selection.rawToSemantic());
+            return resolveCanonicalActors(jdbcTemplate, normalizedProjectId, queriedRows);
+        });
 
         Map<String, Map<String, ActorTimeline>> groups = buildFunnelGroups(
                 rows,
                 semanticSteps,
                 normalizedGroupBy,
+                groupDataType,
                 normalizedJourneyKey
         );
         List<AdminFunnelGroupResult> groupResults = groups.entrySet().stream()
@@ -135,8 +172,21 @@ public class AdminProductAnalyticsService {
             String returnEvent,
             String days
     ) {
+        return getRetention(projectId, from, to, cohortEvent, returnEvent, days, null);
+    }
+
+    public AdminRetentionResponse getRetention(
+            String projectId,
+            String from,
+            String to,
+            String cohortEvent,
+            String returnEvent,
+            String days,
+            String propertyFilters
+    ) {
         String normalizedProjectId = normalizeProjectId(projectId);
         AdminQueryUtils.Range range = AdminQueryUtils.resolveRange(from, to);
+        validateInteractiveRange(range.start(), range.end());
         String normalizedCohortEvent = requireEventName(cohortEvent, "cohortEvent");
         String normalizedReturnEvent = requireEventName(returnEvent, "returnEvent");
         SemanticSelection selection = resolveSelection(
@@ -145,22 +195,33 @@ public class AdminProductAnalyticsService {
         );
         List<Integer> retentionDays = parseDays(days);
         int maxDay = retentionDays.stream().max(Integer::compareTo).orElse(30);
+        Instant requestedObservationEnd = range.end().plus(Duration.ofDays(maxDay + 1L));
+        validateInteractiveRange(range.start(), requestedObservationEnd);
+        Instant observationEnd = earlier(requestedObservationEnd, Instant.now());
+        AnalyticsPropertyFilterService.CompiledPropertyFilters compiledFilters =
+                propertyFilterService.compile(normalizedProjectId, propertyFilters, "properties");
 
-        JdbcTemplate jdbcTemplate = new JdbcTemplate(requireProject(normalizedProjectId).dataSource());
+        DataSource dataSource = requireProject(normalizedProjectId).dataSource();
         String eventsTable = dataSourceManager.getTableName(normalizedProjectId, "events");
-        List<EventRow> rows = queryEvents(
-                jdbcTemplate,
-                eventsTable,
-                normalizedProjectId,
-                range.start(),
-                range.end().plus(Duration.ofDays(maxDay + 1L)),
-                selection.rawKeys()
-        );
-        rows = canonicalize(rows, selection.rawToSemantic());
-        rows = resolveCanonicalActors(jdbcTemplate, normalizedProjectId, rows);
+        List<EventRow> rows = executeInteractiveQuery(dataSource, jdbcTemplate -> {
+            List<EventRow> queriedRows = queryEvents(
+                    jdbcTemplate,
+                    eventsTable,
+                    normalizedProjectId,
+                    range.start(),
+                    observationEnd,
+                    selection.rawKeys(),
+                    "",
+                    null,
+                    "",
+                    compiledFilters
+            );
+            queriedRows = canonicalize(queriedRows, selection.rawToSemantic());
+            return resolveCanonicalActors(jdbcTemplate, normalizedProjectId, queriedRows);
+        });
 
-        Map<String, Instant> cohortTimes = new HashMap<>();
-        Map<String, List<Instant>> returnTimes = new HashMap<>();
+        Map<String, EventPosition> cohortPositions = new HashMap<>();
+        Map<String, List<EventPosition>> returnPositions = new HashMap<>();
         for (EventRow row : rows) {
             if (row.actorId().isBlank()) {
                 continue;
@@ -168,20 +229,26 @@ public class AdminProductAnalyticsService {
             if (normalizedCohortEvent.equals(row.eventType())
                     && !row.createdAt().isBefore(range.start())
                     && row.createdAt().isBefore(range.end())) {
-                cohortTimes.merge(row.actorId(), row.createdAt(), AdminProductAnalyticsService::earlier);
+                cohortPositions.merge(row.actorId(), row.position(), AdminProductAnalyticsService::earlier);
             }
             if (normalizedReturnEvent.equals(row.eventType())) {
-                returnTimes.computeIfAbsent(row.actorId(), ignored -> new ArrayList<>()).add(row.createdAt());
+                returnPositions.computeIfAbsent(row.actorId(), ignored -> new ArrayList<>()).add(row.position());
             }
         }
-        returnTimes.values().forEach(times -> times.sort(Comparator.naturalOrder()));
+        returnPositions.values().forEach(positions -> positions.sort(Comparator.naturalOrder()));
 
-        long cohortUsers = cohortTimes.size();
+        long cohortUsers = cohortPositions.size();
         List<AdminRetentionBucket> buckets = retentionDays.stream()
                 .map(day -> {
-                    long retained = countRetainedUsers(cohortTimes, returnTimes, day);
-                    double rate = cohortUsers == 0 ? 0d : (double) retained / (double) cohortUsers;
-                    return new AdminRetentionBucket(day, retained, roundRate(rate));
+                    RetentionCounts counts = calculateRetentionCounts(
+                            cohortPositions, returnPositions, day, observationEnd
+                    );
+                    double rate = counts.eligibleUsers() == 0
+                            ? 0d
+                            : (double) counts.retainedUsers() / (double) counts.eligibleUsers();
+                    return new AdminRetentionBucket(
+                            day, counts.eligibleUsers(), counts.retainedUsers(), roundRate(rate)
+                    );
                 })
                 .toList();
 
@@ -189,6 +256,9 @@ public class AdminProductAnalyticsService {
                 normalizedProjectId,
                 range.start().toString(),
                 range.end().toString(),
+                observationEnd.toString(),
+                requestedObservationEnd.toString(),
+                !observationEnd.isBefore(requestedObservationEnd),
                 normalizedCohortEvent,
                 normalizedReturnEvent,
                 cohortUsers,
@@ -200,6 +270,7 @@ public class AdminProductAnalyticsService {
             List<EventRow> rows,
             List<String> stepEvents,
             String groupBy,
+            AnalyticsPropertyDataType groupDataType,
             String journeyKey
     ) {
         String firstStep = stepEvents.get(0);
@@ -218,12 +289,27 @@ public class AdminProductAnalyticsService {
                 if (actorAttributedGroups.containsKey(subjectId)) {
                     continue;
                 }
-                String groupValue = groupBy.isBlank() ? "all" : propertyValue(row.properties(), groupBy);
+                String groupValue;
+                if (groupBy.isBlank()) {
+                    groupValue = "all";
+                } else if (!row.groupPresent()) {
+                    groupValue = "(none)";
+                } else {
+                    groupValue = normalizeGroupValue(row.groupValue(), groupDataType);
+                    if (groupValue == null) {
+                        continue;
+                    }
+                }
+                requireDimensionValueWithinBudget(groupValue);
+                if (!groups.containsKey(groupValue)
+                        && groups.size() >= queryProperties.getMaxFunnelGroups()) {
+                    throw funnelDimensionBudgetExceeded();
+                }
                 // 未指定 journeyKey 时按 actor 首触归因；指定后按一次业务旅程首触归因。
                 actorAttributedGroups.put(subjectId, groupValue);
                 groups.computeIfAbsent(groupValue, ignored -> new LinkedHashMap<>())
                         .computeIfAbsent(subjectId, ignored -> new ActorTimeline())
-                        .add(row.eventType(), row.createdAt());
+                        .add(row.eventType(), row.position());
                 continue;
             }
 
@@ -233,21 +319,35 @@ public class AdminProductAnalyticsService {
             }
             groups.get(groupValue)
                     .computeIfAbsent(subjectId, ignored -> new ActorTimeline())
-                    .add(row.eventType(), row.createdAt());
+                    .add(row.eventType(), row.position());
         }
         return groups;
     }
 
-    private static String funnelSubjectId(EventRow row, String journeyKey) {
+    private String funnelSubjectId(EventRow row, String journeyKey) {
         if (journeyKey.isBlank()) {
             return row.actorId();
         }
-        JsonNode value = row.properties() == null ? null : row.properties().get(journeyKey);
-        if (value == null || !value.isString() || value.asString().isBlank()) {
+        String value = row.journeyValue();
+        if (value == null || value.isBlank()) {
             return null;
         }
+        requireDimensionValueWithinBudget(value);
         // 同名 flow 也不能跨 actor 合并；actor alias 已在进入这里前归一。
-        return row.actorId() + "\0" + value.asString();
+        return row.actorId() + "\0" + value;
+    }
+
+    private void requireDimensionValueWithinBudget(String value) {
+        if (value.length() > queryProperties.getMaxDimensionValueLength()) {
+            throw funnelDimensionBudgetExceeded();
+        }
+    }
+
+    private BusinessException funnelDimensionBudgetExceeded() {
+        return BusinessException.analyticsFunnelDimensionBudgetExceeded(
+                queryProperties.getMaxFunnelGroups(),
+                queryProperties.getMaxDimensionValueLength()
+        );
     }
 
     private List<AdminFunnelStepResult> calculateFunnelSteps(
@@ -255,7 +355,7 @@ public class AdminProductAnalyticsService {
             Map<String, ActorTimeline> actors
     ) {
         Set<String> reachedActors = new HashSet<>(actors.keySet());
-        Map<String, Instant> previousStepTimes = new HashMap<>();
+        Map<String, EventPosition> previousStepPositions = new HashMap<>();
         long firstStepUsers = 0;
         long previousStepUsers = 0;
         List<AdminFunnelStepResult> results = new ArrayList<>();
@@ -263,18 +363,18 @@ public class AdminProductAnalyticsService {
         for (int index = 0; index < stepEvents.size(); index++) {
             String eventType = stepEvents.get(index);
             Set<String> currentReached = new HashSet<>();
-            Map<String, Instant> currentStepTimes = new HashMap<>();
+            Map<String, EventPosition> currentStepPositions = new HashMap<>();
 
             for (String actorId : reachedActors) {
                 ActorTimeline timeline = actors.get(actorId);
-                Instant after = index == 0 ? Instant.EPOCH : previousStepTimes.get(actorId);
-                if (after == null) {
+                EventPosition after = index == 0 ? null : previousStepPositions.get(actorId);
+                if (index > 0 && after == null) {
                     continue;
                 }
-                Instant matched = timeline.firstAtOrAfter(eventType, after);
+                EventPosition matched = timeline.firstAfter(eventType, after);
                 if (matched != null) {
                     currentReached.add(actorId);
-                    currentStepTimes.put(actorId, matched);
+                    currentStepPositions.put(actorId, matched);
                 }
             }
 
@@ -295,34 +395,46 @@ public class AdminProductAnalyticsService {
             ));
 
             reachedActors = currentReached;
-            previousStepTimes = currentStepTimes;
+            previousStepPositions = currentStepPositions;
             previousStepUsers = users;
         }
         return results;
     }
 
-    private long countRetainedUsers(
-            Map<String, Instant> cohortTimes,
-            Map<String, List<Instant>> returnTimes,
-            int day
+    private RetentionCounts calculateRetentionCounts(
+            Map<String, EventPosition> cohortPositions,
+            Map<String, List<EventPosition>> returnPositions,
+            int day,
+            Instant observationEnd
     ) {
+        long eligible = 0;
         long retained = 0;
-        for (Map.Entry<String, Instant> entry : cohortTimes.entrySet()) {
-            Instant start = entry.getValue()
+        for (Map.Entry<String, EventPosition> entry : cohortPositions.entrySet()) {
+            EventPosition cohortPosition = entry.getValue();
+            Instant cohortTime = cohortPosition.timestamp();
+            Instant start = cohortTime
                     .atZone(ZoneOffset.UTC)
                     .toLocalDate()
                     .plusDays(day)
                     .atStartOfDay(ZoneOffset.UTC)
                     .toInstant();
             Instant end = start.plus(Duration.ofDays(1));
-            List<Instant> actorReturnTimes = returnTimes.getOrDefault(entry.getKey(), List.of());
-            boolean matched = actorReturnTimes.stream()
-                    .anyMatch(time -> !time.isBefore(start) && time.isBefore(end));
+            // 只有完整走完目标 UTC 自然日的分群成员才能进入该桶分母。
+            if (observationEnd.isBefore(end)) {
+                continue;
+            }
+            eligible++;
+            List<EventPosition> actorReturnPositions = returnPositions.getOrDefault(entry.getKey(), List.of());
+            boolean matched = actorReturnPositions.stream()
+                    // 留存只记录入组后的真实回访；D0 不能把同日更早事件或入组事件本身算作回访。
+                    .anyMatch(position -> position.compareTo(cohortPosition) > 0
+                            && !position.timestamp().isBefore(start)
+                            && position.timestamp().isBefore(end));
             if (matched) {
                 retained++;
             }
         }
-        return retained;
+        return new RetentionCounts(eligible, retained);
     }
 
     private List<EventRow> queryEvents(
@@ -331,45 +443,81 @@ public class AdminProductAnalyticsService {
             String projectId,
             Instant start,
             Instant end,
-            List<String> eventTypes
+            List<String> eventTypes,
+            String groupBy,
+            AnalyticsPropertyDataType groupDataType,
+            String journeyKey,
+            AnalyticsPropertyFilterService.CompiledPropertyFilters propertyFilters
     ) {
         if (eventTypes.isEmpty()) {
             return List.of();
         }
         String placeholders = String.join(",", eventTypes.stream().map(ignored -> "?").toList());
-        String sql = String.format(
-                "SELECT event_type, event_timestamp, user_id, device_id, properties FROM %s " +
-                        "WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ? " +
-                        "AND event_type IN (%s) ORDER BY event_timestamp ASC, id ASC",
-                eventsTable,
-                placeholders
-        );
         List<Object> args = new ArrayList<>();
+        String groupProjection = "NULL::text AS group_value";
+        String groupPresentProjection = "FALSE AS group_present";
+        if (!groupBy.isBlank()) {
+            groupProjection = typedGroupProjection(groupDataType);
+            groupPresentProjection = "jsonb_exists(properties, ?) AS group_present";
+            args.add(groupBy);
+            if (groupDataType != null) {
+                args.add(groupBy);
+                if (groupDataType == AnalyticsPropertyDataType.INTEGER) {
+                    args.add(groupBy);
+                }
+            }
+            args.add(groupBy);
+        }
+        String journeyProjection = "NULL::text AS journey_value";
+        if (!journeyKey.isBlank()) {
+            // 旧口径只接受字符串 journey id；其他 JSON 类型不能被误当成一次旅程。
+            journeyProjection = "CASE WHEN jsonb_typeof(properties -> ?) = 'string' " +
+                    "THEN properties ->> ? ELSE NULL END AS journey_value";
+            args.add(journeyKey);
+            args.add(journeyKey);
+        }
+        String filterClause = propertyFilters.isEmpty() ? "" : " AND " + propertyFilters.sql();
+        String sql = String.format(
+                "SELECT id, event_type, event_timestamp, user_id, device_id, %s, %s, %s FROM %s " +
+                        "WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ? " +
+                        "AND event_type IN (%s)%s ORDER BY event_timestamp ASC, id ASC LIMIT ?",
+                groupProjection,
+                groupPresentProjection,
+                journeyProjection,
+                eventsTable,
+                placeholders,
+                filterClause
+        );
         args.add(projectId);
         args.add(start.toEpochMilli());
         args.add(end.toEpochMilli());
         args.addAll(eventTypes);
+        args.addAll(propertyFilters.arguments());
+        args.add(queryProperties.getMaxCandidateRows() + 1);
 
-        return jdbcTemplate.query(sql, (rs, rowNum) -> {
-            String properties = rs.getString("properties");
-            JsonNode propertiesNode = null;
-            if (properties != null && !properties.isBlank()) {
-                try {
-                    propertiesNode = objectMapper.readTree(properties);
-                } catch (Exception e) {
-                    log.log(System.Logger.Level.WARNING, "Failed to parse analytics properties JSON", e);
-                }
-            }
+        long startedAt = System.nanoTime();
+        List<EventRow> rows = jdbcTemplate.query(sql, (rs, rowNum) -> {
             String userId = rs.getString("user_id");
             String deviceId = rs.getString("device_id");
             String actorId = userId == null || userId.isBlank() ? deviceId : userId;
             return new EventRow(
+                    rs.getLong("id"),
                     rs.getString("event_type"),
                     Instant.ofEpochMilli(rs.getLong("event_timestamp")),
                     actorId == null ? "" : actorId,
-                    propertiesNode
+                    rs.getString("group_value"),
+                    rs.getBoolean("group_present"),
+                    rs.getString("journey_value")
             );
         }, args.toArray());
+        long elapsedMillis = Duration.ofNanos(System.nanoTime() - startedAt).toMillis();
+        log.log(System.Logger.Level.INFO,
+                "Interactive analytics query completed: project={0}, rows={1}, elapsedMs={2}",
+                projectId, rows.size(), elapsedMillis);
+        if (rows.size() > queryProperties.getMaxCandidateRows()) {
+            throw BusinessException.analyticsQueryBudgetExceeded(queryProperties.getMaxCandidateRows());
+        }
+        return rows;
     }
 
     private SemanticSelection resolveSelection(String projectId, List<String> semanticKeys) {
@@ -390,10 +538,13 @@ public class AdminProductAnalyticsService {
     ) {
         return rows.stream()
                 .map(row -> new EventRow(
+                        row.id(),
                         rawToSemantic.get(row.eventType()),
                         row.createdAt(),
                         row.actorId(),
-                        row.properties()
+                        row.groupValue(),
+                        row.groupPresent(),
+                        row.journeyValue()
                 ))
                 .filter(row -> row.eventType() != null)
                 .toList();
@@ -413,10 +564,13 @@ public class AdminProductAnalyticsService {
         );
         return rows.stream()
                 .map(row -> new EventRow(
+                        row.id(),
                         row.eventType(),
                         row.createdAt(),
                         canonicalActors.getOrDefault(row.actorId(), row.actorId()),
-                        row.properties()
+                        row.groupValue(),
+                        row.groupPresent(),
+                        row.journeyValue()
                 ))
                 .toList();
     }
@@ -509,16 +663,66 @@ public class AdminProductAnalyticsService {
         return key;
     }
 
-    private static String propertyValue(JsonNode properties, String key) {
-        if (properties == null || key.isBlank()) {
-            return "all";
+    private static String typedGroupProjection(AnalyticsPropertyDataType type) {
+        if (type == null) {
+            return "properties ->> ? AS group_value";
         }
-        JsonNode value = properties.get(key);
-        if (value == null || value.isNull()) {
-            return "(none)";
+        return switch (type) {
+            case STRING -> "CASE WHEN jsonb_typeof(properties -> ?) = 'string' THEN properties ->> ? ELSE NULL END AS group_value";
+            case BOOLEAN -> "CASE WHEN jsonb_typeof(properties -> ?) = 'boolean' THEN properties ->> ? ELSE NULL END AS group_value";
+            case INTEGER -> "CASE WHEN jsonb_typeof(properties -> ?) = 'number' AND mod((properties ->> ?)::numeric, 1) = 0 THEN properties ->> ? ELSE NULL END AS group_value";
+            case NUMBER -> "CASE WHEN jsonb_typeof(properties -> ?) = 'number' THEN properties ->> ? ELSE NULL END AS group_value";
+        };
+    }
+
+    private static String normalizeGroupValue(String value, AnalyticsPropertyDataType type) {
+        if (type == null) {
+            return value == null ? null : (value.isBlank() ? "(empty)" : value);
         }
-        String text = value.isString() ? value.asString() : value.toString();
-        return text == null || text.isBlank() ? "(empty)" : text;
+        try {
+            return AnalyticsPropertyValueNormalizer.normalize(value, type);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    private void validateInteractiveRange(Instant start, Instant end) {
+        Duration requested = Duration.between(start, end);
+        if (requested.compareTo(Duration.ofDays(queryProperties.getMaxRangeDays())) > 0) {
+            throw BusinessException.analyticsQueryRangeExceeded(queryProperties.getMaxRangeDays());
+        }
+    }
+
+    private <T> T executeInteractiveQuery(
+            DataSource dataSource,
+            java.util.function.Function<JdbcTemplate, T> operation
+    ) {
+        try {
+            return projectTransactions.executeReadOnly(
+                    dataSource,
+                    queryProperties.getTimeoutSeconds(),
+                    operation
+            );
+        } catch (QueryTimeoutException | TransactionTimedOutException e) {
+            throw BusinessException.analyticsQueryTimedOut();
+        } catch (DataAccessException e) {
+            if (hasSqlState(e, "57014")) {
+                throw BusinessException.analyticsQueryTimedOut();
+            }
+            throw e;
+        }
+    }
+
+    private static boolean hasSqlState(Throwable error, String expectedState) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof SQLException sqlException
+                    && expectedState.equals(sqlException.getSQLState())) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private static double roundRate(double value) {
@@ -527,6 +731,10 @@ public class AdminProductAnalyticsService {
 
     private static Instant earlier(Instant left, Instant right) {
         return left.isBefore(right) ? left : right;
+    }
+
+    private static EventPosition earlier(EventPosition left, EventPosition right) {
+        return left.compareTo(right) <= 0 ? left : right;
     }
 
     private static String normalizeProjectId(String projectId) {
@@ -547,22 +755,44 @@ public class AdminProductAnalyticsService {
 
     private record ProjectContext(MultiDataSourceManager.ProjectConfig config, DataSource dataSource) {}
 
-    private record EventRow(String eventType, Instant createdAt, String actorId, JsonNode properties) {}
+    private record EventRow(
+            long id,
+            String eventType,
+            Instant createdAt,
+            String actorId,
+            String groupValue,
+            boolean groupPresent,
+            String journeyValue
+    ) {
+        EventPosition position() {
+            return new EventPosition(createdAt, id);
+        }
+    }
+
+    private record EventPosition(Instant timestamp, long id) implements Comparable<EventPosition> {
+        @Override
+        public int compareTo(EventPosition other) {
+            int timestampOrder = timestamp.compareTo(other.timestamp);
+            return timestampOrder != 0 ? timestampOrder : Long.compare(id, other.id);
+        }
+    }
+
+    private record RetentionCounts(long eligibleUsers, long retainedUsers) {}
 
     private record SemanticSelection(List<String> rawKeys, Map<String, String> rawToSemantic) {}
 
     private static final class ActorTimeline {
-        private final Map<String, List<Instant>> timesByEvent = new HashMap<>();
+        private final Map<String, List<EventPosition>> positionsByEvent = new HashMap<>();
 
-        void add(String eventType, Instant createdAt) {
-            timesByEvent.computeIfAbsent(eventType, ignored -> new ArrayList<>()).add(createdAt);
+        void add(String eventType, EventPosition position) {
+            positionsByEvent.computeIfAbsent(eventType, ignored -> new ArrayList<>()).add(position);
         }
 
-        Instant firstAtOrAfter(String eventType, Instant after) {
-            List<Instant> times = timesByEvent.getOrDefault(eventType, List.of());
-            for (Instant time : times) {
-                if (!time.isBefore(after)) {
-                    return time;
+        EventPosition firstAfter(String eventType, EventPosition after) {
+            List<EventPosition> positions = positionsByEvent.getOrDefault(eventType, List.of());
+            for (EventPosition position : positions) {
+                if (after == null || position.compareTo(after) > 0) {
+                    return position;
                 }
             }
             return null;

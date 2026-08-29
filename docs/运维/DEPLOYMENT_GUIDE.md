@@ -103,7 +103,7 @@ analyticshub.service
 上传：
 
 ```bash
-scp target/analyticshub-1.1.0.jar user@server:/opt/analyticshub/app.jar
+scp target/analyticshub-1.1.2.jar user@server:/opt/analyticshub/app.jar
 ```
 
 服务器上修正权限：
@@ -137,8 +137,14 @@ ADMIN_TOKEN=replace-with-at-least-32-random-characters
 PROJECT_CREDENTIAL_ENCRYPTION_KEY=replace-with-base64-32-byte-key
 APP_CORS_ALLOWED_ORIGINS=https://analytics.example.com
 APP_CORS_ALLOW_CREDENTIALS=false
+# 逗号分隔实际承载公开流量采集的官网 Host；仅这些 Host 的 Referer 保留路径。
+TRAFFIC_SAME_ORIGIN_HOSTS=www.example.com
 
-# Inks test 与 prod 使用两套独立服务身份；Project、service ID、secret 均不得复用。
+# 交互分析默认预算通常无需调整；放大前应先用真实数据压测。
+ANALYTICS_QUERY_MAX_FUNNEL_GROUPS=1000
+ANALYTICS_QUERY_MAX_DIMENSION_VALUE_LENGTH=256
+
+# 上游业务的 test 与 prod 使用两套独立服务身份；Project、service ID、secret 均不得复用。
 ACTOR_LINK_ENABLED=true
 ACTOR_LINK_REQUIRE_LOOPBACK=true
 APP_SECURITY_ACTOR_LINK_CLIENTS_0_SERVICE_ID=replace-with-test-service-id
@@ -151,9 +157,11 @@ APP_SECURITY_ACTOR_LINK_CLIENTS_1_SECRET=replace-with-prod-random-secret-at-leas
 
 `SERVER_ADDRESS=127.0.0.1` 让应用端口只接受本机 Nginx 转发；不要改成 `0.0.0.0` 暴露 3001。对外入口只开放 Nginx 的 HTTP/HTTPS 端口。
 
+`TRAFFIC_SAME_ORIGIN_HOSTS` 必须填写运维确认的官网 Host，不带协议、端口或路径。服务不会根据客户端可伪造的 `Host` / `X-Forwarded-Host` 判断同源；未列入的绝对 Referer 只保存 Host，不保存路径、查询参数或 fragment（片段）。未使用公开流量采集时可留空。
+
 `ops/analyticshub deploy` 首次创建 env 时会自动生成 `PROJECT_CREDENTIAL_ENCRYPTION_KEY`。不要在后续部署时重新生成或覆盖它；应把这把 key 单独备份，否则已保存的项目数据库密码无法解密。
 
-actor-link 的 `service ID` 是非敏感的稳定调用方名称；`secret` 才是服务间 HMAC 密钥。test 与 prod 各生成一次 `openssl rand -hex 32`，把同一槽位的值分别写入 AnalyticsHub client 配置和对应 Inks env。不要把 iOS 设备的 `ownershipProof` 写进 env；它由客户端自动生成并只在单次登录请求中使用。
+actor-link 的 `service ID` 是非敏感的稳定调用方名称；`secret` 才是服务间 HMAC 密钥。test 与 prod 各生成一次 `openssl rand -hex 32`，把同一槽位的值分别写入 AnalyticsHub client 配置和对应上游服务 env。不要把客户端设备的 `ownershipProof` 写进 env；它由客户端自动生成并只在单次登录请求中使用。
 
 需要邮件或 2FA 时，再配置：
 

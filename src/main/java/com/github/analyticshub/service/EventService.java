@@ -6,6 +6,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 import com.github.analyticshub.config.MultiDataSourceManager;
+import com.github.analyticshub.dto.EventBatchTrackSummary;
 import com.github.analyticshub.dto.EventTrackRequest;
 import com.github.analyticshub.dto.EventTrackResponse;
 import com.github.analyticshub.exception.BusinessException;
@@ -22,6 +23,7 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -36,6 +38,10 @@ public class EventService {
 
     private static final System.Logger log = System.getLogger(EventService.class.getName());
     static final int MAX_BATCH_SIZE = 100;
+    static final int MAX_PROPERTIES_BYTES = 32 * 1024;
+    static final int MAX_PROPERTIES_KEYS = 128;
+    static final int MAX_PROPERTIES_DEPTH = 6;
+    static final int MAX_PROPERTY_STRING_LENGTH = 4_096;
 
     private final MultiDataSourceManager dataSourceManager;
     private final ObjectMapper objectMapper;
@@ -93,9 +99,9 @@ public class EventService {
      * Best-effort validation（逐项校验）+ atomic persistence（批次原子落库）。
      * 格式无效的条目会跳过；所有有效条目及其派生结果则一起提交或一起回滚。
      */
-    public void trackEventsBatch(EventTrackRequest[] events) {
+    public EventBatchTrackSummary trackEventsBatch(EventTrackRequest[] events) {
         if (events == null || events.length == 0) {
-            return;
+            return emptyBatchResponse();
         }
         if (events.length > MAX_BATCH_SIZE) {
             throw new BusinessException(
@@ -107,14 +113,18 @@ public class EventService {
 
         RequestContext context = requireRequestContext();
         List<PreparedEvent> preparedEvents = new ArrayList<>(events.length);
+        Map<String, Integer> rejectionCounts = new LinkedHashMap<>();
         for (int index = 0; index < events.length; index++) {
             EventTrackRequest event = events[index];
             if (event == null) {
+                rejectionCounts.merge("EMPTY_BATCH_ITEM", 1, Integer::sum);
                 continue;
             }
             try {
-                preparedEvents.add(prepareEvent(event));
+                PreparedEvent preparedEvent = prepareEvent(event);
+                preparedEvents.add(preparedEvent);
             } catch (BusinessException exception) {
+                rejectionCounts.merge(exception.getCode(), 1, Integer::sum);
                 log.log(System.Logger.Level.WARNING,
                         "批量事件条目已跳过: index={0}, code={1}",
                         index,
@@ -122,7 +132,7 @@ public class EventService {
             }
         }
         if (preparedEvents.isEmpty()) {
-            return;
+            return batchResponse(events.length, 0, 0, rejectionCounts);
         }
 
         String eventsTable = dataSourceManager.getTableName(context.getProjectId(), "events");
@@ -148,8 +158,15 @@ public class EventService {
             return accepted;
         });
         log.log(System.Logger.Level.INFO,
-                "批量事件已处理: received={0}, valid={1}, accepted={2}",
-                events.length, preparedEvents.size(), acceptedCount == null ? 0 : acceptedCount);
+                "批量事件已处理: received={0}, accepted={1}, inserted={2}, rejected={3}",
+                events.length, preparedEvents.size(), acceptedCount == null ? 0 : acceptedCount,
+                rejectionCounts.values().stream().mapToInt(Integer::intValue).sum());
+        return batchResponse(
+                events.length,
+                preparedEvents.size(),
+                acceptedCount == null ? 0 : acceptedCount,
+                rejectionCounts
+        );
     }
 
     private EventWriteResult writeEvent(
@@ -345,6 +362,16 @@ public class EventService {
         int propertiesSizeBytes = propertiesJson == null
                 ? 0
                 : propertiesJson.getBytes(StandardCharsets.UTF_8).length;
+        if (propertiesSizeBytes > MAX_PROPERTIES_BYTES) {
+            throw BusinessException.eventPropertiesTooLarge(MAX_PROPERTIES_BYTES);
+        }
+        if (propertiesJson != null) {
+            try {
+                validatePropertiesShape(objectMapper.readTree(propertiesJson));
+            } catch (JacksonException exception) {
+                throw BusinessException.invalidEventProperties();
+            }
+        }
         Object identityScopeValue = request.properties() == null
                 ? null
                 : request.properties().get("identity_scope");
@@ -366,6 +393,28 @@ public class EventService {
         );
     }
 
+    private static EventBatchTrackSummary emptyBatchResponse() {
+        return new EventBatchTrackSummary(0, 0, 0, 0, 0, Map.of());
+    }
+
+    private static EventBatchTrackSummary batchResponse(
+            int receivedCount,
+            int acceptedCount,
+            int insertedCount,
+            Map<String, Integer> rejectionCounts
+    ) {
+        int rejectedCount = rejectionCounts.values().stream().mapToInt(Integer::intValue).sum();
+        return new EventBatchTrackSummary(
+                receivedCount,
+                acceptedCount,
+                insertedCount,
+                acceptedCount - insertedCount,
+                rejectedCount,
+                Map.copyOf(rejectionCounts)
+        );
+    }
+
+
     private String createRequestHash(EventTrackRequest request, String propertiesJson) {
         try {
             ObjectNode fingerprint = objectMapper.createObjectNode();
@@ -384,6 +433,37 @@ public class EventService {
             return CryptoUtils.sha256Hex(objectMapper.writeValueAsString(fingerprint));
         } catch (JacksonException exception) {
             throw BusinessException.invalidEventProperties();
+        }
+    }
+
+    private static void validatePropertiesShape(JsonNode properties) {
+        PropertyShapeBudget budget = new PropertyShapeBudget();
+        validatePropertiesNode(properties, 1, budget);
+    }
+
+    private static void validatePropertiesNode(JsonNode node, int depth, PropertyShapeBudget budget) {
+        if (depth > MAX_PROPERTIES_DEPTH) {
+            throw new BusinessException("INVALID_EVENT_PROPERTIES", "事件属性嵌套层级过深");
+        }
+        if (node.isObject()) {
+            for (Map.Entry<String, JsonNode> entry : node.properties()) {
+                budget.keys++;
+                if (budget.keys > MAX_PROPERTIES_KEYS || entry.getKey().length() > 100) {
+                    throw new BusinessException("INVALID_EVENT_PROPERTIES", "事件属性键数量或长度超限");
+                }
+                validatePropertiesNode(entry.getValue(), depth + 1, budget);
+            }
+            return;
+        }
+        if (node.isArray()) {
+            if (node.size() > MAX_PROPERTIES_KEYS) {
+                throw new BusinessException("INVALID_EVENT_PROPERTIES", "事件属性数组长度超限");
+            }
+            node.forEach(value -> validatePropertiesNode(value, depth + 1, budget));
+            return;
+        }
+        if (node.isString() && node.asString().length() > MAX_PROPERTY_STRING_LENGTH) {
+            throw new BusinessException("INVALID_EVENT_PROPERTIES", "事件属性字符串长度超限");
         }
     }
 
@@ -468,5 +548,9 @@ public class EventService {
     }
 
     private record EventWriteResult(String eventId, boolean inserted) {
+    }
+
+    private static final class PropertyShapeBudget {
+        private int keys;
     }
 }

@@ -33,7 +33,7 @@ GET /api/health
   "status": "UP",
   "service": "analyticshub-javaback",
   "timestamp": "2026-01-12T10:00:00.000Z",
-  "version": "1.1.0"
+  "version": "1.1.2"
 }
 ```
 
@@ -374,7 +374,7 @@ GET /api/admin/metrics/overview?projectId=your_project&from=2026-01-01&to=2026-0
     "projectId": "your_project",
     "rangeStart": "2026-01-01",
     "rangeEnd": "2026-01-31",
-    "devicesTotal": 5000,
+    "devicesInventoryTotal": 5000,
     "devicesActive": 1200,
     "usersActive": 800,
     "cloudAccountsCreated": 36,
@@ -519,7 +519,8 @@ GET /api/admin/analytics/funnel?projectId=your_project&from=2026-01-01&to=2026-0
 GET /api/admin/analytics/retention?projectId=your_project&from=2026-01-01&to=2026-01-31&cohortEvent=signup&returnEvent=app_open&days=0,1,7,30
 ```
 
-- `from` / `to` 定义 cohort event 的入组范围；服务端会继续读取最大留存日之后一天内的 return event。
+- `from` / `to` 定义 cohort event 的入组范围；响应中的 `rangeStart / rangeEnd` 对应该范围。
+- 服务端计划读取最大留存日之后一天内的 return event，响应以 `requestedObservationEnd` 表示计划截止、`observationEnd` 表示截至查询时刻的实际数据截止，并以 `observationComplete` 标识计划窗口是否成熟。return event 必须在 `(event_timestamp, id)` 顺序上严格晚于该 actor 的首次 cohort event；同日更早事件与入组事件本身都不算回访，同毫秒事件按数据库写入 ID 判定先后。每个 bucket 的 `eligibleUsers` 只包含已完整走完对应 UTC 自然日的分群成员，`retentionRate` 使用该值而不是全部 `cohortUsers` 作分母；未来尚未发生的观察时间不会被算作零留存。最大查询范围按 `rangeStart` 到 `requestedObservationEnd` 的完整计划扫描窗口校验，不会只按入组范围放行超大查询。
 - `days` 支持 0–90、自动去重并升序返回，省略时为 `1,7,30`。
 - D0、D1 等按 UTC calendar day（UTC 自然日）计算，不按“注册后满 24 小时”计算；同一 actor 同一天多次返回只计一次。
 
@@ -924,3 +925,48 @@ DELETE /api/admin/projects/{projectId}/dashboards/{dashboardKey}?expectedRevisio
 `core.overview.config.metricKeys` 是有序选择：system 指标由 AnalyticsHub 事实直接计算；`core.*` 业务指标复用官方语义 Key，并且只有完成有效映射后才可新加入配置和在正常大屏展示。后端会在 Dashboard 写入边界再次校验，旧前端或脚本不能绕过。已保存业务指标后来因停用或清空映射而失效时，读取会隐藏该指标但保留原配置；无关布局编辑仍可保存，重新加入其他失效指标仍会被拒绝。历史 Dashboard 未保存该字段时，由当前可用指标生成动态兼容默认值；普通布局保存不会隐式固化，只有管理员实际编辑概览选择后才转为显式配置。
 
 `core.counters.config.keys` 同样是有序选择，表示从项目已有计数器中拿哪些累计值展示。后端在 Dashboard 写入边界校验本次新增的引用确实存在；历史 Counter 后来被删除时允许原样保留，使无关布局编辑仍可保存，但展示和配置界面都必须明确标记失效引用。计数器组件展示截至当前的持久化累计值，不跟随 Dashboard 日期范围，也不能静默改变其他项的顺序。
+
+### 14. 分析配置与数据质量
+
+属性语义和指标定义保存在 system database；事件事实仍只存在对应 Project Database。
+
+```http
+GET /api/admin/projects/{projectId}/properties
+PUT /api/admin/projects/{projectId}/properties/{propertyKey}
+GET /api/admin/projects/{projectId}/metrics
+PUT /api/admin/projects/{projectId}/metrics/{metricKey}
+GET /api/admin/projects/{projectId}/trusted-schema-policy
+GET /api/admin/projects/{projectId}/metric-results/{metricKey}?from=...&to=...
+GET /api/admin/projects/{projectId}/analysis-packs
+PUT /api/admin/projects/{projectId}/analysis-packs/{packKey}
+GET /api/admin/metrics/data-quality?projectId=...&from=...&to=...
+```
+
+属性定义明确 `STRING / BOOLEAN / INTEGER / NUMBER` 类型，以及 `filterable / groupable / journeyKey / sensitive` 能力。敏感属性不能开启筛选、分组或旅程关联。漏斗、留存、运营概览、趋势、事件排行和 App 版本分布使用同一 `propertyFilters` 合同：
+
+`allowedValues` 与筛选输入使用同一类型规范形式：BOOLEAN 归一为 `true / false`，INTEGER 去除无意义前导零，NUMBER 去除无意义尾零，STRING 去除首尾空白；规范化后重复或类型无效的定义会被拒绝。数据质量检查也按该规范形式比对真实 JSON 标量，避免定义、筛选和质量页各自解释同一个值。
+
+```json
+[
+  {"propertyKey":"release_channel","operator":"EQ","values":["production"]},
+  {"propertyKey":"event_schema_version","operator":"IN","values":["3","4"]},
+  {"propertyKey":"campaign","operator":"EXISTS","values":[]}
+]
+```
+
+- 只支持顶层属性和 `EQ / IN / EXISTS`；最多 8 个条件，`IN` 最多 20 个值，条件之间是 AND。
+- 属性必须已登记、active、非敏感并启用 filterable；不支持 JSONPath、正则、表达式或 SQL。
+- 未传 `propertyFilters` 时保持旧 API“不附加属性筛选”的全量统计语义；这不表示无限范围、无限候选量。无筛选请求同样受下述时间范围、候选数和超时预算保护，超限会明确失败且不返回部分统计。
+- 漏斗的 `groupBy` 和 `journeyKey` 分别要求属性启用对应能力。尚未建立任何属性定义的项目处于 legacy ungoverned mode（遗留未治理模式）：任意格式合法的分组/旅程 Key 仍可兼容执行，但不代表该属性已经验证。项目首次写入属性定义或导入 Analysis Pack 时，会在同一事务内预检现有活动指标与 Dashboard；所有 `groupBy / journeyKey` 引用均已声明对应能力后才允许进入治理模式，否则整次操作回滚并返回 `ANALYTICS_GOVERNANCE_TRANSITION_BLOCKED`。
+
+受治理指标使用稳定 `metricKey` 和 `EVENT_COUNT / UNIQUE_ACTORS / FUNNEL_CONVERSION / RETENTION` 类型。`definition` 只接受该类型的声明式字段，事件引用使用 semantic key。`metric-results` 负责执行同一查询合同，管理端不自行拼 SQL；响应通过 `resultClassification` 区分 `TRUSTED_SCHEMA`、`CROSS_VERSION_DIAGNOSTIC` 与 `UNGOVERNED_DIAGNOSTIC`。只有第一种可直接作为稳定 KPI；跨版本结果同时返回 `diagnosticReason`，未配置可信策略的结果也必须在 UI 标为诊断口径。active metric 或 active Dashboard 漏斗/留存仍引用某个 semantic key 时，系统会阻止停用、删除或替换其原始事件映射并返回 `SEMANTIC_DEFINITION_IN_USE`；`error.details` 分别列出 `metricKeys / dashboardKeys`。应先停用或调整全部依赖，完成映射变更并复核后再启用，避免看板静默换口径或清零。
+
+管理端可读取项目现有 Pack 的完整 Manifest、版本、checksum 与更新时间，以服务端快照作为下一版本或恢复操作的来源；回退也必须用更高版本提交完整快照。
+
+Analysis Pack schemaVersion 当前为 `1`，顶层只允许 `schemaVersion / trustedSchemaPolicy / properties / metrics`。同一 Pack 的 Manifest 是该 Pack 的 authoritative snapshot（权威快照）：升级时从 Manifest 删除的属性或指标会被停用，不会继续混入新口径。发生停用或移除可信策略时，首次请求返回 `ANALYSIS_PACK_DEACTIVATION_CONFIRMATION_REQUIRED`；管理员审查完整清单后以 `confirmDeactivations=true` 明确确认，避免把局部 JSON 当成增量更新。属性能力被停用前会检查 active metrics 与 Dashboard 的 `groupBy / journeyKey` 依赖；存在跨 Pack 或手工配置依赖时整次更新失败，不会留下“配置成功但指标不可计算”的状态。Dashboard 当前只持久化分组与旅程 Key，`propertyFilters` 是管理端当次查询条件，不写入 Dashboard 定义。Pack 版本不能回退，同版本不能对应不同 checksum；同一项目的 Pack 导入会串行执行，不同 Pack 不能声明同一个属性或指标。启用中 Pack 声明的属性和指标不能再通过单项 API 修改，必须通过 Pack 升级保持 Manifest、checksum、审计与真实定义一致。可信策略也可以引用 Pack 外部的已有属性；该属性仍可手动维护名称等安全字段，但不能被改成非 active、敏感、不可筛选、非 STRING，或移除可信值，否则整次写入回滚并返回 `ANALYSIS_PACK_TRUSTED_SCHEMA_CONFLICT`。后端原子写入属性、指标、Pack 快照与审计，并返回 Manifest 的 SHA-256 checksum。Pack 不接受 SQL、脚本、HTML、URL 或动态 import；产品私有配置应作为部署输入导入，不应硬编码到开源核心。
+
+数据质量接口返回所选范围内由项目可信策略声明的协议值、异常客户端时间、历史超大属性，以及已登记属性的存在量、类型不一致量和允许值域之外的事件量。发布渠道、后端环境等产品特有维度必须由项目将其登记为普通受治理属性，开源核心不固定要求。`trustedSchemaPolicyConfigured` 是稳定的治理状态合同；为 `false` 时，即使 `issues` 为空也只能解释为“未验证”，不得显示 clean。此时 `schemaVersionPropertyKey` 为 `null`、`schemaVersions` 为空；配置策略后前者回显实际检查的协议属性。可信协议值超过 200 种时，`schemaVersions` 只展示高频项、`schemaVersionDistributionTruncated=true`，并加入 `schema_version_distribution_truncated` warning；缺失与不可信事件总数仍按完整检查范围独立计算。类型不一致或值域越界会进入总体 `issues`；覆盖检查超过单次 50 项上限时会返回 `propertyCoverageTotal / propertyCoverageTruncated` 并给出 warning，不会把部分清单伪装成完整结果。它只诊断，不修改历史事实。
+
+产品事件 schema 进入稳定运营版本后，应由项目 Analysis Pack 通过 `trustedSchemaPolicy` 声明版本属性与可信值，并把该属性登记为 `STRING`、启用 `filterable`、用 `allowedValues` 覆盖可信集合。所有 active metric 必须显式筛选可信值；已人工验证为跨版本稳定的指标可声明 `schemaScope=CROSS_VERSION_VERIFIED`，同时填写不少于 10 个字符的 `schemaScopeReason` 留下审计语义。更早版本仍保留用于版本趋势、兼容性和事故复盘，不会因建立基线而删除。原始 overview、trend 和直接分析 API 未携带该筛选时属于兼容/诊断口径，不能标作受治理 KPI。AnalyticsHub 不把某个产品的 schema 版本写死在开源核心中，具体基线由项目 Analysis Pack 声明。
+
+所有交互式分析受最大时间范围、事实候选数和事务超时保护。事件聚合按相同时间与属性条件、会话聚合按相同时间条件，先执行最多 `max + 1` 条的有界探测；超限后不会继续做完整聚合。漏斗另外限制最多 1,000 个分组以及 256 字符的 `groupBy / journeyKey` 值，避免合法高基数维度制造超大内存或响应；超限同样整体失败，不截断分组。主查询本身不加 LIMIT，因此不会把部分结果伪装成完整统计。`devicesInventoryTotal` 是项目设备库存事实，明确不参与事件 `propertyFilters`，也不进入受筛选的 Dashboard 指标清单；活跃设备使用 `devicesActive`。数据质量检查使用更小的独立事件预算；高基数诊断分布会明确标记截断，不会让整份质量报告失败。预算超限返回 `ANALYTICS_QUERY_RANGE_EXCEEDED`、`ANALYTICS_QUERY_BUDGET_EXCEEDED` 或 `ANALYTICS_QUERY_TIMEOUT`。

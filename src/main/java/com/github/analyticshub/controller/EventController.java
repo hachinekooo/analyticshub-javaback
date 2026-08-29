@@ -3,6 +3,7 @@ package com.github.analyticshub.controller;
 import com.github.analyticshub.common.dto.ApiResponse;
 import com.github.analyticshub.dto.EventTrackRequest;
 import com.github.analyticshub.dto.EventTrackResponse;
+import com.github.analyticshub.dto.EventBatchTrackSummary;
 import com.github.analyticshub.service.EventService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -41,10 +42,9 @@ public class EventController {
      */
     @PostMapping("/batch")
     @ResponseStatus(HttpStatus.CREATED)
-    public ApiResponse<Void> trackEventsBatch(
-            @Valid @RequestBody EventTrackRequest[] events) {
-        
-        eventService.trackEventsBatch(events);
-        return ApiResponse.success(null);
+    public ApiResponse<EventBatchTrackSummary> trackEventsBatch(
+            @RequestBody EventTrackRequest[] events) {
+        EventBatchTrackSummary summary = eventService.trackEventsBatch(events);
+        return ApiResponse.success(summary);
     }
 }

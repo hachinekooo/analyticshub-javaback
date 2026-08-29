@@ -33,7 +33,9 @@ public class GlobalExceptionHandler {
                 LogValueSanitizer.errorCode(ex.getCode()), ex.getHttpStatus().value());
         return ResponseEntity
                 .status(ex.getHttpStatus())
-                .body(ApiResponse.error(ex.getCode(), ex.getMessage()));
+                .body(ex.getDetails().isEmpty()
+                        ? ApiResponse.error(ex.getCode(), ex.getMessage())
+                        : ApiResponse.error(ex.getCode(), ex.getMessage(), ex.getDetails()));
     }
 
     /**

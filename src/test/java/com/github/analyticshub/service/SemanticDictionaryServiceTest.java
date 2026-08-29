@@ -22,10 +22,16 @@ class SemanticDictionaryServiceTest {
 
     private final JdbcTemplate systemJdbcTemplate = mock(JdbcTemplate.class);
     private final MultiDataSourceManager dataSourceManager = mock(MultiDataSourceManager.class);
+    private final AnalyticsSemanticDependencyService analyticsDependencies =
+            mock(AnalyticsSemanticDependencyService.class);
+    private final AnalysisPackOwnershipService packOwnershipService =
+            mock(AnalysisPackOwnershipService.class);
     private final SemanticDictionaryService service = new SemanticDictionaryService(
             systemJdbcTemplate,
             dataSourceManager,
-            JsonMapper.builder().build()
+            JsonMapper.builder().build(),
+            analyticsDependencies,
+            packOwnershipService
     );
 
     @Test

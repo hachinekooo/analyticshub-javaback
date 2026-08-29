@@ -2,6 +2,7 @@ package com.github.analyticshub.service;
 
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
+import com.github.analyticshub.config.AnalyticsQueryProperties;
 import com.github.analyticshub.config.MultiDataSourceManager;
 import com.github.analyticshub.database.project.ProjectSchemaMigrator;
 import com.github.analyticshub.dto.AdminFunnelGroupResult;
@@ -14,6 +15,13 @@ import com.github.analyticshub.dto.AdminJourneyEventRecord;
 import com.github.analyticshub.dto.AdminMetricsOverviewResponse;
 import com.github.analyticshub.dto.AdminMetricsTrendResponse;
 import com.github.analyticshub.dto.AdminRetentionResponse;
+import com.github.analyticshub.dto.AnalyticsDataQualityResponse;
+import com.github.analyticshub.dto.AnalyticsPropertyDataType;
+import com.github.analyticshub.dto.AnalyticsPropertyDefinitionResponse;
+import com.github.analyticshub.dto.AnalyticsPropertyDefinitionsResponse;
+import com.github.analyticshub.dto.TrustedSchemaPolicyResponse;
+import com.github.analyticshub.exception.BusinessException;
+import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -25,6 +33,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 import java.sql.Timestamp;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.UUID;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -42,6 +51,8 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.ArgumentMatchers.eq;
 
 @Testcontainers
@@ -62,6 +73,8 @@ class AdminProductAnalyticsServicePostgresIT {
     private AdminProductAnalyticsService service;
     private AdminMetricsService metricsService;
     private ActorIdentityResolver actorIdentityResolver;
+    private AnalyticsPropertyFilterService propertyFilterService;
+    private AnalyticsQueryProperties queryProperties;
 
     @BeforeEach
     void setUp() {
@@ -108,13 +121,22 @@ class AdminProductAnalyticsServicePostgresIT {
             return result;
         });
         actorIdentityResolver = new ActorIdentityResolver();
+        queryProperties = new AnalyticsQueryProperties();
+        propertyFilterService = mock(AnalyticsPropertyFilterService.class);
+        when(propertyFilterService.compile(eq(PROJECT_ID), nullable(String.class), anyString()))
+                .thenReturn(AnalyticsPropertyFilterService.CompiledPropertyFilters.empty());
         service = new AdminProductAnalyticsService(
                 dataSourceManager,
-                JsonMapper.builder().build(),
                 semantics,
-                actorIdentityResolver
+                actorIdentityResolver,
+                queryProperties,
+                new ProjectTransactionExecutor(),
+                propertyFilterService
         );
-        metricsService = new AdminMetricsService(dataSourceManager, semantics, actorIdentityResolver);
+        metricsService = new AdminMetricsService(
+                dataSourceManager, semantics, actorIdentityResolver, propertyFilterService,
+                queryProperties, new ProjectTransactionExecutor()
+        );
     }
 
     @Test
@@ -158,6 +180,142 @@ class AdminProductAnalyticsServicePostgresIT {
         assertThat(organic.steps()).extracting(step -> step.users()).containsExactly(2L, 2L, 1L);
         assertThat(organic.steps()).extracting(step -> step.conversionRate()).containsExactly(1d, 1d, 0.5d);
         assertThat(organic.steps()).extracting(step -> step.dropOffRate()).containsExactly(0d, 0d, 0.5d);
+    }
+
+    @Test
+    void funnelCanonicalizesTypedNumericGroupsAndExcludesInvalidValues() {
+        when(propertyFilterService.requireGroupable(PROJECT_ID, "score"))
+                .thenReturn(AnalyticsPropertyDataType.NUMBER);
+        UUID integerActor = UUID.randomUUID();
+        UUID decimalActor = UUID.randomUUID();
+        UUID exponentActor = UUID.randomUUID();
+        UUID invalidActor = UUID.randomUUID();
+        insertEvent(integerActor, "landing", "2026-01-01T01:00:00Z", "{\"score\":1}");
+        insertEvent(decimalActor, "landing", "2026-01-01T02:00:00Z", "{\"score\":1.0}");
+        insertEvent(exponentActor, "landing", "2026-01-01T03:00:00Z", "{\"score\":1e0}");
+        insertEvent(invalidActor, "landing", "2026-01-01T04:00:00Z", "{\"score\":\"1\"}");
+
+        AdminFunnelResponse response = service.getFunnel(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                "landing,purchase",
+                "score"
+        );
+
+        assertThat(response.groups()).singleElement().satisfies(group -> {
+            assertThat(group.groupValue()).isEqualTo("1");
+            assertThat(group.steps()).extracting(step -> step.users()).containsExactly(3L, 0L);
+        });
+    }
+
+    @Test
+    void funnelRejectsGroupCardinalityBeyondTheResponseBudget() {
+        queryProperties.setMaxFunnelGroups(2);
+        insertEvent(UUID.randomUUID(), "landing", "2026-01-01T01:00:00Z", "{\"source\":\"a\"}");
+        insertEvent(UUID.randomUUID(), "landing", "2026-01-01T02:00:00Z", "{\"source\":\"b\"}");
+        insertEvent(UUID.randomUUID(), "landing", "2026-01-01T03:00:00Z", "{\"source\":\"c\"}");
+
+        assertThatThrownBy(() -> service.getFunnel(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                "landing,purchase",
+                "source"
+        )).isInstanceOfSatisfying(BusinessException.class, exception ->
+                assertThat(exception.getCode()).isEqualTo("ANALYTICS_QUERY_BUDGET_EXCEEDED")
+        );
+    }
+
+    @Test
+    void funnelRejectsOversizedGroupAndJourneyDimensionValues() {
+        queryProperties.setMaxDimensionValueLength(4);
+        insertEvent(
+                UUID.randomUUID(), "landing", "2026-01-01T01:00:00Z",
+                "{\"source\":\"12345\",\"flow_id\":\"abcde\"}"
+        );
+
+        assertThatThrownBy(() -> service.getFunnel(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                "landing,purchase",
+                "source"
+        )).isInstanceOfSatisfying(BusinessException.class, exception ->
+                assertThat(exception.getCode()).isEqualTo("ANALYTICS_QUERY_BUDGET_EXCEEDED")
+        );
+        assertThatThrownBy(() -> service.getFunnel(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                "landing,purchase",
+                null,
+                "flow_id"
+        )).isInstanceOfSatisfying(BusinessException.class, exception ->
+                assertThat(exception.getCode()).isEqualTo("ANALYTICS_QUERY_BUDGET_EXCEEDED")
+        );
+    }
+
+    @Test
+    void legacyFunnelExcludesJsonNullGroupWithoutTreatingItAsMissingOrFailing() {
+        insertEvent(UUID.randomUUID(), "landing", "2026-01-01T01:00:00Z", "{\"source\":null}");
+        insertEvent(UUID.randomUUID(), "landing", "2026-01-01T02:00:00Z", "{}");
+
+        AdminFunnelResponse response = service.getFunnel(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                "landing,purchase",
+                "source"
+        );
+
+        assertThat(response.groups()).singleElement().satisfies(group -> {
+            assertThat(group.groupValue()).isEqualTo("(none)");
+            assertThat(group.steps()).extracting(step -> step.users()).containsExactly(1L, 0L);
+        });
+    }
+
+    @Test
+    void funnelKeepsLegacyUngovernedNumericGroupsReadable() {
+        UUID actor = UUID.randomUUID();
+        insertEvent(actor, "landing", "2026-01-01T01:00:00Z", "{\"legacy_build\":42}");
+
+        AdminFunnelResponse response = service.getFunnel(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                "landing,purchase",
+                "legacy_build"
+        );
+
+        assertThat(response.groups()).singleElement().satisfies(group -> {
+            assertThat(group.groupValue()).isEqualTo("42");
+            assertThat(group.steps()).extracting(step -> step.users()).containsExactly(1L, 0L);
+        });
+    }
+
+    @Test
+    void funnelUsesDatabaseIdToOrderEventsWithTheSameTimestamp() {
+        String timestamp = "2026-01-01T01:00:00Z";
+        UUID reversedActor = UUID.randomUUID();
+        insertEvent(reversedActor, "checkout", timestamp, null);
+        insertEvent(reversedActor, "landing", timestamp, null);
+
+        UUID orderedActor = UUID.randomUUID();
+        insertEvent(orderedActor, "landing", timestamp, null);
+        insertEvent(orderedActor, "checkout", timestamp, null);
+
+        AdminFunnelResponse response = service.getFunnel(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                "landing,checkout",
+                null
+        );
+
+        assertThat(response.groups()).singleElement().satisfies(group ->
+                assertThat(group.steps()).extracting(step -> step.users()).containsExactly(2L, 1L)
+        );
     }
 
     @Test
@@ -282,6 +440,78 @@ class AdminProductAnalyticsServicePostgresIT {
 
         assertThat(overview.usersActive()).isEqualTo(1);
         assertThat(overview.eventsTotal()).isEqualTo(3);
+    }
+
+    @Test
+    void aggregateViewsRejectAnOversizedEventWindowInsteadOfReturningPartialStatistics() {
+        queryProperties.setMaxCandidateRows(1);
+        UUID actor = UUID.randomUUID();
+        insertEvent(actor, "open", "2026-01-01T01:00:00Z", null);
+        insertEvent(actor, "open", "2026-01-01T02:00:00Z", null);
+
+        assertBudgetExceeded(() -> metricsService.getOverview(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        ));
+        assertBudgetExceeded(() -> metricsService.getTrends(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", "day"
+        ));
+        assertBudgetExceeded(() -> metricsService.getTopEvents(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", 10, "raw"
+        ));
+        assertBudgetExceeded(() -> metricsService.getAppVersionDistribution(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        ));
+    }
+
+    @Test
+    void overviewAndTrendsRejectAnOversizedSessionWindowEvenWhenThereAreNoEvents() {
+        queryProperties.setMaxCandidateRows(1);
+        insertSession("2026-01-01T01:00:00Z");
+        insertSession("2026-01-01T02:00:00Z");
+
+        assertBudgetExceeded(() -> metricsService.getOverview(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        ));
+        assertBudgetExceeded(() -> metricsService.getTrends(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", "day"
+        ));
+    }
+
+    @Test
+    void filteredOverviewAndTrendsIgnoreUnrelatedSessionVolume() {
+        queryProperties.setMaxCandidateRows(1);
+        insertSession("2026-01-01T01:00:00Z");
+        insertSession("2026-01-01T02:00:00Z");
+        AnalyticsPropertyDefinitionService definitions = mock(AnalyticsPropertyDefinitionService.class);
+        AnalyticsPropertyDefinitionResponse property = new AnalyticsPropertyDefinitionResponse(
+                PROJECT_ID, "segment", Map.of("en", "Segment"), AnalyticsPropertyDataType.STRING,
+                null, List.of("target"), true, false, false, false, true, Instant.EPOCH, Instant.EPOCH
+        );
+        when(definitions.requireCapabilities(PROJECT_ID, List.of("segment")))
+                .thenReturn(Map.of("segment", property));
+        AnalyticsPropertyFilterService filters = new AnalyticsPropertyFilterService(
+                JsonMapper.builder().build(), definitions
+        );
+        AdminMetricsService filteredMetrics = new AdminMetricsService(
+                dataSourceManager, mock(SemanticDictionaryService.class), actorIdentityResolver,
+                filters, queryProperties, new ProjectTransactionExecutor()
+        );
+        insertEvent(UUID.randomUUID(), "open", "2026-01-01T03:00:00Z", "{\"segment\":\"target\"}");
+        String encodedFilters = "[{\"propertyKey\":\"segment\",\"operator\":\"EQ\",\"values\":[\"target\"]}]";
+
+        AdminMetricsOverviewResponse overview = filteredMetrics.getOverview(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", encodedFilters
+        );
+        AdminMetricsTrendResponse trends = filteredMetrics.getTrends(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", "day", encodedFilters
+        );
+
+        assertThat(overview.eventsTotal()).isEqualTo(1L);
+        assertThat(overview.sessionsTotal()).isZero();
+        assertThat(trends.points()).singleElement().satisfies(point -> {
+            assertThat(point.events()).isEqualTo(1L);
+            assertThat(point.sessions()).isZero();
+        });
     }
 
     @Test
@@ -837,7 +1067,10 @@ class AdminProductAnalyticsServicePostgresIT {
         AdminMetricsService serviceWithResolverSpy = new AdminMetricsService(
                 dataSourceManager,
                 mock(SemanticDictionaryService.class),
-                resolver
+                resolver,
+                propertyFilterService,
+                new AnalyticsQueryProperties(),
+                new ProjectTransactionExecutor()
         );
         AdminMetricsOverviewResponse overview = serviceWithResolverSpy.getOverview(
                 PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
@@ -879,9 +1112,466 @@ class AdminProductAnalyticsServicePostgresIT {
         );
 
         assertThat(response.cohortUsers()).isEqualTo(2);
+        assertThat(response.observationEnd()).isEqualTo("2026-01-10T00:00:00Z");
+        assertThat(response.observationComplete()).isTrue();
         assertThat(response.buckets()).extracting(bucket -> bucket.day()).containsExactly(0, 1, 7);
+        assertThat(response.buckets()).extracting(bucket -> bucket.eligibleUsers()).containsExactly(2L, 2L, 2L);
         assertThat(response.buckets()).extracting(bucket -> bucket.retainedUsers()).containsExactly(2L, 1L, 1L);
         assertThat(response.buckets()).extracting(bucket -> bucket.retentionRate()).containsExactly(1d, 0.5d, 0.5d);
+    }
+
+    @Test
+    void retentionRejectsWhenCohortAndObservationWindowExceedTheInteractiveRangeBudget() {
+        assertThatThrownBy(() -> service.getRetention(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-06-01T00:00:00Z",
+                "signup",
+                "open",
+                "90"
+        )).isInstanceOfSatisfying(BusinessException.class, exception ->
+                assertThat(exception.getCode()).isEqualTo("ANALYTICS_QUERY_RANGE_EXCEEDED")
+        );
+    }
+
+    @Test
+    void retentionExcludesCohortMembersWhoseRequestedDayHasNotMatured() {
+        Instant now = Instant.now();
+        Instant cohortAt = now.minusSeconds(24 * 60 * 60L);
+        insertEvent(UUID.randomUUID(), "signup", cohortAt.toString(), null);
+
+        AdminRetentionResponse response = service.getRetention(
+                PROJECT_ID,
+                now.minusSeconds(2 * 24 * 60 * 60L).toString(),
+                now.toString(),
+                "signup",
+                "open",
+                "30"
+        );
+
+        assertThat(response.cohortUsers()).isEqualTo(1);
+        assertThat(response.observationComplete()).isFalse();
+        assertThat(Instant.parse(response.observationEnd())).isBefore(Instant.parse(response.requestedObservationEnd()));
+        assertThat(response.buckets()).singleElement().satisfies(bucket -> {
+            assertThat(bucket.eligibleUsers()).isZero();
+            assertThat(bucket.retainedUsers()).isZero();
+            assertThat(bucket.retentionRate()).isZero();
+        });
+    }
+
+    @Test
+    void retentionDoesNotCountAnEventThatOccurredBeforeTheCohortOnTheSameUtcDay() {
+        UUID actor = UUID.randomUUID();
+        insertEvent(actor, "open", "2026-01-01T09:00:00Z", null);
+        insertEvent(actor, "signup", "2026-01-01T20:00:00Z", null);
+
+        AdminRetentionResponse response = service.getRetention(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                "signup",
+                "open",
+                "0"
+        );
+
+        assertThat(response.cohortUsers()).isEqualTo(1);
+        assertThat(response.buckets()).singleElement().satisfies(bucket -> {
+            assertThat(bucket.eligibleUsers()).isEqualTo(1);
+            assertThat(bucket.retainedUsers()).isZero();
+            assertThat(bucket.retentionRate()).isZero();
+        });
+    }
+
+    @Test
+    void retentionUsesDatabaseIdToOrderEventsWithTheSameTimestamp() {
+        String timestamp = "2026-01-01T09:00:00Z";
+        UUID reversedActor = UUID.randomUUID();
+        insertEvent(reversedActor, "open", timestamp, null);
+        insertEvent(reversedActor, "signup", timestamp, null);
+
+        UUID orderedActor = UUID.randomUUID();
+        insertEvent(orderedActor, "signup", timestamp, null);
+        insertEvent(orderedActor, "open", timestamp, null);
+
+        AdminRetentionResponse response = service.getRetention(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                "signup",
+                "open",
+                "0"
+        );
+
+        assertThat(response.cohortUsers()).isEqualTo(2);
+        assertThat(response.buckets()).singleElement().satisfies(bucket -> {
+            assertThat(bucket.eligibleUsers()).isEqualTo(2);
+            assertThat(bucket.retainedUsers()).isEqualTo(1);
+            assertThat(bucket.retentionRate()).isEqualTo(0.5d);
+        });
+    }
+
+    @Test
+    void dataQualityReturnsZeroCoverageRowsForGovernedPropertiesInAnEmptyWindow() {
+        AnalyticsPropertyDefinitionService definitions = mock(AnalyticsPropertyDefinitionService.class);
+        AnalyticsPropertyDefinitionResponse property = new AnalyticsPropertyDefinitionResponse(
+                PROJECT_ID,
+                "release_channel",
+                Map.of("en", "Release channel"),
+                AnalyticsPropertyDataType.STRING,
+                null,
+                null,
+                true,
+                false,
+                false,
+                false,
+                true,
+                Instant.EPOCH,
+                Instant.EPOCH
+        );
+        when(definitions.list(PROJECT_ID)).thenReturn(
+                new AnalyticsPropertyDefinitionsResponse(PROJECT_ID, List.of(property))
+        );
+        AnalyticsDataQualityService qualityService = new AnalyticsDataQualityService(
+                dataSourceManager,
+                definitions,
+                mock(AnalysisConfigurationService.class),
+                queryProperties,
+                new ProjectTransactionExecutor(),
+                JsonMapper.builder().build()
+        );
+
+        AnalyticsDataQualityResponse response = qualityService.inspect(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        );
+
+        assertThat(response.totalEvents()).isZero();
+        assertThat(response.trustedSchemaPolicyConfigured()).isFalse();
+        assertThat(response.schemaVersionPropertyKey()).isNull();
+        assertThat(response.schemaVersions()).isEmpty();
+        assertThat(response.propertyCoverageTotal()).isEqualTo(1);
+        assertThat(response.propertyCoverageTruncated()).isFalse();
+        assertThat(response.propertyCoverage()).singleElement().satisfies(coverage -> {
+            assertThat(coverage.propertyKey()).isEqualTo("release_channel");
+            assertThat(coverage.presentEvents()).isZero();
+            assertThat(coverage.typeMismatchEvents()).isZero();
+            assertThat(coverage.disallowedValueEvents()).isZero();
+        });
+    }
+
+    @Test
+    void dataQualityRejectsSchemaVersionsOutsideTheProjectAllowlistAsCleanData() {
+        AnalyticsPropertyDefinitionService definitions = mock(AnalyticsPropertyDefinitionService.class);
+        AnalyticsPropertyDefinitionResponse property = new AnalyticsPropertyDefinitionResponse(
+                PROJECT_ID,
+                "event_schema_version",
+                Map.of("en", "Event schema version"),
+                AnalyticsPropertyDataType.STRING,
+                null,
+                List.of("3"),
+                true,
+                false,
+                false,
+                false,
+                true,
+                Instant.EPOCH,
+                Instant.EPOCH
+        );
+        when(definitions.list(PROJECT_ID)).thenReturn(
+                new AnalyticsPropertyDefinitionsResponse(PROJECT_ID, List.of(property))
+        );
+        AnalysisConfigurationService analysisConfiguration = mock(AnalysisConfigurationService.class);
+        when(analysisConfiguration.getTrustedSchemaPolicy(PROJECT_ID)).thenReturn(
+                new TrustedSchemaPolicyResponse(PROJECT_ID, "event_schema_version", List.of("3"))
+        );
+        AnalyticsDataQualityService qualityService = new AnalyticsDataQualityService(
+                dataSourceManager,
+                definitions,
+                analysisConfiguration,
+                queryProperties,
+                new ProjectTransactionExecutor(),
+                JsonMapper.builder().build()
+        );
+        insertEvent(UUID.randomUUID(), "open", "2026-01-01T09:00:00Z",
+                "{\"event_schema_version\":\"2\"}");
+
+        AnalyticsDataQualityResponse response = qualityService.inspect(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        );
+
+        assertThat(response.trustedSchemaPolicyConfigured()).isTrue();
+        assertThat(response.schemaVersions()).containsEntry("2", 1L);
+        assertThat(response.propertyCoverage()).singleElement().satisfies(coverage -> {
+            assertThat(coverage.propertyKey()).isEqualTo("event_schema_version");
+            assertThat(coverage.disallowedValueEvents()).isEqualTo(1);
+        });
+        assertThat(response.issues()).anySatisfy(issue -> {
+            assertThat(issue.code()).isEqualTo("property_value_outside_allowlist");
+            assertThat(issue.severity()).isEqualTo("error");
+            assertThat(issue.count()).isEqualTo(1);
+        });
+    }
+
+    @Test
+    void dataQualityUsesTheProjectTrustedPolicyPropertyInsteadOfAFixedSchemaKey() {
+        AnalyticsPropertyDefinitionService definitions = mock(AnalyticsPropertyDefinitionService.class);
+        AnalyticsPropertyDefinitionResponse property = new AnalyticsPropertyDefinitionResponse(
+                PROJECT_ID,
+                "contract_revision",
+                Map.of("en", "Contract revision"),
+                AnalyticsPropertyDataType.STRING,
+                null,
+                List.of("stable"),
+                true,
+                false,
+                false,
+                false,
+                true,
+                Instant.EPOCH,
+                Instant.EPOCH
+        );
+        when(definitions.list(PROJECT_ID)).thenReturn(
+                new AnalyticsPropertyDefinitionsResponse(PROJECT_ID, List.of(property))
+        );
+        AnalysisConfigurationService analysisConfiguration = mock(AnalysisConfigurationService.class);
+        when(analysisConfiguration.getTrustedSchemaPolicy(PROJECT_ID)).thenReturn(
+                new TrustedSchemaPolicyResponse(PROJECT_ID, "contract_revision", List.of("stable"))
+        );
+        AnalyticsDataQualityService qualityService = new AnalyticsDataQualityService(
+                dataSourceManager,
+                definitions,
+                analysisConfiguration,
+                queryProperties,
+                new ProjectTransactionExecutor(),
+                JsonMapper.builder().build()
+        );
+        insertEvent(UUID.randomUUID(), "open", "2026-01-01T09:00:00Z",
+                "{\"contract_revision\":\"stable\",\"event_schema_version\":\"legacy\"}");
+
+        AnalyticsDataQualityResponse response = qualityService.inspect(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        );
+
+        assertThat(response.schemaVersionPropertyKey()).isEqualTo("contract_revision");
+        assertThat(response.schemaVersions()).containsExactlyEntriesOf(Map.of("stable", 1L));
+    }
+
+    @Test
+    void dataQualityTruncatesHighCardinalitySchemaDistributionWithoutLosingIssueTotals() {
+        AnalyticsPropertyDefinitionService definitions = mock(AnalyticsPropertyDefinitionService.class);
+        AnalyticsPropertyDefinitionResponse property = new AnalyticsPropertyDefinitionResponse(
+                PROJECT_ID,
+                "contract_revision",
+                Map.of("en", "Contract revision"),
+                AnalyticsPropertyDataType.STRING,
+                null,
+                null,
+                true,
+                false,
+                false,
+                false,
+                true,
+                Instant.EPOCH,
+                Instant.EPOCH
+        );
+        when(definitions.list(PROJECT_ID)).thenReturn(
+                new AnalyticsPropertyDefinitionsResponse(PROJECT_ID, List.of(property))
+        );
+        AnalysisConfigurationService analysisConfiguration = mock(AnalysisConfigurationService.class);
+        when(analysisConfiguration.getTrustedSchemaPolicy(PROJECT_ID)).thenReturn(
+                new TrustedSchemaPolicyResponse(PROJECT_ID, "contract_revision", List.of("stable"))
+        );
+        AnalyticsDataQualityService qualityService = new AnalyticsDataQualityService(
+                dataSourceManager,
+                definitions,
+                analysisConfiguration,
+                queryProperties,
+                new ProjectTransactionExecutor(),
+                JsonMapper.builder().build()
+        );
+        for (int index = 0; index < 201; index++) {
+            insertEvent(
+                    UUID.randomUUID(),
+                    "open",
+                    "2026-01-01T09:00:00Z",
+                    "{\"contract_revision\":\"bad-" + index + "\"}"
+            );
+        }
+
+        AnalyticsDataQualityResponse response = qualityService.inspect(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        );
+
+        assertThat(response.schemaVersions()).hasSize(200);
+        assertThat(new ArrayList<>(response.schemaVersions().keySet())).isSorted();
+        assertThat(response.schemaVersionDistributionTruncated()).isTrue();
+        assertThat(response.issues()).anySatisfy(issue -> {
+            assertThat(issue.code()).isEqualTo("untrusted_schema_value");
+            assertThat(issue.count()).isEqualTo(201);
+        });
+        assertThat(response.issues()).anySatisfy(issue -> {
+            assertThat(issue.code()).isEqualTo("schema_version_distribution_truncated");
+            assertThat(issue.count()).isEqualTo(1);
+        });
+    }
+
+    @Test
+    void dataQualityRejectsAllowedButUntrustedContractValuesFromTheCleanBaseline() {
+        AnalyticsPropertyDefinitionService definitions = mock(AnalyticsPropertyDefinitionService.class);
+        AnalyticsPropertyDefinitionResponse property = new AnalyticsPropertyDefinitionResponse(
+                PROJECT_ID,
+                "contract_revision",
+                Map.of("en", "Contract revision"),
+                AnalyticsPropertyDataType.STRING,
+                null,
+                List.of("stable", "next"),
+                true,
+                false,
+                false,
+                false,
+                true,
+                Instant.EPOCH,
+                Instant.EPOCH
+        );
+        when(definitions.list(PROJECT_ID)).thenReturn(
+                new AnalyticsPropertyDefinitionsResponse(PROJECT_ID, List.of(property))
+        );
+        AnalysisConfigurationService analysisConfiguration = mock(AnalysisConfigurationService.class);
+        when(analysisConfiguration.getTrustedSchemaPolicy(PROJECT_ID)).thenReturn(
+                new TrustedSchemaPolicyResponse(PROJECT_ID, "contract_revision", List.of("stable"))
+        );
+        AnalyticsDataQualityService qualityService = new AnalyticsDataQualityService(
+                dataSourceManager,
+                definitions,
+                analysisConfiguration,
+                queryProperties,
+                new ProjectTransactionExecutor(),
+                JsonMapper.builder().build()
+        );
+        insertEvent(UUID.randomUUID(), "open", "2026-01-01T09:00:00Z",
+                "{\"contract_revision\":\"next\"}");
+
+        AnalyticsDataQualityResponse response = qualityService.inspect(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        );
+
+        assertThat(response.issues()).anySatisfy(issue -> {
+            assertThat(issue.code()).isEqualTo("untrusted_schema_value");
+            assertThat(issue.count()).isEqualTo(1);
+        });
+    }
+
+    @Test
+    void dataQualityUsesNumericSemanticsForAllowedValues() {
+        AnalyticsPropertyDefinitionService definitions = mock(AnalyticsPropertyDefinitionService.class);
+        AnalyticsPropertyDefinitionResponse property = new AnalyticsPropertyDefinitionResponse(
+                PROJECT_ID,
+                "ratio",
+                Map.of("en", "Ratio"),
+                AnalyticsPropertyDataType.NUMBER,
+                null,
+                List.of("1"),
+                false,
+                false,
+                false,
+                false,
+                true,
+                Instant.EPOCH,
+                Instant.EPOCH
+        );
+        when(definitions.list(PROJECT_ID)).thenReturn(
+                new AnalyticsPropertyDefinitionsResponse(PROJECT_ID, List.of(property))
+        );
+        AnalyticsDataQualityService qualityService = new AnalyticsDataQualityService(
+                dataSourceManager,
+                definitions,
+                mock(AnalysisConfigurationService.class),
+                queryProperties,
+                new ProjectTransactionExecutor(),
+                JsonMapper.builder().build()
+        );
+        insertEvent(UUID.randomUUID(), "open", "2026-01-01T09:00:00Z", "{\"ratio\":1.0}");
+
+        AnalyticsDataQualityResponse response = qualityService.inspect(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        );
+
+        assertThat(response.trustedSchemaPolicyConfigured()).isFalse();
+        assertThat(response.propertyCoverage()).singleElement().satisfies(coverage -> {
+            assertThat(coverage.typeMismatchEvents()).isZero();
+            assertThat(coverage.disallowedValueEvents()).isZero();
+        });
+        assertThat(response.issues()).noneMatch(issue ->
+                issue.code().equals("property_value_outside_allowlist")
+        );
+        assertThat(response.issues()).noneMatch(issue ->
+                issue.code().equals("missing_distribution_environment")
+                        || issue.code().equals("missing_backend_environment")
+        );
+    }
+
+    @Test
+    void stringFiltersAndQualityUseTheSameBoundaryWhitespaceNormalization() {
+        AnalyticsPropertyDefinitionService definitions = mock(AnalyticsPropertyDefinitionService.class);
+        AnalyticsPropertyDefinitionResponse property = new AnalyticsPropertyDefinitionResponse(
+                PROJECT_ID,
+                "release_channel",
+                Map.of("en", "Release channel"),
+                AnalyticsPropertyDataType.STRING,
+                null,
+                List.of("production"),
+                true,
+                false,
+                false,
+                false,
+                true,
+                Instant.EPOCH,
+                Instant.EPOCH
+        );
+        when(definitions.list(PROJECT_ID)).thenReturn(
+                new AnalyticsPropertyDefinitionsResponse(PROJECT_ID, List.of(property))
+        );
+        when(definitions.requireCapabilities(PROJECT_ID, List.of("release_channel")))
+                .thenReturn(Map.of("release_channel", property));
+
+        JsonMapper objectMapper = JsonMapper.builder().build();
+        AnalyticsPropertyFilterService filters = new AnalyticsPropertyFilterService(objectMapper, definitions);
+        SemanticDictionaryService semantics = mock(SemanticDictionaryService.class);
+        ActorIdentityResolver resolver = new ActorIdentityResolver();
+        AdminMetricsService filteredMetrics = new AdminMetricsService(
+                dataSourceManager,
+                semantics,
+                resolver,
+                filters,
+                queryProperties,
+                new ProjectTransactionExecutor()
+        );
+        AnalyticsDataQualityService qualityService = new AnalyticsDataQualityService(
+                dataSourceManager,
+                definitions,
+                mock(AnalysisConfigurationService.class),
+                queryProperties,
+                new ProjectTransactionExecutor(),
+                objectMapper
+        );
+        insertEvent(UUID.randomUUID(), "open", "2026-01-01T09:00:00Z",
+                "{\"release_channel\":\"\\t production \\n\"}");
+
+        AdminMetricsOverviewResponse overview = filteredMetrics.getOverview(
+                PROJECT_ID,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                "[{\"propertyKey\":\"release_channel\",\"operator\":\"EQ\",\"values\":[\"production\"]}]"
+        );
+        AnalyticsDataQualityResponse quality = qualityService.inspect(
+                PROJECT_ID, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        );
+
+        assertThat(overview.eventsTotal()).isEqualTo(1);
+        assertThat(quality.propertyCoverage()).singleElement().satisfies(coverage -> {
+            assertThat(coverage.presentEvents()).isEqualTo(1);
+            assertThat(coverage.typeMismatchEvents()).isZero();
+            assertThat(coverage.disallowedValueEvents()).isZero();
+        });
     }
 
     @Test
@@ -997,7 +1687,26 @@ class AdminProductAnalyticsServicePostgresIT {
         );
     }
 
+    private void insertSession(String startedAt) {
+        jdbcTemplate.update(
+                "INSERT INTO " + quoted(PREFIX + "sessions") + " "
+                        + "(session_id, device_id, user_id, session_start_time, project_id) "
+                        + "VALUES (?::uuid, ?::uuid, ?, ?, ?)",
+                UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(),
+                Timestamp.from(Instant.parse(startedAt)),
+                PROJECT_ID
+        );
+    }
+
     private static String quoted(String identifier) {
         return '"' + identifier + '"';
+    }
+
+    private static void assertBudgetExceeded(org.assertj.core.api.ThrowableAssert.ThrowingCallable operation) {
+        assertThatThrownBy(operation).isInstanceOfSatisfying(BusinessException.class, exception ->
+                assertThat(exception.getCode()).isEqualTo("ANALYTICS_QUERY_BUDGET_EXCEEDED")
+        );
     }
 }

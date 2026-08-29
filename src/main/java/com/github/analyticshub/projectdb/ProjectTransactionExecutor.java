@@ -20,11 +20,41 @@ import java.util.function.Function;
 public class ProjectTransactionExecutor {
 
     public <T> T execute(DataSource dataSource, Function<JdbcTemplate, T> operation) {
+        return execute(dataSource, false, null, operation);
+    }
+
+    /**
+     * 在项目库的只读事务中执行有时限的查询。
+     *
+     * <p>Spring 会把事务超时应用到同一连接上的 JDBC Statement，避免通过连接级
+     * {@code SET statement_timeout} 污染连接池中的后续请求。</p>
+     */
+    public <T> T executeReadOnly(
+            DataSource dataSource,
+            int timeoutSeconds,
+            Function<JdbcTemplate, T> operation
+    ) {
+        if (timeoutSeconds < 1) {
+            throw new IllegalArgumentException("timeoutSeconds must be positive");
+        }
+        return execute(dataSource, true, timeoutSeconds, operation);
+    }
+
+    private <T> T execute(
+            DataSource dataSource,
+            boolean readOnly,
+            Integer timeoutSeconds,
+            Function<JdbcTemplate, T> operation
+    ) {
         Objects.requireNonNull(dataSource, "dataSource must not be null");
         Objects.requireNonNull(operation, "operation must not be null");
 
         JdbcTransactionManager transactionManager = new JdbcTransactionManager(dataSource);
         TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+        transactionTemplate.setReadOnly(readOnly);
+        if (timeoutSeconds != null) {
+            transactionTemplate.setTimeout(timeoutSeconds);
+        }
         return transactionTemplate.execute(status -> operation.apply(new JdbcTemplate(dataSource)));
     }
 }

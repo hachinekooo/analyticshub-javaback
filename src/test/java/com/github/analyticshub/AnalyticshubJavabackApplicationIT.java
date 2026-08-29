@@ -82,7 +82,7 @@ class AnalyticshubJavabackApplicationIT {
 
         assertThat(currentSchema).isEqualTo("analytics");
         assertThat(projectsTableExists).isTrue();
-        assertThat(latestMigration).isEqualTo("6");
+        assertThat(latestMigration).isEqualTo("7");
         String analysisTemplate = jdbcTemplate.queryForObject(
                 "SELECT column_default FROM information_schema.columns " +
                         "WHERE table_schema = 'analytics' AND table_name = 'analytics_projects' " +
@@ -184,7 +184,7 @@ class AnalyticshubJavabackApplicationIT {
         Map<String, Object> body = healthController.health().getBody();
 
         assertThat(body).isNotNull();
-        assertThat(body.get("version")).isEqualTo("1.1.0");
+        assertThat(body.get("version")).isEqualTo("1.1.2");
     }
 
     @Test
