@@ -62,7 +62,7 @@ API 文档较长是因为它们承担完整接口参考职责。处理单个接�
 - [1.0.1 升级说明](RELEASE_1.0.1.md)：只服务 1.0.0 → 1.0.1 升级和回滚判断。
 - [1.1.0 升级说明](RELEASE_1.1.0.md)：说明 actor identity、活跃版本指标、项目 V7 迁移和服务凭据配置。
 - [1.1.1 升级说明](RELEASE_1.1.1.md)：说明事件旅程、Project V8 迁移、历史元数据回填和发布顺序。
-- [1.1.2 升级说明](RELEASE_1.1.2.md)：说明属性与指标治理、Analysis Pack、数据质量、system V7 / Project V9 迁移和查询预算。
+- [1.1.2 升级说明](RELEASE_1.1.2.md)：说明属性与指标治理、Analysis Pack、数据质量、System V7–V8 / Project V9 迁移和查询预算。
 - [维护者 Docker PostgreSQL](本地开发/DOCKER_POSTGRES.md)：维护者本机事实，不代表通用或生产配置。
 - [JDK 25 / Spring Boot 4 迁移记录](归档/JDK25-SpringBoot4-Guide.md)：历史排障材料，不作为当前事实来源。
 - [联系与支持](SUPPORT.md)：社区联系和赞赏，不属于技术文档入口。

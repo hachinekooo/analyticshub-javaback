@@ -17,9 +17,12 @@ AnalyticsHub 是一个可自行部署的多项目运营分析底座。它连接�
 
 - 多项目管理：一个 Hub 管理多个项目，每个项目使用独立 database/schema。
 - 数据采集：设备、事件、会话、App 流量和官网流量。
-- 运营分析：基础指标、趋势、事件排行、漏斗和留存。
-- 业务语义：多个历史或当前 raw key 可映射到一个稳定语义。
-- 项目 Dashboard：内置组件可编排，并支持可信的 build-time extension（构建期扩展）。
+- 运营分析：基础指标、趋势、事件排行、交互式漏斗和留存。
+- 业务语义：多个历史或当前 raw event key 可映射为一个稳定业务语义。
+- 分析治理：统一管理属性能力、可信事件范围与数据质量，区分稳定 KPI 和跨版本诊断结果。
+- 受治理指标：以稳定 `metricKey` 复用事件计数、去重统计身份（actor）、漏斗、留存、属性分布和数值摘要口径。
+- Analysis Pack：通过版本化声明一次安装业务语义、属性、指标与可信 Schema 策略，不把私有业务写进开源核心。
+- 项目 Dashboard：内置组件可编排，并可直接引用受治理指标；私有展示仍通过可信的 build-time extension（构建期扩展）接入。
 - 累计 Counter：支持实时投影、历史回算和公开只读展示。
 - 隐私工单：客服人工核验、导出或去标识化、审计和通知闭环。
 - 安全与运维：Admin Token、API Key + HMAC、可选 2FA、Flyway 和统一部署脚本。
@@ -74,7 +77,7 @@ curl http://localhost:3001/api/health
 - [Dashboard 与项目定制](docs/DASHBOARD_CUSTOMIZATION.md)
 - [隐私工单处理](docs/PRIVACY_WORKFLOW.md)
 - [生产部署](docs/运维/DEPLOYMENT_GUIDE.md)
-- [1.0.1 升级说明](docs/RELEASE_1.0.1.md)
+- [版本升级索引](docs/README.md#版本本地环境与历史)
 
 ## 开发验证
 
