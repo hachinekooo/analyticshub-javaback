@@ -10,6 +10,8 @@ import tools.jackson.databind.json.JsonMapper;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -93,6 +95,30 @@ class AnalyticsPropertyFilterServiceTest {
                         assertThat(exception.getCode()).isEqualTo("INVALID_ANALYTICS_PROPERTY_FILTER")
                 )
                 .hasMessageContaining("不完整");
+    }
+
+    @Test
+    void acceptsTwelveFiltersAndRejectsTheThirteenth() {
+        List<String> keys = IntStream.range(0, 12).mapToObj(index -> "property_" + index).toList();
+        Map<String, AnalyticsPropertyDefinitionResponse> registered = keys.stream().collect(Collectors.toMap(
+                key -> key,
+                key -> definition(key, AnalyticsPropertyDataType.STRING, true, false, false, false, null)
+        ));
+        when(definitions.requireCapabilities("project", keys)).thenReturn(registered);
+
+        String twelveFilters = filters(keys);
+        assertThat(service.compile("project", twelveFilters, "properties").arguments()).hasSize(12);
+
+        List<String> thirteenKeys = IntStream.range(0, 13).mapToObj(index -> "property_" + index).toList();
+        assertThatThrownBy(() -> service.compile("project", filters(thirteenKeys), "properties"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("最多支持 12 项");
+    }
+
+    private static String filters(List<String> keys) {
+        return keys.stream()
+                .map(key -> "{\"propertyKey\":\"" + key + "\",\"operator\":\"EXISTS\",\"values\":[]}")
+                .collect(Collectors.joining(",", "[", "]"));
     }
 
     private static AnalyticsPropertyDefinitionResponse definition(

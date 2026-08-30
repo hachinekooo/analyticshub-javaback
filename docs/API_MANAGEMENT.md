@@ -954,7 +954,7 @@ GET /api/admin/metrics/data-quality?projectId=...&from=...&to=...
 ]
 ```
 
-- 只支持顶层属性和 `EQ / IN / EXISTS`；最多 8 个条件，`IN` 最多 20 个值，条件之间是 AND。
+- 只支持顶层属性和 `EQ / IN / EXISTS`；最多 12 个条件，`IN` 最多 20 个值，条件之间是 AND。
 - 属性必须已登记、active、非敏感并启用 filterable；不支持 JSONPath、正则、表达式或 SQL。
 - 未传 `propertyFilters` 时保持旧 API“不附加属性筛选”的全量统计语义；这不表示无限范围、无限候选量。无筛选请求同样受下述时间范围、候选数和超时预算保护，超限会明确失败且不返回部分统计。
 - 漏斗的 `groupBy` 和 `journeyKey` 分别要求属性启用对应能力。尚未建立任何属性定义的项目处于 legacy ungoverned mode（遗留未治理模式）：任意格式合法的分组/旅程 Key 仍可兼容执行，但不代表该属性已经验证。项目首次写入属性定义或导入 Analysis Pack 时，会在同一事务内预检现有活动指标与 Dashboard；所有 `groupBy / journeyKey` 引用均已声明对应能力后才允许进入治理模式，否则整次操作回滚并返回 `ANALYTICS_GOVERNANCE_TRANSITION_BLOCKED`。

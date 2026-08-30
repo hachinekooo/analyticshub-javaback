@@ -19,7 +19,7 @@ import java.util.Set;
 @Service
 public class AnalyticsPropertyFilterService {
 
-    private static final int MAX_FILTERS = 8;
+    private static final int MAX_FILTERS = 12;
     private static final int MAX_IN_VALUES = 20;
     private static final int MAX_SERIALIZED_BYTES = 8_192;
     private static final TypeReference<List<AnalyticsPropertyFilter>> FILTER_LIST = new TypeReference<>() {};
