@@ -12,6 +12,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AnalyticsDataQualityServiceTest {
 
     @Test
+    void propertyCoverageBudgetMatchesAcceptedEventPropertyBudget() {
+        assertThat(AnalyticsDataQualityService.MAX_PROPERTY_COVERAGE_ITEMS)
+                .isEqualTo(EventService.MAX_PROPERTIES_KEYS);
+    }
+
+    @Test
     void propertyTypeMismatchPreventsACleanQualityResult() {
         List<AnalyticsDataQualityIssue> issues = new ArrayList<>();
 

@@ -30,8 +30,8 @@ import java.util.Map;
 @Service
 public class AnalyticsDataQualityService {
 
-    // 承载中等规模产品的核心运营维度，同时保留单次质量扫描上限。
-    private static final int MAX_PROPERTY_COVERAGE_ITEMS = 64;
+    // 与单事件属性键预算对齐，避免合法治理属性因登记顺序被静默排除在质量检查之外。
+    static final int MAX_PROPERTY_COVERAGE_ITEMS = EventService.MAX_PROPERTIES_KEYS;
     private static final int MAX_DISTRIBUTION_VALUES = 200;
 
     private final MultiDataSourceManager dataSourceManager;
