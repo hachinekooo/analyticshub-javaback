@@ -103,7 +103,7 @@ analyticshub.service
 上传：
 
 ```bash
-scp target/analyticshub-1.1.2.jar user@server:/opt/analyticshub/app.jar
+scp target/analyticshub-1.1.3.jar user@server:/opt/analyticshub/app.jar
 ```
 
 服务器上修正权限：
