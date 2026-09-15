@@ -21,6 +21,7 @@ agent_notes: 先按任务选择目标文档；索引不替代具体文档
 | 系统库、项目库和认证如何协作 | [架构与认证链路](ARCHITECTURE.md) |
 | 如何新建项目、初始化 Schema 和选择分析模板 | [管理端 API：项目创建、初始化与模板选择](API_MANAGEMENT.md#项目创建初始化与模板选择) |
 | 如何登记属性、定义指标、导入 Analysis Pack 和检查数据质量 | [管理端 API：分析配置](API_MANAGEMENT.md#分析配置与数据质量) |
+| 项目定制应选择语义、Analysis Pack、Dashboard 还是源码扩展 | [Dashboard 与项目定制：三层能力](DASHBOARD_CUSTOMIZATION.md#三层能力) |
 | App/官网怎样采集数据 | [采集端 API](API_COLLECTION.md) |
 | 管理后台怎样调用接口 | [管理端 API](API_MANAGEMENT.md) |
 | 怎样处理隐私工单 | [隐私工单处理流程](PRIVACY_WORKFLOW.md) |

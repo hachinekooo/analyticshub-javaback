@@ -656,7 +656,8 @@ public class AnalysisConfigurationService {
                     "semanticEvent", "propertyFilters", "schemaScope", "schemaScopeReason"
             );
             case FUNNEL_CONVERSION -> Set.of(
-                    "steps", "groupBy", "journeyKey", "propertyFilters", "schemaScope", "schemaScopeReason"
+                    "steps", "groupBy", "journeyKey", "valueLabels",
+                    "propertyFilters", "schemaScope", "schemaScopeReason"
             );
             case RETENTION -> Set.of(
                     "cohortEvent", "returnEvent", "days", "propertyFilters", "schemaScope", "schemaScopeReason"
@@ -701,6 +702,7 @@ public class AnalysisConfigurationService {
                 propertyFilterService.requireGroupable(
                         projectId, optionalText(request.definition(), "groupBy")
                 );
+                validateDimensionValueLabels(request.definition().get("valueLabels"));
                 propertyFilterService.requireJourneyKey(
                         projectId, optionalText(request.definition(), "journeyKey")
                 );
@@ -745,7 +747,7 @@ public class AnalysisConfigurationService {
                 if (!Set.of("INCLUDE", "EXCLUDE").contains(missingPolicy)) {
                     throw invalid("PROPERTY_BREAKDOWN.missingValuePolicy 只支持 INCLUDE / EXCLUDE");
                 }
-                validateBreakdownValueLabels(request.definition().get("valueLabels"));
+                validateDimensionValueLabels(request.definition().get("valueLabels"));
             }
             case NUMERIC_PROPERTY_SUMMARY -> {
                 requireSemanticEvents(
@@ -771,23 +773,23 @@ public class AnalysisConfigurationService {
         semanticDictionaryService.resolveActiveEventAliases(projectId, semanticKeys);
     }
 
-    private static void validateBreakdownValueLabels(JsonNode labels) {
+    private static void validateDimensionValueLabels(JsonNode labels) {
         if (labels == null || labels.isNull()) return;
         if (!labels.isObject() || labels.size() > 100) {
-            throw invalid("PROPERTY_BREAKDOWN.valueLabels 必须是最多 100 项的 object");
+            throw invalid("valueLabels 必须是最多 100 项的 object");
         }
         labels.properties().forEach(entry -> {
             if (entry.getKey().isBlank() || entry.getKey().length() > 256
                     || !entry.getValue().isObject() || entry.getValue().isEmpty()
                     || entry.getValue().size() > 16) {
-                throw invalid("PROPERTY_BREAKDOWN.valueLabels 包含无效值域定义");
+                throw invalid("valueLabels 包含无效值域定义");
             }
             entry.getValue().properties().forEach(label -> {
                 if (!label.getKey().matches("^(?:default|[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*)$")
                         || !label.getValue().isString()
                         || label.getValue().asString().isBlank()
                         || label.getValue().asString().length() > 200) {
-                    throw invalid("PROPERTY_BREAKDOWN.valueLabels 包含无效多语言名称");
+                    throw invalid("valueLabels 包含无效多语言名称");
                 }
             });
         });
@@ -821,7 +823,7 @@ public class AnalysisConfigurationService {
         if (node.isObject()) {
             node.properties().forEach(entry -> {
                 // valueLabels 的对象 key 是受限业务值（例如 imported），不是可执行字段名；
-                // 其结构与文本长度由 PROPERTY_BREAKDOWN 专用校验器负责。
+                // 其结构与文本长度由指标定义校验器统一负责。
                 if ("valueLabels".equals(entry.getKey())) return;
                 String key = entry.getKey().toLowerCase(java.util.Locale.ROOT);
                 if (key.contains("sql") || key.contains("script") || key.contains("url")

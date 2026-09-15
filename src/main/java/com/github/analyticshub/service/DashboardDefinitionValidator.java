@@ -82,7 +82,7 @@ public class DashboardDefinitionValidator {
             Map.entry("core.devices", Set.of("pageSize")),
             Map.entry("core.sessions", Set.of("pageSize")),
             Map.entry("core.traffic", Set.of("metricType", "pageSize")),
-            Map.entry("core.governedMetric", Set.of("metricKey"))
+            Map.entry("core.governedMetric", Set.of("metricKey", "emptyState"))
     );
 
     private final Map<String, RegisteredExtension> extensions;
@@ -274,6 +274,9 @@ public class DashboardDefinitionValidator {
         requireOnlyFields(config, allowed, path);
         if (config.has("title")) {
             requireText(config.get("title"), 100, path + ".title");
+        }
+        if (config.has("emptyState")) {
+            validateDisplayName(config.get("emptyState"));
         }
 
         if (registered != null) {

@@ -177,4 +177,41 @@ class AnalysisConfigurationServiceTest {
                 .hasMessageContaining("valueLabels")
                 .hasMessageContaining("多语言名称");
     }
+
+    @Test
+    void funnelRejectsNestedOrNonTextBusinessLabels() throws Exception {
+        when(propertyFilterService.requireGroupable("project", "entry_point"))
+                .thenReturn(AnalyticsPropertyDataType.STRING);
+        AnalysisPackImportRequest request = new AnalysisPackImportRequest(
+                1,
+                Map.of("en", "Invalid funnel label pack"),
+                objectMapper.readTree("""
+                        {
+                          "schemaVersion": 1,
+                          "properties": [],
+                          "metrics": [{
+                            "metricKey": "authoring.by_entry",
+                            "displayName": {"en": "Authoring by entry"},
+                            "metricType": "FUNNEL_CONVERSION",
+                            "definition": {
+                              "steps": ["authoring.selected", "authoring.completed"],
+                              "groupBy": "entry_point",
+                              "valueLabels": {
+                                "letters_home": {"zh-CN": {"nested": "不允许"}}
+                              }
+                            },
+                            "active": true
+                          }]
+                        }
+                        """),
+                false
+        );
+
+        assertThatThrownBy(() -> service.importPack("project", "invalid.funnel-labels", request))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo("INVALID_ANALYSIS_CONFIGURATION")
+                )
+                .hasMessageContaining("valueLabels")
+                .hasMessageContaining("多语言名称");
+    }
 }

@@ -13,17 +13,29 @@ AnalyticsHub 定位为公司自行部署的 internal operations center（内部�
 
 ## 三层能力
 
+先按需求选择最小机制，不要因为项目有私有业务就直接开发私有组件：
+
+| 需要维护的内容 | 使用机制 | 是否重新构建 Hub |
+| --- | --- | --- |
+| raw event 与稳定业务名称的映射 | 项目语义字典 | 否 |
+| 属性类型、可信协议、稳定指标与漏斗 | Analysis Pack；少量配置也可使用单项管理 API | 否 |
+| 项目看板布局、内置指标卡和专题入口 | Dashboard definition | 否 |
+| 内置组件无法表达的专属图表、交互或页面 | 可信 build-time extension | 是，前后端按扩展合同配套发布 |
+
+推荐顺序是：先完成项目初始化和数据采集，再建立语义映射，随后导入 Analysis Pack，最后保存 Dashboard。Analysis Pack 只管理属性、可信 Schema 与指标，不包含 semantic definitions（语义定义）或 Dashboard；三者可以由部署方仓库统一编排，但必须调用各自接口。完整请求合同见[管理端 API：分析配置与数据质量](API_MANAGEMENT.md#14-分析配置与数据质量)和[项目 Dashboard 定义](API_MANAGEMENT.md#13-项目-dashboard-定义)。
+
 ### 1. 通用多项目底座
 
 底座负责项目连接、数据库迁移、认证、采集、基础指标、Counter、语义字典、工单和内置 Dashboard widgets。所有内容都应保持通用、可开源，不包含某个下游项目的名称、事件 key、域名或业务规则。
 
-### 2. 声明式 Dashboard
+### 2. 声明式项目配置与 Dashboard
 
-运营人员可以拖拽内置组件并保存项目专属布局。system database 只保存 declarative JSON（声明式 JSON）：
+项目语义字典、Analysis Pack 和 Dashboard 都作为声明式项目配置保存在 system database，不复制原始事件。运营人员可以拖拽内置组件并保存项目专属布局；Dashboard definition 只接受 declarative JSON（声明式 JSON）：
 
 - widget type 必须在后端 allow-list 中；
 - layout 使用 12 列离散网格；移动与缩放始终按最小网格单位吸附，编辑态显示点阵参照和虚线落点占位，完成后隐藏这些辅助视觉；
 - config 按 widget 类型做 typed validation（类型化校验）；
+- `core.governedMetric` 只引用当前项目已启用的 `metricKey`；可选的本地化 `emptyState` 只解释“为什么当前没有数据”，不能伪造零值或改变指标口径；
 - schemaVersion 1 中每种 core widget type 最多一个实例，避免多个实例错误共享运行时数据；未来需要多实例时应升级 schema 并使用 widget-id scoped data state；
 - 不允许 HTML、JavaScript、SQL、任意 URL、`eval` 或 dynamic import；
 - 使用 revision 做并发更新保护。

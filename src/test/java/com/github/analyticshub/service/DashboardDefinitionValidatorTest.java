@@ -173,6 +173,29 @@ class DashboardDefinitionValidatorTest {
     }
 
     @Test
+    void governedMetricAcceptsLocalizedEmptyStateCopy() throws Exception {
+        var definition = objectMapper.readTree("""
+                {
+                  "schemaVersion": 2,
+                  "widgets": [{
+                    "id":"future-metric",
+                    "type":"core.governedMetric",
+                    "layout":{"x":0,"y":0,"w":6,"h":4},
+                    "config":{
+                      "metricKey":"future.metric",
+                      "emptyState":{
+                        "zh-CN":"此指标从 iOS 1.1.8 开始记录；当前时间范围内没有记录。",
+                        "en":"This metric is collected from iOS 1.1.8; no records exist in this date range."
+                      }
+                    }
+                  }]
+                }
+                """);
+
+        assertThatCode(() -> validator.validate(2, definition)).doesNotThrowAnyException();
+    }
+
+    @Test
     void rejectsDuplicateWidgetIdsAndInvalidGridBounds() throws Exception {
         var duplicate = objectMapper.readTree("""
                 {

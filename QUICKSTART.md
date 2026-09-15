@@ -151,5 +151,6 @@ psql -U postgres -d analytics -c "DROP SCHEMA analytics CASCADE; CREATE SCHEMA a
 ## 下一步
 
 - 创建和初始化接入项目：查看 [管理端 API](docs/API_MANAGEMENT.md#3-项目管理)。
+- 为真实项目配置语义、Analysis Pack 和 Dashboard：先看 [Dashboard 与项目定制](docs/DASHBOARD_CUSTOMIZATION.md#三层能力)，按最小机制接入。
 - 理解演示数据：查看 [三模板演示数据](examples/demo-data/README.md)。
 - 生产部署：转到 [部署指南](docs/运维/DEPLOYMENT_GUIDE.md)，不要沿用本地配置。
