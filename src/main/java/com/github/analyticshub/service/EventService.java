@@ -14,6 +14,7 @@ import com.github.analyticshub.logging.LogValueSanitizer;
 import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
 import com.github.analyticshub.security.RequestContext;
 import com.github.analyticshub.util.CryptoUtils;
+import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -34,6 +35,7 @@ import java.util.Map;
  * 系统数据库的默认事务管理器不适用于动态项目数据源。</p>
  */
 @Service
+@RequiredArgsConstructor
 public class EventService {
 
     private static final System.Logger log = System.getLogger(EventService.class.getName());
@@ -48,20 +50,6 @@ public class EventService {
     private final CounterService counterService;
     private final ProjectTransactionExecutor projectTransactions;
     private final EventMetadataSchemaSupport metadataSchemaSupport;
-
-    public EventService(
-            MultiDataSourceManager dataSourceManager,
-            ObjectMapper objectMapper,
-            CounterService counterService,
-            ProjectTransactionExecutor projectTransactions,
-            EventMetadataSchemaSupport metadataSchemaSupport
-    ) {
-        this.dataSourceManager = dataSourceManager;
-        this.objectMapper = objectMapper;
-        this.counterService = counterService;
-        this.projectTransactions = projectTransactions;
-        this.metadataSchemaSupport = metadataSchemaSupport;
-    }
 
     /**
      * 写入单条事件；相同项目、相同幂等键始终返回第一次写入的事件 ID。
@@ -240,7 +228,13 @@ public class EventService {
     }
 
     /**
-     * @return 已存在的事件 ID；返回 null 表示本次请求已取得写入资格。
+     * 为带业务幂等键的事件登记写入位置，或复用已绑定的事件。
+     *
+     * @param context 给出项目及用于去重的统计身份。
+     * @param eventsTable 当前项目的事件表，用于核对已绑定的记录。
+     * @param idempotencyTable 当前项目的去重键登记表。
+     * @param event 已清洗的事件；按统计身份、事件类型及业务键划定去重范围。
+     * @return 已存在的事件 ID；未提供幂等键或可写入新事件时返回 null。
      */
     private String reserveIdempotencyKey(
             JdbcTemplate jdbcTemplate,
@@ -468,8 +462,7 @@ public class EventService {
     }
 
     /**
-     * JSON object keys are sorted recursively so logically identical property maps
-     * produce the same idempotency fingerprint regardless of map iteration order.
+     * 逐层固定 JSON 对象的字段顺序，避免仅因上报属性的排列不同而把同一次重试误判为内容冲突。
      */
     private JsonNode canonicalize(JsonNode node) {
         if (node == null || node.isNull()) {

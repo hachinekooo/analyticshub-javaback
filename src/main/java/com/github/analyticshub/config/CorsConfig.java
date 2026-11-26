@@ -1,5 +1,6 @@
 package com.github.analyticshub.config;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -12,14 +13,11 @@ import org.springframework.web.filter.CorsFilter;
  * 配置跨域访问策略
  */
 @Configuration
+@RequiredArgsConstructor
 @EnableConfigurationProperties(CorsProperties.class)
 public class CorsConfig {
 
     private final CorsProperties properties;
-
-    public CorsConfig(CorsProperties properties) {
-        this.properties = properties;
-    }
 
     @Bean
     public CorsFilter corsFilter() {

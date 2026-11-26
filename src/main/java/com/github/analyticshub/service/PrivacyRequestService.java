@@ -12,6 +12,7 @@ import com.github.analyticshub.entity.Device;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
 import com.github.analyticshub.security.RequestContext;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -23,6 +24,7 @@ import java.util.Map;
 import java.util.UUID;
 
 @Service
+@RequiredArgsConstructor
 public class PrivacyRequestService {
 
     private static final System.Logger log = System.getLogger(PrivacyRequestService.class.getName());
@@ -32,16 +34,6 @@ public class PrivacyRequestService {
     private final ObjectMapper objectMapper;
     private final EmailService emailService;
     private final ProjectTransactionExecutor projectTransactions;
-
-    public PrivacyRequestService(MultiDataSourceManager dataSourceManager,
-                                 ObjectMapper objectMapper,
-                                 EmailService emailService,
-                                 ProjectTransactionExecutor projectTransactions) {
-        this.dataSourceManager = dataSourceManager;
-        this.objectMapper = objectMapper;
-        this.emailService = emailService;
-        this.projectTransactions = projectTransactions;
-    }
 
     public PrivacyRequestCreatedResponse submitExportRequest(PrivacyRequestSubmitRequest request) {
         return submitRequest(PrivacyRequestType.EXPORT, request);

@@ -9,12 +9,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.io.IOException;
 
 /**
- * Shared request-path policy for every authentication filter.
- *
- * <p>Spring MVC matches decoded path-segment values and removes matrix
- * parameters before controller lookup. Servlet filters, however, see the raw
- * request URI. Accepting ambiguous encodings here would therefore let routing
- * and authentication classify the same request differently.</p>
+ * 为各认证过滤器统一判定请求路径；拒绝可能被 Spring 路由与 Servlet 过滤器解释成不同接口的路径写法。
  */
 public final class RequestPathSecurityPolicy {
 
@@ -53,7 +48,7 @@ public final class RequestPathSecurityPolicy {
         } else if (requestUri.startsWith(normalizedContextPath + "/")) {
             applicationPath = requestUri.substring(normalizedContextPath.length());
         } else {
-            // A servlet request URI must contain its declared context path.
+            // 路径不属于已声明的应用上下文时，不再按正常路由识别。
             return new Inspection("", Namespace.OTHER, true);
         }
 
@@ -97,8 +92,7 @@ public final class RequestPathSecurityPolicy {
                 };
             }
         } catch (IllegalArgumentException exception) {
-            // Invalid percent escapes and malformed path data are rejected below
-            // whenever the raw namespace is still recognizable.
+            // 保留可识别的原始路径前缀，让后续校验能拒绝有歧义的受保护路径。
             if (applicationPath.equals("/api") || applicationPath.startsWith("/api/")) {
                 return Namespace.API;
             }

@@ -14,6 +14,7 @@ import com.github.analyticshub.service.AdminPrivacyRequestService;
 import com.github.analyticshub.service.PrivacyDataExecutionService;
 import com.github.analyticshub.service.WorkOrderOutboxDeliveryService;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -31,6 +32,7 @@ import java.util.List;
  * <p>状态推进、数据执行和通知投递相互独立，避免只改状态却未处理数据。</p>
  */
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/admin/privacy/requests")
 public class AdminPrivacyRequestController {
 
@@ -38,15 +40,15 @@ public class AdminPrivacyRequestController {
     private final PrivacyDataExecutionService privacyDataExecutionService;
     private final WorkOrderOutboxDeliveryService outboxDeliveryService;
 
-    public AdminPrivacyRequestController(AdminPrivacyRequestService adminPrivacyRequestService,
-                                         PrivacyDataExecutionService privacyDataExecutionService,
-                                         WorkOrderOutboxDeliveryService outboxDeliveryService) {
-        this.adminPrivacyRequestService = adminPrivacyRequestService;
-        this.privacyDataExecutionService = privacyDataExecutionService;
-        this.outboxDeliveryService = outboxDeliveryService;
-    }
-
-    /** 按项目、时间和状态等条件分页查询隐私工单。 */
+    /**
+     * 按项目、时间和状态等条件分页查询隐私工单。
+     *
+     * @param from 按申请时间筛选的起点；from 和 to 都省略时不限制日期。
+     * @param to 按申请时间筛选的终点；纯日期按 UTC 包含当天，具体时刻不包含边界。
+     * @param status 明确指定状态时优先于 openOnly。
+     * @param processor 按负责处理工单的系统筛选，不是工单受理人员。
+     * @param openOnly 未指定状态时控制是否仅查待处理和处理中；省略则仅在未给日期范围时启用。
+     */
     @GetMapping
     public ApiResponse<AdminPrivacyRequestsResponse> list(
             @RequestParam("projectId") String projectId,

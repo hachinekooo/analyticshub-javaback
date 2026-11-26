@@ -6,6 +6,7 @@ import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
 import com.github.analyticshub.security.RequestContext;
 import com.github.analyticshub.util.CryptoUtils;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -17,20 +18,13 @@ import java.time.Instant;
  * 处理会话记录和更新
  */
 @Service
+@RequiredArgsConstructor
 public class SessionService {
 
     private static final System.Logger log = System.getLogger(SessionService.class.getName());
 
     private final MultiDataSourceManager dataSourceManager;
     private final ProjectTransactionExecutor projectTransactions;
-
-    public SessionService(
-            MultiDataSourceManager dataSourceManager,
-            ProjectTransactionExecutor projectTransactions
-    ) {
-        this.dataSourceManager = dataSourceManager;
-        this.projectTransactions = projectTransactions;
-    }
 
     /**
      * 上传会话数据

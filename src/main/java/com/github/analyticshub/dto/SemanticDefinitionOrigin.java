@@ -1,6 +1,6 @@
 package com.github.analyticshub.dto;
 
-/** Identifies whether a semantic contract is platform-owned or project-owned. */
+/** 区分平台预置定义和项目自定义定义。 */
 public enum SemanticDefinitionOrigin {
     OFFICIAL,
     CUSTOM

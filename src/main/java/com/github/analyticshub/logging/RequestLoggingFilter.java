@@ -5,6 +5,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import com.github.analyticshub.security.ClientIpResolver;
+import lombok.RequiredArgsConstructor;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -16,15 +17,12 @@ import java.io.IOException;
  * 记录 API 请求的关键信息（不记录敏感头/请求体）
  */
 @Component
+@RequiredArgsConstructor
 @Order(Ordered.HIGHEST_PRECEDENCE + 10)
 public class RequestLoggingFilter extends OncePerRequestFilter {
 
     private static final System.Logger log = System.getLogger(RequestLoggingFilter.class.getName());
     private final ClientIpResolver clientIpResolver;
-
-    public RequestLoggingFilter(ClientIpResolver clientIpResolver) {
-        this.clientIpResolver = clientIpResolver;
-    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,

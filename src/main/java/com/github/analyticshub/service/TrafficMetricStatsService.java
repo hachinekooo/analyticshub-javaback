@@ -7,6 +7,7 @@ import com.github.analyticshub.dto.TrafficMetricTrendPoint;
 import com.github.analyticshub.dto.TrafficMetricTopResponse;
 import com.github.analyticshub.dto.TrafficMetricTopItem;
 import com.github.analyticshub.exception.BusinessException;
+import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -15,22 +16,17 @@ import java.sql.Timestamp;
 import java.time.Instant;
 
 @Service
+@RequiredArgsConstructor
 public class TrafficMetricStatsService {
 
     private final MultiDataSourceManager dataSourceManager;
-
-    public TrafficMetricStatsService(MultiDataSourceManager dataSourceManager) {
-        this.dataSourceManager = dataSourceManager;
-    }
 
     public TrafficMetricSummaryResponse getSummary(String projectId, String from, String to) {
         return querySummary(projectId, resolveSummaryRange(from, to));
     }
 
     /**
-     * Returns an operations-dashboard summary using the same default range as
-     * trends and rankings. Public cumulative summaries intentionally use
-     * {@link #getSummary(String, String, String)} instead.
+     * 管理端流量概览与趋势、排行使用相同的默认时间范围；公开概览接口另按累计口径查询。
      */
     public TrafficMetricSummaryResponse getAdminSummary(String projectId, String from, String to) {
         return querySummary(projectId, AdminQueryUtils.resolveRange(from, to));

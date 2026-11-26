@@ -14,6 +14,7 @@ import com.github.analyticshub.dto.SemanticDefinitionsResponse;
 import com.github.analyticshub.dto.SemanticDeleteResponse;
 import com.github.analyticshub.dto.SemanticSourceKind;
 import com.github.analyticshub.exception.BusinessException;
+import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -33,12 +34,10 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
- * Project-scoped semantic metadata stored in the system database.
- *
- * <p>Event facts are queried from the selected project datasource and are
- * merged with this metadata in Java. No cross-database join is used.</p>
+ * 管理系统库中按项目保存的业务事件定义与原始事件名映射；事件事实仍在项目库，查询时不跨库连接。
  */
 @Service
+@RequiredArgsConstructor
 public class SemanticDictionaryService {
 
     private static final int MAX_PROJECT_ID_LENGTH = 50;
@@ -63,20 +62,6 @@ public class SemanticDictionaryService {
     private final ObjectMapper objectMapper;
     private final AnalyticsSemanticDependencyService analyticsDependencies;
     private final AnalysisPackOwnershipService packOwnershipService;
-
-    public SemanticDictionaryService(
-            JdbcTemplate systemJdbcTemplate,
-            MultiDataSourceManager dataSourceManager,
-            ObjectMapper objectMapper,
-            AnalyticsSemanticDependencyService analyticsDependencies,
-            AnalysisPackOwnershipService packOwnershipService
-    ) {
-        this.systemJdbcTemplate = systemJdbcTemplate;
-        this.dataSourceManager = dataSourceManager;
-        this.objectMapper = objectMapper;
-        this.analyticsDependencies = analyticsDependencies;
-        this.packOwnershipService = packOwnershipService;
-    }
 
     @Transactional(readOnly = true)
     public SemanticDefinitionsResponse listDefinitions(String projectId, String sourceKind) {
@@ -312,10 +297,7 @@ public class SemanticDictionaryService {
     }
 
     /**
-     * Resolves stable semantic keys to their raw event aliases.
-     *
-     * <p>An active definition with no aliases is valid and resolves to an empty list,
-     * which lets a newly initialized dashboard render a clear zero-data state.</p>
+     * 把业务定义解析为原始事件名；缺失或停用的定义报错，已启用但未配置映射时返回空列表。
      */
     @Transactional(readOnly = true)
     public Map<String, List<String>> resolveActiveEventAliases(
@@ -326,8 +308,7 @@ public class SemanticDictionaryService {
     }
 
     /**
-     * Resolves optional reporting semantics without making a generic dashboard unavailable.
-     * Missing or inactive definitions are returned as empty alias lists.
+     * 解析看板的可选业务定义；缺失或停用的定义保留其键，值为空列表，不影响其他定义。
      */
     @Transactional(readOnly = true)
     public Map<String, List<String>> resolveAvailableActiveEventAliases(
@@ -396,7 +377,7 @@ public class SemanticDictionaryService {
         return Collections.unmodifiableMap(result);
     }
 
-    /** Resolves one collected raw event key to its active stable semantic key. */
+    /** 查找原始事件名当前所属的已启用业务定义。 */
     @Transactional(readOnly = true)
     public String resolveActiveEventSemanticKey(String projectId, String rawKey) {
         String normalizedProjectId = normalizeProjectId(projectId);
@@ -726,8 +707,7 @@ public class SemanticDictionaryService {
         }
         Set<String> unique = new LinkedHashSet<>();
         for (String alias : aliases) {
-            // Raw aliases must accept the same naming diversity as collected event_type values.
-            // They are always bound as SQL parameters, so no identifier-style allow-list is needed.
+            // 原始事件名在查询中作为参数值绑定，不需要套用表名或列名的字符限制。
             if (alias == null || alias.isBlank() || alias.length() > MAX_KEY_LENGTH) {
                 throw invalidSemanticRequest("alias key 格式无效");
             }

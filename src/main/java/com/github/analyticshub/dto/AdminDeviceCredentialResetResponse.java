@@ -1,8 +1,7 @@
 package com.github.analyticshub.dto;
 
 /**
- * One-time response returned after an administrator resets device credentials.
- * The secret key is intentionally not exposed by any read endpoint.
+ * 管理员重置设备凭据时一次性返回的新凭据；任何只读接口都不返回密钥。
  */
 public record AdminDeviceCredentialResetResponse(
         String projectId,

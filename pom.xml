@@ -6,7 +6,7 @@
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
         <version>4.0.7</version>
-        <relativePath/> <!-- lookup parent from repository -->
+        <relativePath/> <!-- 从 Maven 仓库解析父工程 -->
     </parent>
     <groupId>com.github</groupId>
     <artifactId>analyticshub</artifactId>
@@ -36,15 +36,21 @@
     </scm>
     <properties>
         <java.version>25</java.version>
-        <!-- Flyway 12 uses the Jackson 3 namespace required by Spring Boot 4. -->
+        <!-- Flyway 12 使用与 Spring Boot 4 一致的 Jackson 3 命名空间。 -->
         <flyway.version>12.11.0</flyway.version>
-        <!-- Stay on the Jackson 3.1 LTS line while including the latest security patch. -->
+        <!-- 锁定 Jackson 3.1 长期支持版本线。 -->
         <jackson-bom.version>3.1.5</jackson-bom.version>
-        <!-- Update together with the release version so identical source builds produce stable archives. -->
+        <!-- 随发布版本维护归档时间戳，使相同源码生成一致的归档。 -->
         <project.build.outputTimestamp>2026-08-17T00:00:00Z</project.build.outputTimestamp>
     </properties>
     <dependencies>
-        <!-- Spring Boot Starters -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Spring Boot 基础组件 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security</artifactId>
@@ -73,7 +79,7 @@
             <version>3.5.9</version>
         </dependency>
 
-        <!-- Database -->
+        <!-- 数据库驱动与连接池 -->
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
@@ -92,26 +98,26 @@
             <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
 
-        <!-- Utilities -->
+        <!-- 通用工具依赖 -->
         <dependency>
             <groupId>commons-codec</groupId>
             <artifactId>commons-codec</artifactId>
         </dependency>
 
-        <!-- Email Support -->
+        <!-- 邮件投递 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-mail</artifactId>
         </dependency>
 
-        <!-- TOTP Support (2FA) -->
+        <!-- 双因素认证动态验证码 -->
         <dependency>
             <groupId>com.warrenstrange</groupId>
             <artifactId>googleauth</artifactId>
             <version>1.5.0</version>
         </dependency>
 
-        <!-- Dev Tools -->
+        <!-- 开发工具 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-devtools</artifactId>
@@ -119,7 +125,7 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- Testing -->
+        <!-- 测试依赖 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
@@ -150,6 +156,13 @@
                 <configuration>
                     <release>${java.version}</release>
                     <failOnWarning>true</failOnWarning>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
                     <compilerArgs>
                         <arg>-Xlint:deprecation</arg>
                         <arg>-Xlint:unchecked</arg>
@@ -160,6 +173,12 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
                 </configuration>
                 <executions>
                     <execution>
@@ -173,7 +192,7 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <!-- JDK 25 no longer guarantees Mockito can self-attach at runtime. -->
+                    <!-- 在测试进程启动时注入 Mockito，不依赖 JDK 25 允许运行时自行挂载。 -->
                     <argLine>-javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar</argLine>
                 </configuration>
             </plugin>

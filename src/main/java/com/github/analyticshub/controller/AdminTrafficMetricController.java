@@ -5,6 +5,7 @@ import com.github.analyticshub.dto.AdminTrafficMetricsResponse;
 import com.github.analyticshub.service.AdminTrafficMetricQueryService;
 import com.github.analyticshub.dto.TrafficMetricSummaryResponse;
 import com.github.analyticshub.service.TrafficMetricStatsService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -16,17 +17,12 @@ import com.github.analyticshub.dto.TrafficMetricTopResponse;
  * 管理端流量指标查询接口
  */
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/admin/traffic-metrics")
 public class AdminTrafficMetricController {
 
     private final AdminTrafficMetricQueryService adminTrafficMetricQueryService;
     private final TrafficMetricStatsService trafficMetricStatsService;
-
-    public AdminTrafficMetricController(AdminTrafficMetricQueryService adminTrafficMetricQueryService,
-                                        TrafficMetricStatsService trafficMetricStatsService) {
-        this.adminTrafficMetricQueryService = adminTrafficMetricQueryService;
-        this.trafficMetricStatsService = trafficMetricStatsService;
-    }
 
     @GetMapping
     public ApiResponse<AdminTrafficMetricsResponse> list(
@@ -52,6 +48,11 @@ public class AdminTrafficMetricController {
         return ApiResponse.success(trafficMetricStatsService.getAdminSummary(projectId, from, to));
     }
 
+    /**
+     * 查询流量趋势。
+     *
+     * @param granularity 流量的时间分桶，支持小时、天、周、月、年；未提供或无法识别时按天。
+     */
     @GetMapping("/trends")
     public ApiResponse<TrafficMetricTrendResponse> trends(
             @RequestParam("projectId") String projectId,

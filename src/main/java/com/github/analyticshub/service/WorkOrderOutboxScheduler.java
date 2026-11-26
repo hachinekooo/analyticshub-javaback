@@ -11,12 +11,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * Periodically drains work-order notification outboxes for active projects.
- *
- * <p>The delivery service performs the actual multi-instance claim using
- * PostgreSQL {@code FOR UPDATE SKIP LOCKED}. This coordinator deliberately
- * keeps project failures isolated and skips all database work when SMTP is
- * disabled, preserving queued notifications for later delivery.</p>
+ * 按活跃项目调度工单通知投递；一个项目失败不影响其他项目。邮件投递未启用或未配置时不领取任务。
  */
 @Component
 @ConditionalOnProperty(

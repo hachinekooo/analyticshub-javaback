@@ -14,10 +14,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Typed, allow-listed representation of a Counter event trigger.
- *
- * <p>Rules reference stable semantic keys. Parsing JSON into clauses gives
- * realtime projection and historical rebuild one canonical rule model.</p>
+ * 统一解析事件驱动计数器的触发条件，让实时累加和历史重算使用同一套事件与属性匹配规则。
  */
 final class CounterEventTriggerRule {
 

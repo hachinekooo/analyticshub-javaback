@@ -71,8 +71,8 @@ public class TwoFactorAuthService {
             return false;
         }
 
-        // googleauth normalizes Base32 secrets to upper case before decoding.
-        // Unpadded RFC 4648 Base32 can only have these final-block lengths.
+        // 与验证码库一致，先把 Base32 密钥转为大写。
+        // RFC 4648 规定了不带填充字符的 Base32 末组长度。
         return switch (secret.length() % 8) {
             case 0, 2, 4, 5, 7 -> true;
             default -> false;
@@ -137,8 +137,7 @@ public class TwoFactorAuthService {
      * 获取用于绑定的密钥（如果未配置则生成一个新的，方便第一次设置）
      */
     public String generateProvisioningSecret() {
-        // Always generate a fresh candidate. Never expose the configured TOTP
-        // secret through an API response.
+        // 单独生成候选密钥用于配置，不向调用方暴露当前启用的密钥。
         final GoogleAuthenticatorKey key = gAuth.createCredentials();
         return key.getKey();
     }

@@ -3,6 +3,7 @@ package com.github.analyticshub.controller;
 import com.github.analyticshub.common.dto.ApiResponse;
 import com.github.analyticshub.dto.AdminSessionsResponse;
 import com.github.analyticshub.service.AdminSessionQueryService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -12,14 +13,11 @@ import org.springframework.web.bind.annotation.RestController;
  * 管理端会话查询接口
  */
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/admin/sessions")
 public class AdminSessionController {
 
     private final AdminSessionQueryService adminSessionQueryService;
-
-    public AdminSessionController(AdminSessionQueryService adminSessionQueryService) {
-        this.adminSessionQueryService = adminSessionQueryService;
-    }
 
     @GetMapping
     public ApiResponse<AdminSessionsResponse> list(

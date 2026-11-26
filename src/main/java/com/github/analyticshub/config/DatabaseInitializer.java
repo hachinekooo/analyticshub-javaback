@@ -2,6 +2,7 @@ package com.github.analyticshub.config;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.github.analyticshub.mapper.AnalyticsProjectMapper;
+import lombok.RequiredArgsConstructor;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.annotation.Order;
@@ -14,16 +15,13 @@ import org.springframework.stereotype.Component;
  * 不承载业务采集数据表。
  */
 @Component
+@RequiredArgsConstructor
 @Order(1)
 public class DatabaseInitializer implements ApplicationRunner {
 
     private static final System.Logger log = System.getLogger(DatabaseInitializer.class.getName());
 
     private final AnalyticsProjectMapper projectMapper;
-
-    public DatabaseInitializer(AnalyticsProjectMapper projectMapper) {
-        this.projectMapper = projectMapper;
-    }
 
     @Override
     public void run(ApplicationArguments args) {

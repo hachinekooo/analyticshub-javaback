@@ -3,6 +3,7 @@ package com.github.analyticshub.service;
 import com.github.analyticshub.dto.AnalyticsPropertyDataType;
 import com.github.analyticshub.dto.AnalyticsPropertyDefinitionResponse;
 import com.github.analyticshub.exception.BusinessException;
+import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
@@ -15,15 +16,11 @@ import tools.jackson.databind.ObjectMapper;
  * 避免单项编辑后真实配置与 Pack 版本、校验和及审计记录发生漂移。</p>
  */
 @Service
+@RequiredArgsConstructor
 public class AnalysisPackOwnershipService {
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
-
-    public AnalysisPackOwnershipService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
-        this.jdbcTemplate = jdbcTemplate;
-        this.objectMapper = objectMapper;
-    }
 
     public void requirePropertyManuallyEditable(String projectId, String propertyKey) {
         requireManuallyEditable(projectId, propertyKey, "properties", "propertyKey", "属性");

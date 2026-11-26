@@ -6,6 +6,7 @@ import com.github.analyticshub.dto.AdminDashboardUpsertRequest;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.service.AdminDashboardService;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -24,14 +25,11 @@ import java.util.List;
  * 所有读写都以稳定的 projectId 和 dashboardKey 隔离。</p>
  */
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/admin/projects/{projectId}/dashboards")
 public class AdminDashboardController {
 
     private final AdminDashboardService dashboardService;
-
-    public AdminDashboardController(AdminDashboardService dashboardService) {
-        this.dashboardService = dashboardService;
-    }
 
     /**
      * 返回项目的全部 Dashboard 定义，供前端按分析模板选择工作区。
@@ -68,6 +66,8 @@ public class AdminDashboardController {
 
     /**
      * 按 revision 删除 Dashboard，避免删除管理员未见过的新版本。
+     *
+     * @param expectedRevision 发出删除请求时持有的修订号；库内版本不同则不删除。
      */
     @DeleteMapping("/{dashboardKey}")
     public ApiResponse<Void> delete(

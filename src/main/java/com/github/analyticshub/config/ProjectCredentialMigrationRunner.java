@@ -1,6 +1,7 @@
 package com.github.analyticshub.config;
 
 import com.github.analyticshub.security.ProjectCredentialCipher;
+import lombok.RequiredArgsConstructor;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.annotation.Order;
@@ -13,11 +14,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 
 /**
- * Migrates the legacy 1.0.0 Base64 project passwords after Flyway has prepared
- * the system database. The whole scan is one transaction and locks affected
- * rows so a malformed value cannot leave a partially migrated credential set.
+ * 系统库迁移后验证现有项目库凭据，并将旧格式或旧密钥密文统一改用当前密钥加密；凭据扫描与更新在同一事务中完成。
  */
 @Component
+@RequiredArgsConstructor
 @Order(2)
 public class ProjectCredentialMigrationRunner implements ApplicationRunner {
 
@@ -26,16 +26,6 @@ public class ProjectCredentialMigrationRunner implements ApplicationRunner {
     private final JdbcTemplate jdbcTemplate;
     private final ProjectCredentialCipher credentialCipher;
     private final Environment environment;
-
-    public ProjectCredentialMigrationRunner(
-            JdbcTemplate jdbcTemplate,
-            ProjectCredentialCipher credentialCipher,
-            Environment environment
-    ) {
-        this.jdbcTemplate = jdbcTemplate;
-        this.credentialCipher = credentialCipher;
-        this.environment = environment;
-    }
 
     @Override
     @Transactional

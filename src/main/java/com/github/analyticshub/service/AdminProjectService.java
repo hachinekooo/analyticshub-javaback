@@ -17,6 +17,7 @@ import com.github.analyticshub.mapper.AnalyticsProjectMapper;
 import com.github.analyticshub.security.ProjectCredentialCipher;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -31,6 +32,7 @@ import java.util.regex.Pattern;
  * 管理端项目服务
  */
 @Service
+@RequiredArgsConstructor
 public class AdminProjectService {
 
     private static final System.Logger log = System.getLogger(AdminProjectService.class.getName());
@@ -51,20 +53,6 @@ public class AdminProjectService {
     private final ProjectCredentialCipher credentialCipher;
     private final SemanticTemplateService semanticTemplateService;
 
-
-    public AdminProjectService(
-            AnalyticsProjectMapper projectMapper,
-            MultiDataSourceManager dataSourceManager,
-            ProjectSchemaMigrator projectSchemaMigrator,
-            ProjectCredentialCipher credentialCipher,
-            SemanticTemplateService semanticTemplateService
-    ) {
-        this.projectMapper = projectMapper;
-        this.dataSourceManager = dataSourceManager;
-        this.projectSchemaMigrator = projectSchemaMigrator;
-        this.credentialCipher = credentialCipher;
-        this.semanticTemplateService = semanticTemplateService;
-    }
 
     public List<AnalyticsProject> listProjects() {
         QueryWrapper<AnalyticsProject> wrapper = new QueryWrapper<>();
@@ -306,8 +294,7 @@ public class AdminProjectService {
         try {
             dataSourceManager.reloadProject(projectId);
         } catch (RuntimeException exception) {
-            // The system-database change is already committed at this point.
-            // Keep the request successful and make the cache failure observable.
+            // 项目变更此时已提交；缓存刷新失败单独记录，不把已成功的变更报成失败。
             log.log(System.Logger.Level.ERROR,
                     "项目运行时缓存清理失败，等待下一次显式重载: projectId={0}", projectId);
         }

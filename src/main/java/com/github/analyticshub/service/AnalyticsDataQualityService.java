@@ -10,6 +10,7 @@ import com.github.analyticshub.dto.AnalyticsPropertyQuality;
 import com.github.analyticshub.dto.TrustedSchemaPolicyResponse;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
+import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.transaction.TransactionTimedOutException;
@@ -28,6 +29,7 @@ import java.util.Map;
 
 /** 对选定时间窗内的原始事件做通用质量体检，不写回或修饰事实。 */
 @Service
+@RequiredArgsConstructor
 public class AnalyticsDataQualityService {
 
     // 与单事件属性键预算对齐，避免合法治理属性因登记顺序被静默排除在质量检查之外。
@@ -40,22 +42,6 @@ public class AnalyticsDataQualityService {
     private final AnalyticsQueryProperties queryProperties;
     private final ProjectTransactionExecutor projectTransactions;
     private final ObjectMapper objectMapper;
-
-    public AnalyticsDataQualityService(
-            MultiDataSourceManager dataSourceManager,
-            AnalyticsPropertyDefinitionService propertyDefinitionService,
-            AnalysisConfigurationService analysisConfigurationService,
-            AnalyticsQueryProperties queryProperties,
-            ProjectTransactionExecutor projectTransactions,
-            ObjectMapper objectMapper
-    ) {
-        this.dataSourceManager = dataSourceManager;
-        this.propertyDefinitionService = propertyDefinitionService;
-        this.analysisConfigurationService = analysisConfigurationService;
-        this.queryProperties = queryProperties;
-        this.projectTransactions = projectTransactions;
-        this.objectMapper = objectMapper;
-    }
 
     public AnalyticsDataQualityResponse inspect(String projectId, String from, String to) {
         AdminQueryUtils.Range range = AdminQueryUtils.resolveRange(from, to);

@@ -8,6 +8,7 @@ import com.github.analyticshub.dto.PrivacyRequestStatus;
 import com.github.analyticshub.dto.PrivacyRequestType;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -33,6 +34,7 @@ import java.util.UUID;
  * 部署方仍需结合其数据内容与适用法律评估匿名化效果和审计留存期限。</p>
  */
 @Service
+@RequiredArgsConstructor
 public class PrivacyDataExecutionService {
 
     private static final String COMPLETED = PrivacyRequestStatus.COMPLETED.name();
@@ -41,14 +43,6 @@ public class PrivacyDataExecutionService {
     private final MultiDataSourceManager dataSourceManager;
     private final ObjectMapper objectMapper;
     private final ProjectTransactionExecutor projectTransactions;
-
-    public PrivacyDataExecutionService(MultiDataSourceManager dataSourceManager,
-                                       ObjectMapper objectMapper,
-                                       ProjectTransactionExecutor projectTransactions) {
-        this.dataSourceManager = dataSourceManager;
-        this.objectMapper = objectMapper;
-        this.projectTransactions = projectTransactions;
-    }
 
     public AdminPrivacyExecutionResponse execute(String projectId,
                                                  String requestId,

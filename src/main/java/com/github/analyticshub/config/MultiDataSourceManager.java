@@ -62,7 +62,7 @@ public class MultiDataSourceManager {
      * 获取项目的数据源
      */
     public DataSource getDataSource(String projectId) {
-        // Lazy init per project to avoid creating pools for unused projects.
+        // 首次访问项目时才开连接池，未访问的项目不占用数据库连接。
         return dataSources.computeIfAbsent(projectId, this::createDataSource);
     }
 
@@ -70,7 +70,7 @@ public class MultiDataSourceManager {
      * 获取项目配置
      */
     public ProjectConfig getProjectConfig(String projectId) {
-        // computeIfAbsent will cache the loaded config; do not manually put inside loadProjectConfig.
+        // 由缓存入口接收加载结果；加载方法本身不写缓存，建池时也可独立调用。
         return projectConfigs.computeIfAbsent(projectId, this::loadProjectConfig);
     }
 
@@ -194,7 +194,6 @@ public class MultiDataSourceManager {
                 project.getTablePrefix(),
                 project.getIsActive()
         );
-        // computeIfAbsent will cache the result, avoid recursive update here.
     }
 
     private static void validateProjectId(String projectId) {

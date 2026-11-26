@@ -24,7 +24,7 @@ public class Device {
 
     @TableField("secret_key")
     @JsonIgnore
-    // Secret key must never be serialized in API responses.
+    // 采集签名密钥，只在发放凭据时通过专用响应返回。
     private String secretKey;
 
     @TableField("device_model")
@@ -77,7 +77,6 @@ public class Device {
         this.lastActiveAt = lastActiveAt;
     }
 
-    // Getters and Setters
     public Long getId() {
         return id;
     }

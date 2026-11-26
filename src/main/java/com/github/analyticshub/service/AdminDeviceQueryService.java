@@ -5,6 +5,7 @@ import com.github.analyticshub.dto.AdminDeviceRecord;
 import com.github.analyticshub.dto.AdminDevicesResponse;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.util.CryptoUtils;
+import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -20,13 +21,10 @@ import java.util.List;
  * 分别表示当前设备记录的创建时间和注册版本快照，不代表 App Store 安装时间或当前活跃版本。</p>
  */
 @Service
+@RequiredArgsConstructor
 public class AdminDeviceQueryService {
 
     private final MultiDataSourceManager dataSourceManager;
-
-    public AdminDeviceQueryService(MultiDataSourceManager dataSourceManager) {
-        this.dataSourceManager = dataSourceManager;
-    }
 
     public AdminDevicesResponse listDevices(String projectId, String from, String to,
                                             Integer page, Integer pageSize,

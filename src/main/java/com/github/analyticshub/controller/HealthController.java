@@ -26,12 +26,10 @@ public class HealthController {
     }
 
     /**
-     * 健康检查接口
-     * GET /health
+     * 供负载均衡和本地探活使用；不连接数据库，也不返回组件详情。
      */
     @GetMapping
     public ResponseEntity<Map<String, Object>> health() {
-        // Keep this lightweight: used by load balancers and local checks.
         Map<String, Object> health = new HashMap<>();
         health.put("status", "UP");
         health.put("service", "analyticshub-javaback");

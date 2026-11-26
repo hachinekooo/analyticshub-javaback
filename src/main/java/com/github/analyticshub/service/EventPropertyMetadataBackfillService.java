@@ -2,6 +2,7 @@ package com.github.analyticshub.service;
 
 import com.github.analyticshub.config.MultiDataSourceManager;
 import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import javax.sql.DataSource;
@@ -13,6 +14,7 @@ import javax.sql.DataSource;
  * 避免对历史事件表执行一次性全表更新。多实例通过 {@code SKIP LOCKED} 分领记录。</p>
  */
 @Service
+@RequiredArgsConstructor
 public class EventPropertyMetadataBackfillService {
 
     static final int MAX_BATCH_SIZE = 100;
@@ -20,16 +22,6 @@ public class EventPropertyMetadataBackfillService {
     private final MultiDataSourceManager dataSourceManager;
     private final ProjectTransactionExecutor projectTransactions;
     private final EventMetadataSchemaSupport metadataSchemaSupport;
-
-    public EventPropertyMetadataBackfillService(
-            MultiDataSourceManager dataSourceManager,
-            ProjectTransactionExecutor projectTransactions,
-            EventMetadataSchemaSupport metadataSchemaSupport
-    ) {
-        this.dataSourceManager = dataSourceManager;
-        this.projectTransactions = projectTransactions;
-        this.metadataSchemaSupport = metadataSchemaSupport;
-    }
 
     /**
      * 补齐下一批旧事件。返回实际更新条数；零表示本次没有可领取记录。

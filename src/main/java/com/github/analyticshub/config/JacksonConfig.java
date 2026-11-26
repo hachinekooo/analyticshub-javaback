@@ -34,10 +34,7 @@ public class JacksonConfig {
     }
 
     /**
-     * Replaces Boot's prototype builder only to install immutable stream
-     * constraints on the underlying JsonFactory. Every Boot customizer is
-     * still applied in ordered form before Boot builds its single primary
-     * JsonMapper, which is also used by Spring MVC.
+     * 仅替换 Spring Boot 的构建器来设置 JSON 底层读取限制；仍按顺序应用 Boot 的定制项，并由 MVC 使用同一个主映射器。
      */
     @Bean
     @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)

@@ -7,6 +7,7 @@ import com.github.analyticshub.dto.AdminTrafficMetricRecord;
 import com.github.analyticshub.dto.AdminTrafficMetricsResponse;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.util.CryptoUtils;
+import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -19,17 +20,13 @@ import java.util.List;
  * 管理端流量指标查询服务
  */
 @Service
+@RequiredArgsConstructor
 public class AdminTrafficMetricQueryService {
 
     private static final System.Logger log = System.getLogger(AdminTrafficMetricQueryService.class.getName());
 
     private final MultiDataSourceManager dataSourceManager;
     private final ObjectMapper objectMapper;
-
-    public AdminTrafficMetricQueryService(MultiDataSourceManager dataSourceManager, ObjectMapper objectMapper) {
-        this.dataSourceManager = dataSourceManager;
-        this.objectMapper = objectMapper;
-    }
 
     public AdminTrafficMetricsResponse listMetrics(String projectId, String from, String to,
                                                    Integer page, Integer pageSize,

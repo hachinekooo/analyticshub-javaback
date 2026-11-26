@@ -112,16 +112,12 @@ class CounterAutomationTest {
     void testIsMatch_WithConditions() throws Exception {
         JsonNode trigger = objectMapper.readTree("{\"semantic_key\": \"task_completed\", \"conditions\": {\"status\": \"success\"}}");
         
-        // Match: status is success
         assertTrue(counterService.isMatch(trigger, "task_completed", Map.of("status", "success")));
         
-        // No match: status is failed
         assertFalse(counterService.isMatch(trigger, "task_completed", Map.of("status", "failed")));
         
-        // No match: status missing
         assertFalse(counterService.isMatch(trigger, "task_completed", Map.of("other", "val")));
         
-        // No match: properties null
         assertFalse(counterService.isMatch(trigger, "task_completed", null));
     }
 

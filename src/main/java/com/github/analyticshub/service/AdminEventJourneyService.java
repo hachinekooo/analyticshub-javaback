@@ -7,6 +7,7 @@ import com.github.analyticshub.dto.AdminEventRecord;
 import com.github.analyticshub.dto.AdminJourneyEventRecord;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.util.CryptoUtils;
+import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
@@ -29,6 +30,7 @@ import java.util.stream.Collectors;
  * 分页与筛选继续由 {@link AdminEventQueryService} 负责。</p>
  */
 @Service
+@RequiredArgsConstructor
 public class AdminEventJourneyService {
 
     private static final System.Logger log = System.getLogger(AdminEventJourneyService.class.getName());
@@ -43,17 +45,13 @@ public class AdminEventJourneyService {
     private final ObjectMapper objectMapper;
     private final ActorIdentityResolver actorIdentityResolver;
 
-    public AdminEventJourneyService(MultiDataSourceManager dataSourceManager,
-                                    ObjectMapper objectMapper,
-                                    ActorIdentityResolver actorIdentityResolver) {
-        this.dataSourceManager = dataSourceManager;
-        this.objectMapper = objectMapper;
-        this.actorIdentityResolver = actorIdentityResolver;
-    }
-
     /**
      * 以一条真实事件为锚点，返回同一归一 actor 在指定时间窗内的连续事件。
      * 没有 actor 的遗留事件退化为同设备时间线；结果始终包含锚点附近事件并按发生时间正序返回。
+     *
+     * @param anchorEventId 同项目下作为时间窗和身份来源的事件 ID。
+     * @param beforeMinutes 锚点前的分钟窗口；空值默认 60。
+     * @param afterMinutes 锚点后的分钟窗口；空值默认 60。
      */
     public AdminEventJourneyResponse getJourney(String projectId,
                                                  String anchorEventId,

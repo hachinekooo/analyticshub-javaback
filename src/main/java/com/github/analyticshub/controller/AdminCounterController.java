@@ -7,6 +7,7 @@ import com.github.analyticshub.dto.CounterUpsertRequest;
 import com.github.analyticshub.dto.CountersResponse;
 import com.github.analyticshub.service.CounterService;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -21,14 +22,11 @@ import org.springframework.web.bind.annotation.RestController;
  * 管理项目业务库中的长期累计计数器及其事件重建规则。
  */
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/admin/counters")
 public class AdminCounterController {
 
     private final CounterService counterService;
-
-    public AdminCounterController(CounterService counterService) {
-        this.counterService = counterService;
-    }
 
     /** 返回当前项目的全部计数器，包括非公开计数器。 */
     @GetMapping

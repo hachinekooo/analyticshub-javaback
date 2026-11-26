@@ -14,6 +14,7 @@ import com.github.analyticshub.service.EmailService;
 import io.micrometer.observation.ObservationRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -27,11 +28,10 @@ import org.springframework.security.web.firewall.ObservationMarkingRequestReject
 import org.springframework.security.web.firewall.RequestRejectedHandler;
 
 /**
- * Security configuration
- * - Disable CSRF for API calls (non-browser clients)
- * - Delegate management/Admin Token and collection HMAC policies to dedicated filters
+ * 配置 HTTP 安全过滤器、接口访问边界及请求拒绝时的响应。
  */
 @Configuration
+@RequiredArgsConstructor
 @EnableWebSecurity
 @EnableConfigurationProperties(ActorLinkSecurityProperties.class)
 public class SecurityConfig {
@@ -63,22 +63,6 @@ public class SecurityConfig {
 
     @org.springframework.beans.factory.annotation.Value("${app.rate-limit.window-ms:60000}")
     private long publicRateLimitWindowMs;
-
-    public SecurityConfig(ObjectMapper objectMapper,
-                          MultiDataSourceManager dataSourceManager,
-                          RateLimitService rateLimitService,
-                          EmailService emailService,
-                          TwoFactorAuthService twoFactorAuthService,
-                          ClientIpResolver clientIpResolver,
-                          ActorLinkSecurityProperties actorLinkSecurityProperties) {
-        this.objectMapper = objectMapper;
-        this.dataSourceManager = dataSourceManager;
-        this.rateLimitService = rateLimitService;
-        this.emailService = emailService;
-        this.twoFactorAuthService = twoFactorAuthService;
-        this.clientIpResolver = clientIpResolver;
-        this.actorLinkSecurityProperties = actorLinkSecurityProperties;
-    }
 
     @PostConstruct
     void validateConfiguration() {
@@ -117,11 +101,7 @@ public class SecurityConfig {
     }
 
     /**
-     * Keep Spring Security's strict firewall enabled while returning the same
-     * bounded API error shape as the application path policy. The firewall can
-     * reject a request before any configured filter runs in a real servlet
-     * container, so handling only {@link RequestPathSecurityPolicy} inside the
-     * filters would make live responses differ from MockMvc responses.
+     * Spring Security 防火墙可能在业务过滤器之前拒绝请求；这里把防火墙拒绝也转换为同一套接口错误格式。
      */
     @Bean
     public RequestRejectedHandler apiRequestRejectedHandler(

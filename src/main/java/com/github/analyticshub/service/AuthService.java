@@ -135,8 +135,7 @@ public class AuthService {
                     Timestamp.from(now)
             );
             if (inserted != 1) {
-                // Concurrent first registration lost the unique-key race. Never
-                // rotate the winner's credentials from this public endpoint.
+                // 首次注册遇到并发且当前请求未插入成功时，不允许从公开注册入口替换已创建的凭据。
                 throw BusinessException.deviceAlreadyRegistered();
             }
 
@@ -146,8 +145,7 @@ public class AuthService {
     }
 
     /**
-     * Rotates credentials only after the current credentials passed the HMAC
-     * authentication filter. This is the normal credential-renewal path.
+     * 常规轮换只允许由已通过 HMAC 验证的设备发起；短暂保留上一组凭据，用于兼容轮换响应丢失后的重试。
      */
     public DeviceRegisterResponse rotateCredentials() {
         RequestContext context = RequestContext.get();
@@ -190,8 +188,7 @@ public class AuthService {
             if (authenticatedApiKey.equals(state.previousApiKey())
                     && state.previousExpiresAt() != null
                     && state.previousExpiresAt().isAfter(now)) {
-                // The first response may have been lost. Returning the already
-                // active pair makes a retry idempotent during the grace window.
+                // 轮换响应可能丢失；宽限期内用上一组凭据重试时，返回当前凭据，不再轮换。
                 return new DeviceRegisterResponse(state.currentApiKey(), state.currentSecretKey(), false);
             }
             if (!authenticatedApiKey.equals(state.currentApiKey())) {
@@ -225,9 +222,7 @@ public class AuthService {
     }
 
     /**
-     * Reissues a device credential pair through an administrator-authenticated
-     * recovery path. The row lock makes reset atomic with client rotation, and
-     * clearing the previous pair revokes every credential issued before reset.
+     * 管理员为设备恢复访问；与客户端轮换锁住同一条设备记录，清除旧凭据及其宽限期。
      */
     public AdminDeviceCredentialResetResponse resetCredentialsByAdmin(String projectId, String deviceId) {
         String normalizedProjectId = projectId == null ? "" : projectId.strip();

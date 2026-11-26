@@ -9,6 +9,7 @@ import com.github.analyticshub.dto.AdminDashboardUpsertRequest;
 import com.github.analyticshub.entity.AnalyticsProject;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.mapper.AnalyticsProjectMapper;
+import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -24,6 +25,7 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 @Service
+@RequiredArgsConstructor
 public class AdminDashboardService {
 
     private static final Pattern PROJECT_ID_PATTERN = Pattern.compile("^[a-z0-9_-]{1,50}$");
@@ -42,26 +44,6 @@ public class AdminDashboardService {
     private final DashboardCounterPolicy counterPolicy;
     private final DashboardGovernedMetricPolicy governedMetricPolicy;
     private final AnalysisPackOwnershipService analyticsWriteLock;
-
-    public AdminDashboardService(
-            AnalyticsProjectMapper projectMapper,
-            JdbcTemplate jdbcTemplate,
-            ObjectMapper objectMapper,
-            DashboardDefinitionValidator definitionValidator,
-            DashboardOverviewMetricPolicy overviewMetricPolicy,
-            DashboardCounterPolicy counterPolicy,
-            DashboardGovernedMetricPolicy governedMetricPolicy,
-            AnalysisPackOwnershipService analyticsWriteLock
-    ) {
-        this.projectMapper = projectMapper;
-        this.jdbcTemplate = jdbcTemplate;
-        this.objectMapper = objectMapper;
-        this.definitionValidator = definitionValidator;
-        this.overviewMetricPolicy = overviewMetricPolicy;
-        this.counterPolicy = counterPolicy;
-        this.governedMetricPolicy = governedMetricPolicy;
-        this.analyticsWriteLock = analyticsWriteLock;
-    }
 
     public List<AdminDashboardRecord> list(String projectId) {
         String normalizedProjectId = requireProject(projectId);
@@ -156,6 +138,11 @@ public class AdminDashboardService {
         return get(normalizedProjectId, normalizedKey);
     }
 
+    /**
+     * 用修订号保护看板删除。
+     *
+     * @param expectedRevision 客户端当前持有的修订号；不同于库内修订号时拒绝删除。
+     */
     @Transactional
     public void delete(String projectId, String dashboardKey, long expectedRevision) {
         String normalizedProjectId = requireProject(projectId);

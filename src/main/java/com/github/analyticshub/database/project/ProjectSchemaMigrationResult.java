@@ -3,11 +3,7 @@ package com.github.analyticshub.database.project;
 import java.util.List;
 
 /**
- * A completed project-schema migration.
- *
- * <p>The result deliberately contains database schema facts rather than an
- * HTTP message so it can also be reused by CLI or scheduled maintenance
- * entrypoints.</p>
+ * 项目库迁移的执行结果，与 HTTP 响应文案无关，可由接口或维护任务复用。
  */
 public record ProjectSchemaMigrationResult(
         String schema,

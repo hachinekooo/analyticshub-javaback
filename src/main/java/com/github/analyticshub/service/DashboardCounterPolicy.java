@@ -2,6 +2,7 @@ package com.github.analyticshub.service;
 
 import tools.jackson.databind.JsonNode;
 import com.github.analyticshub.exception.BusinessException;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashSet;
@@ -15,13 +16,10 @@ import java.util.Set;
  * 使无关布局编辑仍可保存，并由展示与配置界面明确提示失效引用。</p>
  */
 @Component
+@RequiredArgsConstructor
 public class DashboardCounterPolicy {
 
     private final CounterService counterService;
-
-    public DashboardCounterPolicy(CounterService counterService) {
-        this.counterService = counterService;
-    }
 
     public void validateForWrite(String projectId, JsonNode definition, JsonNode existingDefinition) {
         Set<String> requestedKeys = collectCounterKeys(definition);

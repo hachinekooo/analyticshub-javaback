@@ -14,6 +14,7 @@ import com.github.analyticshub.dto.WorkOrderActivityItem;
 import com.github.analyticshub.dto.WorkOrderNotificationQueuedResponse;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -29,6 +30,7 @@ import java.util.Map;
 import java.util.UUID;
 
 @Service
+@RequiredArgsConstructor
 public class AdminPrivacyRequestService {
 
     private static final System.Logger log = System.getLogger(AdminPrivacyRequestService.class.getName());
@@ -36,14 +38,6 @@ public class AdminPrivacyRequestService {
     private final MultiDataSourceManager dataSourceManager;
     private final ObjectMapper objectMapper;
     private final ProjectTransactionExecutor projectTransactions;
-
-    public AdminPrivacyRequestService(MultiDataSourceManager dataSourceManager,
-                                      ObjectMapper objectMapper,
-                                      ProjectTransactionExecutor projectTransactions) {
-        this.dataSourceManager = dataSourceManager;
-        this.objectMapper = objectMapper;
-        this.projectTransactions = projectTransactions;
-    }
 
     public AdminPrivacyRequestsResponse listRequests(String projectId,
                                                      String from,

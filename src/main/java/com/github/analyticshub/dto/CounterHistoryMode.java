@@ -1,12 +1,12 @@
 package com.github.analyticshub.dto;
 
 /**
- * Defines the lower boundary used when rebuilding an event-driven counter.
+ * 决定重算事件计数时从哪条时间边界开始纳入事件。
  */
 public enum CounterHistoryMode {
-    /** Count every matching event already stored for the project. */
+    /** 纳入项目已保存且符合规则的全部历史事件。 */
     INCLUDE_EXISTING,
 
-    /** Count only events ingested after this mode was first selected. */
+    /** 只纳入启用该模式后入库的事件。 */
     START_FROM_NOW
 }

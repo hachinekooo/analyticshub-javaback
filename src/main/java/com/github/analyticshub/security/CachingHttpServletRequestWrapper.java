@@ -69,7 +69,7 @@ public class CachingHttpServletRequestWrapper extends HttpServletRequestWrapper 
         return new String(this.cachedBody, java.nio.charset.StandardCharsets.UTF_8);
     }
 
-    /** Returns an immutable snapshot of the exact bytes read from the request. */
+    /** 返回请求体原始字节的副本，供验签使用；调用方修改副本不会影响后续读取。 */
     public byte[] getBodyBytes() {
         return this.cachedBody.clone();
     }

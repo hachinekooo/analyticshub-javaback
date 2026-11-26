@@ -5,6 +5,7 @@ import com.github.analyticshub.dto.AdminSessionRecord;
 import com.github.analyticshub.dto.AdminSessionsResponse;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.util.CryptoUtils;
+import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -17,13 +18,10 @@ import java.util.List;
  * 管理端会话查询服务
  */
 @Service
+@RequiredArgsConstructor
 public class AdminSessionQueryService {
 
     private final MultiDataSourceManager dataSourceManager;
-
-    public AdminSessionQueryService(MultiDataSourceManager dataSourceManager) {
-        this.dataSourceManager = dataSourceManager;
-    }
 
     public AdminSessionsResponse listSessions(String projectId, String from, String to,
                                               Integer page, Integer pageSize,

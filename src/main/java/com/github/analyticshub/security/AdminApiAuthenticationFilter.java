@@ -41,10 +41,7 @@ public class AdminApiAuthenticationFilter extends OncePerRequestFilter {
     }
 
     @Override
-    protected void doFilterInternal(
-            HttpServletRequest request,
-            HttpServletResponse response,
-            FilterChain filterChain) throws ServletException, IOException {
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
 
         RequestPathSecurityPolicy.Inspection requestPath = RequestPathSecurityPolicy.inspect(request);
         if (RequestPathSecurityPolicy.rejectIfUnsafe(requestPath, response, objectMapper)) {
@@ -152,9 +149,7 @@ public class AdminApiAuthenticationFilter extends OncePerRequestFilter {
     }
 
     /**
-     * The liveness endpoint stays anonymous for load balancers and container
-     * probes. Every other Actuator endpoint shares the same Admin Token, rate
-     * limiting and optional 2FA policy as the management API.
+     * 探活端点供负载均衡与容器匿名调用；其余 Actuator 端点和管理接口一样需要管理令牌、限流，并按配置应用双因素验证。
      */
     static boolean requiresAdminAuthentication(String path) {
         if (path == null || "/actuator/health".equals(path)) {
@@ -182,7 +177,6 @@ public class AdminApiAuthenticationFilter extends OncePerRequestFilter {
                 return authorization.substring(prefix.length()).trim();
             }
         }
-        // Fallback header used by the admin frontend.
         return request.getHeader("X-Admin-Token");
     }
 

@@ -5,6 +5,7 @@ import com.github.analyticshub.dto.ActorIdentityLinkRequest;
 import com.github.analyticshub.dto.ActorIdentityLinkResponse;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -16,18 +17,11 @@ import java.util.UUID;
 
 /** 保存项目内匿名 actor 到权威云账号 actor 的不可变绑定。 */
 @Service
+@RequiredArgsConstructor
 public class ActorIdentityLinkService {
 
     private final MultiDataSourceManager dataSourceManager;
     private final ProjectTransactionExecutor projectTransactions;
-
-    public ActorIdentityLinkService(
-            MultiDataSourceManager dataSourceManager,
-            ProjectTransactionExecutor projectTransactions
-    ) {
-        this.dataSourceManager = dataSourceManager;
-        this.projectTransactions = projectTransactions;
-    }
 
     public ActorIdentityLinkResponse link(String projectId, ActorIdentityLinkRequest request) {
         String normalizedProjectId = normalizeProject(projectId);

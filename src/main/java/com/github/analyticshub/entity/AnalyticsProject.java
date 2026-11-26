@@ -43,7 +43,7 @@ public class AnalyticsProject {
 
     @TableField("db_password_encrypted")
     @JsonIgnore
-    // Stored encrypted and excluded from API responses.
+    // 项目数据库密码以密文保存；管理端查询不返回该字段。
     private String dbPasswordEncrypted;
 
     // 表前缀（避免与业务表名冲突）
@@ -85,7 +85,6 @@ public class AnalyticsProject {
         this.updatedAt = updatedAt;
     }
 
-    // Getters and Setters
     public Long getId() {
         return id;
     }

@@ -6,6 +6,7 @@ import com.github.analyticshub.dto.DeviceRegisterResponse;
 import com.github.analyticshub.service.AuthService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,6 +20,7 @@ import java.util.Map;
  * 处理设备注册等认证相关请求
  */
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/v1/auth")
 public class AuthController {
 
@@ -26,10 +28,6 @@ public class AuthController {
 
     @Value("${app.security.admin-token:}")
     private String adminToken;
-
-    public AuthController(AuthService authService) {
-        this.authService = authService;
-    }
 
     /**
      * 设备注册接口
@@ -58,7 +56,7 @@ public class AuthController {
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestHeader(value = "X-Admin-Token", required = false) String xAdminToken) {
 
-        // Admin token must come from headers to avoid leaking through URLs/logs.
+        // 管理端令牌只从请求头读取，避免出现在 URL 和访问日志中。
         if (hasQueryToken(request)) {
             return ResponseEntity
                     .status(HttpStatus.UNAUTHORIZED)

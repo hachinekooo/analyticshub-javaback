@@ -6,6 +6,7 @@ import com.github.analyticshub.dto.EventTrackResponse;
 import com.github.analyticshub.dto.EventBatchTrackSummary;
 import com.github.analyticshub.service.EventService;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
@@ -14,14 +15,11 @@ import org.springframework.web.bind.annotation.*;
  * 处理事件记录相关请求
  */
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/v1/events")
 public class EventController {
 
     private final EventService eventService;
-
-    public EventController(EventService eventService) {
-        this.eventService = eventService;
-    }
 
     /**
      * 单事件上传

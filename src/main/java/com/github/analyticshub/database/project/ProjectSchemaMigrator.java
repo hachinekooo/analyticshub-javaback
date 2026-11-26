@@ -21,12 +21,7 @@ import java.util.Objects;
 import java.util.regex.Pattern;
 
 /**
- * Owns the Flyway lifecycle of a connected project's database schema.
- *
- * <p>System database migrations and project database migrations are separate
- * migration streams. A project history table is also scoped by table prefix,
- * allowing multiple projects to share a database/schema without sharing
- * migration state.</p>
+ * 管理项目库的 Flyway 迁移，与系统库迁移独立；共享数据库和模式的项目也按表前缀各自记录迁移历史。
  */
 @Component
 public class ProjectSchemaMigrator {
@@ -63,12 +58,7 @@ public class ProjectSchemaMigrator {
     );
 
     /**
-     * Migrates a project schema to the latest bundled version.
-     *
-     * <p>An untracked but complete 1.0.0 schema is baselined at V1 so its
-     * data is preserved and only later migrations run. A partially-created
-     * legacy schema is rejected because guessing which DDL succeeded can hide
-     * production drift.</p>
+     * 迁移到后端内置的最新项目库版本；无迁移历史的旧库只有完整匹配 V1 才能登记 V1 基线。
      */
     public ProjectSchemaMigrationResult migrate(DataSource dataSource, String schema, String tablePrefix) {
         Inputs inputs = validateInputs(dataSource, schema, tablePrefix);
@@ -102,8 +92,7 @@ public class ProjectSchemaMigrator {
                         .baselineDescription("AnalyticsHub 1.0.0 project schema");
                 legacyBaselineApplied = true;
             } else {
-                // The target schema may contain another project's prefix. A V0
-                // baseline keeps that schema non-destructive while still running V1.
+                // 模式中可能已有其他项目的表；把新项目基线记为 V0，让该项目自己的 V1 仍然执行。
                 configuration
                         .baselineVersion("0")
                         .baselineDescription("Empty prefix baseline");
@@ -144,7 +133,7 @@ public class ProjectSchemaMigrator {
     }
 
     /**
-     * Inspects migration and table status without modifying the target schema.
+     * 只读检查项目表和迁移历史，用于区分可迁移、已就绪和需要人工处理的状态。
      */
     public ProjectSchemaStatus inspect(DataSource dataSource, String schema, String tablePrefix) {
         Inputs inputs = validateInputs(dataSource, schema, tablePrefix);

@@ -153,8 +153,7 @@ class AuthServicePostgresIT {
         setAuthenticatedRequestContext(first);
         DeviceRegisterResponse rotated = authService.rotateCredentials();
 
-        // Simulate a lost HTTP response: the client still owns only the old
-        // pair and retries the same authenticated operation.
+        // 模拟轮换已成功但 HTTP 响应丢失；客户端只有旧凭据，只能重试原请求。
         setAuthenticatedRequestContext(first);
         DeviceRegisterResponse recovered = authService.rotateCredentials();
 

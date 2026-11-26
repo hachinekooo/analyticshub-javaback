@@ -3,6 +3,7 @@ package com.github.analyticshub.controller;
 import com.github.analyticshub.common.dto.ApiResponse;
 import com.github.analyticshub.dto.AdminDevicesResponse;
 import com.github.analyticshub.service.AdminDeviceQueryService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -12,14 +13,11 @@ import org.springframework.web.bind.annotation.RestController;
  * 管理端设备查询接口
  */
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/admin/devices")
 public class AdminDeviceController {
 
     private final AdminDeviceQueryService adminDeviceQueryService;
-
-    public AdminDeviceController(AdminDeviceQueryService adminDeviceQueryService) {
-        this.adminDeviceQueryService = adminDeviceQueryService;
-    }
 
     @GetMapping
     public ApiResponse<AdminDevicesResponse> list(

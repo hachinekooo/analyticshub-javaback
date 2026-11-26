@@ -49,7 +49,8 @@ When code, scripts, and docs disagree, inspect the code/scripts first, update th
   - DTOs define API contracts.
 - Use `ApiResponse` for normal API responses and `BusinessException` plus project error codes for expected failures.
 - Prefer explicit DTOs, validation annotations, typed config, and allow-list validation over loose maps or stringly typed contracts.
-- Use constructor injection for required Spring dependencies.
+- Controller 的 HTTP 入口连续排列；私有请求解析和校验放在类尾，必要时用一条带职责名称的分隔注释标明。
+- Spring 必需依赖保留为 `final` 字段并用构造器注入。仅在单一构造器只直接赋值、生成后的参数名及顺序不变时，用 `@RequiredArgsConstructor`；带限定注解、初始化、重载或需维持不同签名的构造器应显式保留。Lombok 使用 Spring Boot BOM 管理的版本，仅在编译期使用。
 
 ## Security Rules
 
@@ -109,6 +110,9 @@ Run the narrowest useful verification first, then broader checks when touching s
 
 ## Documentation Rules
 
+- 源码注释使用中文；类说明职责与上下游，主要方法说明业务前提和结果，字段说明易混的来源或计量单位，关键逻辑写原因。命名已足够清楚的短方法不补注释。
+- API 入口就近说明会改变调用方理解的默认值、筛选、计数或失败边界；完整参数和使用示例维护在对应接口文档中。
+- 重要方法用标准 JavaDoc 的中文 `@param` 说明容易混淆的参数，写清来源、单位、默认值、空值、组合限制或副作用；`projectId`、`pageSize` 等无特殊口径的常见参数不必逐一说明。
 - Keep docs true to current code and scripts.
 - Keep `docs/**/*.md` front matter minimal and consistent: `title`, `type`, `status`, `audience`, `scope`, `agent_notes`.
 - Prefer short docs with clear links over duplicating long procedures in multiple places.

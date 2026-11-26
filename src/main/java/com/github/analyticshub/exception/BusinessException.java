@@ -28,7 +28,6 @@ public class BusinessException extends RuntimeException {
         this.details = details == null ? Map.of() : Map.copyOf(details);
     }
 
-    // Getters
     public String getCode() {
         return code;
     }

@@ -9,6 +9,7 @@ import com.github.analyticshub.dto.CounterUpsertRequest;
 import com.github.analyticshub.dto.CountersResponse;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -27,24 +28,13 @@ import java.util.Set;
 import java.util.StringJoiner;
 
 @Service
+@RequiredArgsConstructor
 public class CounterService {
 
     private final MultiDataSourceManager dataSourceManager;
     private final ObjectMapper objectMapper;
     private final ProjectTransactionExecutor projectTransactions;
     private final SemanticDictionaryService semanticDictionaryService;
-
-    public CounterService(
-            MultiDataSourceManager dataSourceManager,
-            ObjectMapper objectMapper,
-            ProjectTransactionExecutor projectTransactions,
-            SemanticDictionaryService semanticDictionaryService
-    ) {
-        this.dataSourceManager = dataSourceManager;
-        this.objectMapper = objectMapper;
-        this.projectTransactions = projectTransactions;
-        this.semanticDictionaryService = semanticDictionaryService;
-    }
 
     public CountersResponse list(String projectId, boolean onlyPublic) {
         String normalizedProjectId = normalizeProjectId(projectId);
@@ -206,12 +196,8 @@ public class CounterService {
     }
 
     /**
-     * Rebuilds an event-driven counter from its persisted history policy.
-     *
-     * <p>The counter row is locked before the historical count starts. Live
-     * event projection takes the same row lock, so a concurrent event is
-     * counted either by this snapshot or by the subsequent increment, never
-     * lost by the replacement update.</p>
+     * 按计数器保存的历史范围重算，并加上可正可负的基础调整值。
+     * 实时累加与重算锁住同一条计数器记录，事件要么已进入重算快照，要么随后累加，避免覆盖并发增量。
      */
     public CounterRecord rebuild(String projectId, String key) {
         String normalizedProjectId = normalizeProjectId(projectId);
@@ -392,7 +378,7 @@ public class CounterService {
         try {
             normalizedTrigger = validateAndNormalizeEventTrigger(trigger);
         } catch (BusinessException exception) {
-            // A malformed legacy rule must not make event collection fail.
+            // 旧计数器规则损坏时跳过该规则，不能让业务事件采集失败。
             return false;
         }
         JsonNode propertyNode = properties == null ? null : objectMapper.valueToTree(properties);

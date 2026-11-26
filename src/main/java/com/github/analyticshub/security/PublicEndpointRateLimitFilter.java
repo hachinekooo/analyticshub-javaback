@@ -15,9 +15,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Per-process fixed-window protection for anonymous endpoints that can create
- * data or verify credentials. It is intentionally a safety baseline; clustered
- * deployments should also enforce a shared limit at the reverse proxy/gateway.
+ * 为可写入数据或验证凭据的匿名接口提供单实例固定窗口限流；多实例部署需要在网关统一限流。
  */
 public class PublicEndpointRateLimitFilter extends OncePerRequestFilter {
 

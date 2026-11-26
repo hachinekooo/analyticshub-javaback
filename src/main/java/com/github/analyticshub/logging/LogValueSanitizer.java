@@ -4,9 +4,7 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
- * Central allow-list for values written to single-line application logs.
- * Invalid client-controlled values are replaced instead of truncated so a
- * malicious prefix cannot be mistaken for a trusted identifier.
+ * 为单行应用日志校验来自外部的标识；不合规的值整体替换，避免截断后的前缀被误认为真实标识。
  */
 public final class LogValueSanitizer {
 

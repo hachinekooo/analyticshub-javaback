@@ -3,14 +3,16 @@ package com.github.analyticshub.service;
 import com.github.analyticshub.dto.ProjectAnalysisTemplate;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
 
-/** Initializes platform-owned semantic contracts for a project's selected template. */
+/** 按项目选用的模板登记平台预置业务事件定义。 */
 @Service
+@RequiredArgsConstructor
 public class SemanticTemplateService {
 
     private static final List<Preset> PRODUCT_PRESETS = List.of(
@@ -37,12 +39,7 @@ public class SemanticTemplateService {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
 
-    public SemanticTemplateService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
-        this.jdbcTemplate = jdbcTemplate;
-        this.objectMapper = objectMapper;
-    }
-
-    /** Idempotently inserts official contracts; aliases intentionally start empty. */
+    /** 重复初始化不会覆盖已有定义；新定义不预设原始事件名。 */
     public void initialize(String projectId, ProjectAnalysisTemplate template) {
         if (template != ProjectAnalysisTemplate.APP && template != ProjectAnalysisTemplate.WEB_APP) {
             return;

@@ -2,6 +2,7 @@ package com.github.analyticshub.service;
 
 import tools.jackson.databind.JsonNode;
 import com.github.analyticshub.exception.BusinessException;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashSet;
@@ -17,13 +18,10 @@ import java.util.Set;
  * 避免静默删除配置或阻塞整个 Dashboard 的维护。</p>
  */
 @Component
+@RequiredArgsConstructor
 public class DashboardOverviewMetricPolicy {
 
     private final SemanticDictionaryService semanticDictionaryService;
-
-    public DashboardOverviewMetricPolicy(SemanticDictionaryService semanticDictionaryService) {
-        this.semanticDictionaryService = semanticDictionaryService;
-    }
 
     public void validateForWrite(
             String projectId,

@@ -1,5 +1,6 @@
 package com.github.analyticshub.logging;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
@@ -11,6 +12,7 @@ import java.util.TreeMap;
  * 所有环境都对敏感配置脱敏；开发日志也不能输出原始凭据。
  */
 @Component
+@RequiredArgsConstructor
 public class StartupEnvironmentLogger {
 
     private static final System.Logger log = System.getLogger(StartupEnvironmentLogger.class.getName());
@@ -68,10 +70,6 @@ public class StartupEnvironmentLogger {
     };
 
     private final Environment environment;
-
-    public StartupEnvironmentLogger(Environment environment) {
-        this.environment = environment;
-    }
 
     public void logStartupEnvironment() {
         String[] activeProfiles = environment.getActiveProfiles();

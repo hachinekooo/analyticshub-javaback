@@ -17,13 +17,7 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Delivers transactional work-order notifications.
- *
- * <p>Claims are committed before SMTP I/O and use {@code FOR UPDATE SKIP LOCKED},
- * so concurrent application instances cannot normally deliver the same row.
- * A timed-out PROCESSING claim can be reclaimed after a crashed worker. This is
- * therefore an at-least-once delivery pipeline (至少投递一次), which is the
- * strongest guarantee possible without provider-side idempotency.</p>
+ * 投递与工单变更同事务入队的通知。领取任务后有超时回收机制；若邮件已发出但投递结果尚未落库，恢复后可能重复投递。
  */
 @Service
 public class WorkOrderOutboxDeliveryService {
@@ -91,7 +85,7 @@ public class WorkOrderOutboxDeliveryService {
                         notification.content()
                 );
             } catch (RuntimeException exception) {
-                // Do not log the exception message: SMTP errors can contain PII.
+                // 不记录异常原文，SMTP 错误可能包含收件人地址。
                 log.log(System.Logger.Level.ERROR,
                         "Work-order email delivery raised an exception: projectId={0}, failureType={1}",
                         normalizedProjectId,
@@ -114,7 +108,7 @@ public class WorkOrderOutboxDeliveryService {
                 case RETRY -> retryScheduled++;
                 case DEAD -> dead++;
                 case LOST_CLAIM -> {
-                    // Another worker reclaimed the timed-out claim. Do not overwrite it.
+                    // 任务超时后可能已由其他实例重新领取，不覆盖新领取者的结果。
                 }
             }
         }

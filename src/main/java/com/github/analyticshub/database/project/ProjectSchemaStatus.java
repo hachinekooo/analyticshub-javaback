@@ -5,7 +5,7 @@ import java.util.Collections;
 import java.util.Map;
 
 /**
- * Read-only status of one prefix-scoped project schema.
+ * 单个项目表前缀的迁移状态；读取状态不会改动项目库。
  */
 public record ProjectSchemaStatus(
         String schema,

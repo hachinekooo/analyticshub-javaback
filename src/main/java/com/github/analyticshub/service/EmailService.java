@@ -102,9 +102,7 @@ public class EmailService {
     }
 
     /**
-     * Whether background delivery can currently reach an SMTP sender.
-     * The outbox scheduler uses this guard so disabled mail does not consume
-     * retry attempts or turn queued notifications into dead letters.
+     * 判断邮件队列是否可以安排投递；SMTP 未启用或未配置时不领取任务，避免白白消耗重试次数。
      */
     public boolean isDeliveryEnabled() {
         return emailEnabled && mailSender != null && fromEmail != null && !fromEmail.isBlank();
@@ -136,11 +134,10 @@ public class EmailService {
             message.setSubject(subject);
             message.setText(content);
             mailSender.send(message);
-            // Recipient addresses are deliberately excluded from logs.
             log.log(System.Logger.Level.INFO, "Email sent");
             return EmailDeliveryStatus.SENT;
         } catch (Exception e) {
-            // SMTP exception text can contain the full recipient address.
+            // 不记录异常原文，SMTP 错误可能包含完整的收件地址。
             log.log(System.Logger.Level.ERROR,
                     "Email send failed: failureType={0}",
                     e.getClass().getSimpleName());

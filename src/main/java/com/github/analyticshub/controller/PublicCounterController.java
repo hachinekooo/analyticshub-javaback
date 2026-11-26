@@ -7,6 +7,7 @@ import com.github.analyticshub.dto.PublicCounterResponse;
 import com.github.analyticshub.service.CounterService;
 import tools.jackson.databind.JsonNode;
 import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.IllformedLocaleException;
@@ -15,6 +16,7 @@ import java.util.Locale;
 import java.util.stream.Collectors;
 
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/public/counters")
 public class PublicCounterController {
 
@@ -24,10 +26,6 @@ public class PublicCounterController {
             List.of(new Locale.LanguageRange("en"));
 
     private final CounterService counterService;
-
-    public PublicCounterController(CounterService counterService) {
-        this.counterService = counterService;
-    }
 
     @GetMapping
     public ApiResponse<List<PublicCounterResponse>> list(@RequestParam("projectId") String projectId,

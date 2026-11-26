@@ -2,6 +2,7 @@ package com.github.analyticshub.controller;
 
 import com.github.analyticshub.common.dto.ApiResponse;
 import com.github.analyticshub.security.TwoFactorAuthService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -10,14 +11,11 @@ import java.util.HashMap;
 import java.util.Map;
 
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/admin/security/2fa")
 public class AdminSecurityController {
 
     private final TwoFactorAuthService twoFactorAuthService;
-
-    public AdminSecurityController(TwoFactorAuthService twoFactorAuthService) {
-        this.twoFactorAuthService = twoFactorAuthService;
-    }
 
     /**
      * 获取 2FA 配置信息（用于首次绑定）

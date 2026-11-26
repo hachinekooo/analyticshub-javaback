@@ -10,9 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Resolves a client address without trusting forwarding headers from arbitrary
- * internet clients. Forwarded hops are considered only when the immediate
- * peer belongs to the configured trusted-proxy list.
+ * 仅当直接连接方是受信代理时才采纳转发头，避免客户端自行指定来源 IP。
  */
 @Component
 public class ClientIpResolver {
@@ -102,7 +100,7 @@ public class ClientIpResolver {
         if (normalized.startsWith("[") && normalized.endsWith("]")) {
             normalized = normalized.substring(1, normalized.length() - 1);
         }
-        // Prevent InetAddress from performing DNS for untrusted header values.
+        // 只接受 IP 字面量，不对客户端提供的地址做 DNS 查询。
         if (!normalized.matches("[0-9A-Fa-f:.]+")
                 || (!normalized.contains(":") && !normalized.matches("[0-9.]+"))) {
             return null;

@@ -88,9 +88,7 @@ public final class CryptoUtils {
     }
 
     /**
-     * Computes a digest from the received bytes without applying any charset
-     * decoding or normalization. This is required when the digest is part of
-     * an HTTP message authentication contract.
+     * 对收到的原始字节求摘要，用于 HTTP 签名；验签前不能重新编码或规范化请求体。
      */
     public static String sha256Hex(byte[] data) {
         try {
@@ -163,10 +161,14 @@ public final class CryptoUtils {
     /**
      * 构建签名数据字符串
      * 格式: method|path|timestamp|deviceId|userId|body
+     *
+     * @param path 双方约定参与签名的请求路径，调用方应传与验签端一致的值。
+     * @param timestamp 参与签名的原始时间戳字符串，不在此处换算单位。
+     * @param body 参与签名的请求体表示；本方法不再做编码或摘要。
      */
     public static String buildSignatureData(String method, String path, String timestamp,
                                            String deviceId, String userId, String body) {
-        // Keep this format in sync with client-side signing to avoid mismatches.
+        // 此拼接格式是客户端与服务端的签名约定，不能单侧改动。
         return String.join("|",
                 method != null ? method : "",
                 path != null ? path : "",

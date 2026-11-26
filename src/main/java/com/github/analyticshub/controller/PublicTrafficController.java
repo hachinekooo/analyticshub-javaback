@@ -52,6 +52,12 @@ public class PublicTrafficController {
         this.sameOriginHosts = parseConfiguredHosts(sameOriginHosts);
     }
 
+    /**
+     * 查询公开流量概览；两端都不传时统计历史累计流量，不限最近七天。
+     *
+     * @param from 入库时间起点；只传 to 时，从结束边界往前取七天。
+     * @param to 结束日期按 UTC 包含当天，结束时刻不包含边界；省略时取当前时刻。
+     */
     @GetMapping("/summary")
     public ApiResponse<TrafficMetricSummaryResponse> getPublicSummary(
             @RequestParam("projectId") String projectId,
@@ -62,6 +68,12 @@ public class PublicTrafficController {
         return ApiResponse.success(trafficMetricStatsService.getSummary(projectId, from, to));
     }
 
+    /**
+     * 采集一条公开流量记录。
+     *
+     * @param queryProjectId 项目 ID 的查询参数备选值；优先读取 X-Project-ID 请求头。
+     * @param queryUserId 统计身份的备选值；优先读取 X-User-ID 请求头，不用于认证。
+     */
     @PostMapping("/track")
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<TrafficMetricTrackResponse> track(
@@ -93,6 +105,12 @@ public class PublicTrafficController {
         );
     }
 
+    /**
+     * 批量采集公开流量，返回接收、接受和拒绝的条数。
+     *
+     * @param queryProjectId 项目 ID 的查询参数备选值；优先读取 X-Project-ID 请求头。
+     * @param queryUserId 整批共用的统计身份备选值；优先读取 X-User-ID 请求头，不用于认证。
+     */
     @PostMapping("/batch")
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<Map<String, Integer>> batch(
@@ -324,7 +342,6 @@ public class PublicTrafficController {
                     return parsed;
                 }
             } catch (IllegalArgumentException ignored) {
-                // Converted to the stable public API error below.
             }
             throw new BusinessException(
                     "INVALID_DEVICE_ID",
@@ -333,7 +350,7 @@ public class PublicTrafficController {
             );
         }
 
-        // Same-origin callers can use the first-party cookie without SDK state.
+        // 同源调用没有 SDK 保存的访客标识时，可以沿用第一方 Cookie。
         UUID cookieDeviceId = readDeviceIdCookie(request);
         if (cookieDeviceId != null) {
             return cookieDeviceId;

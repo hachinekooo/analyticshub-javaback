@@ -5,6 +5,7 @@ import com.github.analyticshub.dto.AnalyticsPropertyDefinitionResponse;
 import com.github.analyticshub.dto.AnalyticsPropertyFilter;
 import com.github.analyticshub.dto.AnalyticsPropertyFilterOperator;
 import com.github.analyticshub.exception.BusinessException;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
@@ -17,6 +18,7 @@ import java.util.Set;
 
 /** 把受限属性筛选合同编译为参数化 SQL；不接受 JSONPath、表达式或任意 SQL。 */
 @Service
+@RequiredArgsConstructor
 public class AnalyticsPropertyFilterService {
 
     private static final int MAX_FILTERS = 12;
@@ -27,14 +29,12 @@ public class AnalyticsPropertyFilterService {
     private final ObjectMapper objectMapper;
     private final AnalyticsPropertyDefinitionService definitionService;
 
-    public AnalyticsPropertyFilterService(
-            ObjectMapper objectMapper,
-            AnalyticsPropertyDefinitionService definitionService
-    ) {
-        this.objectMapper = objectMapper;
-        this.definitionService = definitionService;
-    }
-
+    /**
+     * 校验可筛选属性并生成带参数的查询条件。
+     *
+     * @param encodedFilters 筛选条件的 JSON 数组；空白或空数组表示不限。
+     * @param propertiesColumn 调用方固定的 JSONB 列或限定列名，不得来自 HTTP 参数。
+     */
     public CompiledPropertyFilters compile(String projectId, String encodedFilters, String propertiesColumn) {
         if (encodedFilters == null || encodedFilters.isBlank()) {
             return CompiledPropertyFilters.empty();

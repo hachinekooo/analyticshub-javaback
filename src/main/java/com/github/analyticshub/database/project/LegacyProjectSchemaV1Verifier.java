@@ -11,13 +11,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Immutable structural fingerprint of the pre-Flyway AnalyticsHub 1.0.0
- * project schema.
- *
- * <p>Flyway baseline records a version but cannot prove what DDL produced an
- * existing untracked schema. Automatic baseline is therefore allowed only
- * when the runtime-relevant columns, keys, checks, and indexes match this
- * frozen fingerprint.</p>
+ * 保存 Flyway 接管前的项目表结构基准；只有运行所需的字段、约束和索引全部匹配，才允许把旧库登记为 V1。
  */
 final class LegacyProjectSchemaV1Verifier {
 

@@ -11,6 +11,7 @@ import com.github.analyticshub.dto.AdminMetricsTrendPoint;
 import com.github.analyticshub.dto.AdminMetricsTrendResponse;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
+import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.transaction.TransactionTimedOutException;
@@ -38,6 +39,7 @@ import java.util.Set;
  * 管理端运营数据服务
  */
 @Service
+@RequiredArgsConstructor
 public class AdminMetricsService {
 
     private static final System.Logger log = System.getLogger(AdminMetricsService.class.getName());
@@ -52,22 +54,6 @@ public class AdminMetricsService {
     private final AnalyticsPropertyFilterService propertyFilterService;
     private final AnalyticsQueryProperties queryProperties;
     private final ProjectTransactionExecutor projectTransactions;
-
-    public AdminMetricsService(
-            MultiDataSourceManager dataSourceManager,
-            SemanticDictionaryService semanticDictionaryService,
-            ActorIdentityResolver actorIdentityResolver,
-            AnalyticsPropertyFilterService propertyFilterService,
-            AnalyticsQueryProperties queryProperties,
-            ProjectTransactionExecutor projectTransactions
-    ) {
-        this.dataSourceManager = dataSourceManager;
-        this.semanticDictionaryService = semanticDictionaryService;
-        this.actorIdentityResolver = actorIdentityResolver;
-        this.propertyFilterService = propertyFilterService;
-        this.queryProperties = queryProperties;
-        this.projectTransactions = projectTransactions;
-    }
 
     public AdminMetricsOverviewResponse getOverview(String projectId, String from, String to) {
         return getOverview(projectId, from, to, null);

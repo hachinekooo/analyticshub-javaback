@@ -22,6 +22,12 @@ public class ActorIdentityResolver {
 
     private static final int QUERY_CHUNK_SIZE = 500;
 
+    /**
+     * 按项目当前关联关系批量解析统计身份。
+     *
+     * @param linkTable 由项目数据源解析的身份关联表名，不能使用外部输入。
+     * @param actorIds 待归一的原始统计身份集合；结果按输入的原始值查找。
+     */
     public Map<String, String> resolveCanonicalActors(
             JdbcTemplate jdbcTemplate,
             String linkTable,
@@ -68,6 +74,9 @@ public class ActorIdentityResolver {
      * <p>当前 identity link 契约只允许一跳关联，因此这里先将 source 解析为 canonical，
      * 再返回 canonical 与它的全部 source。事件列表和锚点旅程必须复用这一边界，
      * 避免各自实现后产生不同的身份查询口径。</p>
+     *
+     * @param linkTable 由项目数据源解析的身份关联表名。
+     * @param actorId 原始或归一统计身份 UUID；未建立关联时只返回该身份本身。
      */
     public List<String> resolveActorMembers(
             JdbcTemplate jdbcTemplate,

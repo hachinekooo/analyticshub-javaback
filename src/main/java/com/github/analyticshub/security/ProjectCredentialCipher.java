@@ -18,12 +18,7 @@ import java.security.SecureRandom;
 import java.util.Base64;
 
 /**
- * Authenticated encryption for project database passwords.
- *
- * <p>The project id is authenticated as AAD, so ciphertext copied to another
- * project row cannot be decrypted there. Values without an {@code enc:}
- * envelope are treated only as the legacy 1.0.0 Base64 format and are never
- * produced by this class.</p>
+ * 为项目数据库密码提供绑定项目的加密，密文不能跨项目使用；只读兼容无 {@code enc:} 前缀的旧版 Base64，不再写出旧格式。
  */
 @Component
 public class ProjectCredentialCipher {

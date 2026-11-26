@@ -32,7 +32,6 @@ public class RequestContext {
         CONTEXT.remove();
     }
 
-    // Getters and Setters
     public String getProjectId() {
         return projectId;
     }

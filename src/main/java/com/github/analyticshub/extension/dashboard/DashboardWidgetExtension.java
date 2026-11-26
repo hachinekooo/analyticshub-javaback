@@ -5,37 +5,29 @@ import tools.jackson.databind.JsonNode;
 import java.util.Set;
 
 /**
- * Build-time extension contract for a trusted project-specific dashboard widget.
- *
- * <p>Downstream deployments register an implementation as a Spring bean. The
- * open-source validator then recognizes the widget type and still rejects every
- * config field that the extension did not explicitly allow. Implementations
- * must validate the value and shape of every extension-specific field.</p>
+ * 看板组件的构建期扩展接口。扩展必须由后端部署方显式注册，并负责校验自己声明的配置项。
  */
 public interface DashboardWidgetExtension {
 
     /**
-     * Stable widget type. Extension types must use the {@code custom.} namespace.
+     * 稳定的组件类型；扩展类型使用 {@code custom.} 前缀。
      */
     String type();
 
     /**
-     * Explicit top-level config field allow-list. The common {@code title}
-     * field is supplied by the base and must not be repeated here.
+     * 扩展允许的顶层配置字段；通用的 {@code title} 由底座处理，不应重复声明。
      */
     Set<String> allowedConfigFields();
 
     /**
-     * Whether the widget requires a config object.
+     * 是否要求传配置对象；要求时由通用校验先检查，再调用扩展校验。
      */
     default boolean configRequired() {
         return false;
     }
 
     /**
-     * Validate extension-specific config values. Throw
-     * {@link IllegalArgumentException} with a safe operator-facing message when
-     * the config is invalid.
+     * 校验扩展字段的值和结构；不符合要求时抛出 {@link IllegalArgumentException}。
      */
     void validateConfig(JsonNode config);
 }

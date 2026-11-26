@@ -62,7 +62,6 @@ public class Event {
         this.createdAt = createdAt;
     }
 
-    // Getters and Setters
     public Long getId() {
         return id;
     }

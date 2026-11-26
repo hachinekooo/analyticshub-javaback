@@ -10,6 +10,7 @@ import com.github.analyticshub.dto.ProjectInitResult;
 import com.github.analyticshub.entity.AnalyticsProject;
 import com.github.analyticshub.service.AdminProjectService;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -22,16 +23,13 @@ import java.util.Map;
  * 需要 Admin Token（由 AdminApiAuthenticationFilter 统一校验）
  */
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/admin")
 public class AdminProjectController {
 
     private static final System.Logger log = System.getLogger(AdminProjectController.class.getName());
 
     private final AdminProjectService adminProjectService;
-
-    public AdminProjectController(AdminProjectService adminProjectService) {
-        this.adminProjectService = adminProjectService;
-    }
 
     /**
      * 返回全部项目配置，不包含数据库密码等敏感字段。

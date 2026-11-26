@@ -8,6 +8,7 @@ import com.github.analyticshub.dto.AdminMetricsTrendResponse;
 import com.github.analyticshub.dto.AnalyticsDataQualityResponse;
 import com.github.analyticshub.service.AdminMetricsService;
 import com.github.analyticshub.service.AnalyticsDataQualityService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -17,20 +18,18 @@ import org.springframework.web.bind.annotation.RestController;
  * 管理端运营数据接口
  */
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/admin/metrics")
 public class AdminMetricsController {
 
     private final AdminMetricsService adminMetricsService;
     private final AnalyticsDataQualityService dataQualityService;
 
-    public AdminMetricsController(
-            AdminMetricsService adminMetricsService,
-            AnalyticsDataQualityService dataQualityService
-    ) {
-        this.adminMetricsService = adminMetricsService;
-        this.dataQualityService = dataQualityService;
-    }
-
+    /**
+     * 读取概览指标。
+     *
+     * @param propertyFilters 传事件属性筛选的 JSON 数组；有有效条件时，会话数改按匹配事件的会话 ID 去重，不影响设备库存。
+     */
     @GetMapping("/overview")
     public ApiResponse<AdminMetricsOverviewResponse> overview(
             @RequestParam("projectId") String projectId,
@@ -40,6 +39,12 @@ public class AdminMetricsController {
         return ApiResponse.success(adminMetricsService.getOverview(projectId, from, to, propertyFilters));
     }
 
+    /**
+     * 读取事件和去重身份的趋势。
+     *
+     * @param granularity 时间分桶粒度，支持 {@code day} 或 {@code hour}，默认按天。
+     * @param propertyFilters 筛选已登记且允许筛选的事件属性，传 JSON 数组；不传表示不加属性条件。
+     */
     @GetMapping("/trends")
     public ApiResponse<AdminMetricsTrendResponse> trends(
             @RequestParam("projectId") String projectId,
@@ -52,6 +57,12 @@ public class AdminMetricsController {
         ));
     }
 
+    /**
+     * 按事件计数取排行。
+     *
+     * @param aggregation 默认 {@code raw} 按原始事件名；{@code semantic} 按业务定义归并，未映射事件仍按原名计数。
+     * @param propertyFilters 筛选已登记且允许筛选的事件属性，传 JSON 数组；不传表示不加属性条件。
+     */
     @GetMapping("/top-events")
     public ApiResponse<AdminMetricsTopEventsResponse> topEvents(
             @RequestParam("projectId") String projectId,
@@ -65,6 +76,11 @@ public class AdminMetricsController {
         );
     }
 
+    /**
+     * 查看活跃设备使用的 App 版本。
+     *
+     * @param propertyFilters 传事件属性筛选的 JSON 数组；版本和构建号取每台设备最新的匹配事件。
+     */
     @GetMapping("/app-versions")
     public ApiResponse<AdminAppVersionDistributionResponse> appVersions(
             @RequestParam("projectId") String projectId,

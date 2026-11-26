@@ -1,6 +1,7 @@
 package com.github.analyticshub.service;
 
 import com.github.analyticshub.exception.BusinessException;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -10,13 +11,10 @@ import java.util.Map;
 
 /** 修改语义映射前，统一保护仍由 active metric 或 Dashboard 使用的语义 Key。 */
 @Service
+@RequiredArgsConstructor
 public class AnalyticsSemanticDependencyService {
 
     private final JdbcTemplate jdbcTemplate;
-
-    public AnalyticsSemanticDependencyService(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
-    }
 
     public void requireUnusedByActiveAnalytics(String projectId, String semanticKey) {
         List<String> metricKeys = jdbcTemplate.queryForList("""

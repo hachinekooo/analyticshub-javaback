@@ -8,6 +8,7 @@ import com.github.analyticshub.service.TrafficMetricService;
 import com.github.analyticshub.security.ClientIpResolver;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -18,19 +19,12 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.Map;
 
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/v1/traffic-metrics")
 public class TrafficMetricController {
 
     private final TrafficMetricService trafficMetricService;
     private final ClientIpResolver clientIpResolver;
-
-    public TrafficMetricController(
-            TrafficMetricService trafficMetricService,
-            ClientIpResolver clientIpResolver
-    ) {
-        this.trafficMetricService = trafficMetricService;
-        this.clientIpResolver = clientIpResolver;
-    }
 
     @PostMapping("/track")
     @ResponseStatus(HttpStatus.CREATED)
