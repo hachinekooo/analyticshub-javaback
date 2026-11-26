@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Back up the AnalyticsHub PostgreSQL database with pg_dump.
-# The script reads DB connection info from the root-only env file and does not
-# print the database password.
+# 使用 pg_dump 备份 AnalyticsHub；从仅管理员可读的环境文件取连接配置，不输出数据库密码。
 
 APP_NAME="${APP_NAME:-analyticshub}"
 ENV_FILE="${ENV_FILE:-/etc/${APP_NAME}/${APP_NAME}.env}"

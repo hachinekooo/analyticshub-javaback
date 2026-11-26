@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Check public AnalyticsHub routes.
+# 检查 AnalyticsHub 对外路径是否可达。
 
 BASE_URL="${BASE_URL:-https://analytics.example.com}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-10}"

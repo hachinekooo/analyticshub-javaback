@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Unified AnalyticsHub ops entrypoint.
-# Use with bash if the executable bit is not preserved:
+# AnalyticsHub 统一运维入口；没有执行权限时可用 bash 调用：
 #   sudo bash ops/analyticshub bootstrap
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

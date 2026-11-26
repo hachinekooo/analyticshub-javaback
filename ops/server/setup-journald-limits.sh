@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Limit systemd journal disk usage.
+# 限制 systemd 日志占用的磁盘空间。
 
 SYSTEM_MAX_USE="${SYSTEM_MAX_USE:-512M}"
 SYSTEM_KEEP_FREE="${SYSTEM_KEEP_FREE:-1G}"

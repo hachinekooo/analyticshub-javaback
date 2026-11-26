@@ -43,8 +43,7 @@ export STUB_DNF_LOG="$TEST_ROOT/dnf.log"
 export PGDG_REPO_FILE="$TEST_ROOT/repos/pgdg.repo"
 export PG_VERSION=15
 
-# The script has a direct-execution guard so tests can exercise the repository
-# writer without installing packages or touching system paths.
+# 载入脚本时不执行安装入口，测试只验证仓库配置输出，不修改系统目录。
 source "$TARGET_SCRIPT"
 install_postgresql_el dnf
 

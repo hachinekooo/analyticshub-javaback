@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install AnalyticsHub nginx route fragment.
-#
-# This script writes only location blocks. Include the generated file from the
-# active HTTPS server block for your domain:
+# 生成 AnalyticsHub 的 Nginx 路由片段，只包含 location 块；在站点生效的 HTTPS server 块中引用：
 #
 #   include /etc/nginx/conf.d/analyticshub.conf;
 #
-# Do not include this file at nginx http level.
+# 不要在 Nginx 的 http 层直接引用。
 
 CONF_FILE="${CONF_FILE:-/etc/nginx/conf.d/analyticshub.conf}"
 ANALYTICSHUB_WEB_ROOT="${ANALYTICSHUB_WEB_ROOT:-/usr/share/nginx/html/analyticshub-frontend/dist}"

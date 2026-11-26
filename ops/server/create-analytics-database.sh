@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Create the AnalyticsHub database, role, and schema.
-#
-# This script owns initial database provisioning only. Once the role exists,
-# its password and all secret files are left untouched. Password changes must
-# go through rotate-analytics-secrets.sh so PostgreSQL and the app env are
-# updated as one operation.
+# 首次准备 AnalyticsHub 数据库、角色与模式。已存在的角色不由此脚本改密；请用轮换脚本同步更新 PostgreSQL 和应用配置。
 
 PG_SUPERUSER="${PG_SUPERUSER:-postgres}"
 DB_NAME="${DB_NAME:-analytics}"

@@ -1,7 +1,7 @@
 \set ON_ERROR_STOP on
 SET timezone = 'UTC';
 
--- This script only resets tables owned by the three explicitly named demo projects.
+-- 只重置脚本中明确列出的三个演示项目的表。
 TRUNCATE TABLE
     demo_app.analytics_work_order_outbox,
     demo_app.analytics_work_order_activities,
@@ -46,7 +46,7 @@ TRUNCATE TABLE
     demo_webapp.analytics_counters
 RESTART IDENTITY CASCADE;
 
--- Mobile App: devices, sessions and product events across 60 days.
+-- 移动应用：生成覆盖 60 天的设备、会话和产品事件。
 INSERT INTO demo_app.analytics_devices (
     device_id, api_key, secret_key, device_model, os_version, app_version,
     project_id, is_banned, created_at, last_active_at
@@ -119,9 +119,7 @@ SELECT 'app-event-' || lpad(n::text, 6, '0'),
        'demo_app', occurred_at
 FROM facts;
 
--- Purpose-built actor journeys make funnel and retention examples meaningful.
--- Generic volume above provides realistic rankings and trends; these rows preserve
--- the event ordering required by actor-based product analytics.
+-- 上方的事件模拟日常趋势；这批按身份和时间排好的事件用于演示漏斗与留存。
 WITH actors AS (
     SELECT n,
            now() - (15 + n % 14) * interval '1 day' - interval '12 hours' AS activated_at
@@ -165,7 +163,7 @@ SELECT 'app-journey-' || lpad(n::text, 4, '0') || '-' || stage,
        'demo_app', occurred_at
 FROM journey_events;
 
--- Account lifecycle uses backend-authoritative events and a smaller realistic volume.
+-- 账号生命周期用后端确认的事件演示，样本量独立于日常使用事件。
 WITH account_events AS (
     SELECT n, 'cloud_account_created' AS event_type,
            now() - (n % 30) * interval '1 day' - interval '9 hours' AS occurred_at
@@ -189,7 +187,7 @@ SELECT 'app-account-' || event_type || '-' || lpad(n::text, 3, '0'),
        'demo_app', occurred_at
 FROM account_events;
 
--- Marketing Website: enough page views, visitors, campaigns and bot traffic to show real ratios.
+-- 营销网站：同时生成访问、访客、活动来源和机器人流量，便于比较各自占比。
 WITH facts AS (
     SELECT n,
            now() - (n % 60) * interval '1 day' - (n % 1440) * interval '1 minute' AS occurred_at
@@ -217,7 +215,7 @@ SELECT 'website-metric-' || lpad(n::text, 6, '0'),
        'demo_website', occurred_at
 FROM facts;
 
--- SaaS WebApp: product events and web traffic intentionally coexist.
+-- SaaS 应用同时包含产品事件和网页流量，便于演示两类指标。
 INSERT INTO demo_webapp.analytics_devices (
     device_id, api_key, secret_key, device_model, os_version, app_version,
     project_id, is_banned, created_at, last_active_at
@@ -356,7 +354,7 @@ SELECT 'webapp-metric-' || lpad(n::text, 6, '0'),
        'demo_webapp', occurred_at
 FROM facts;
 
--- Counters use realistic business baselines and semantic trigger contracts.
+-- 计数器示例包含业务起算值及按业务事件定义匹配的触发规则。
 INSERT INTO demo_app.analytics_counters (
     counter_key, counter_value, display_name, unit, event_trigger, is_public,
     description, project_id, last_rebuilt_at, last_rebuild_event_count, rebuild_offset
@@ -393,7 +391,7 @@ INSERT INTO demo_webapp.analytics_counters (
    '{"semantic_key":"core.purchase.completed"}', FALSE,
    '成功开始订阅的累计数量', 'demo_webapp', now(), 624, 0);
 
--- A small work-order set makes the privacy workflow useful without dominating analytics data.
+-- 少量隐私工单用于演示处理流程。
 INSERT INTO demo_app.analytics_privacy_requests (
     request_id, project_id, user_id, device_id, request_type, processor,
     source, status, contact_email, requester_note, operator, operator_note,
@@ -423,7 +421,7 @@ INSERT INTO demo_webapp.analytics_privacy_requests (
   ('PRIV-DEMO-SAAS-003','demo_webapp','team_user_0044',md5('webapp-device-44')::uuid,'EXPORT','ANALYTICSHUB','EMAIL','COMPLETED','team-user-44@example.org','导出请求','demo_agent','导出文件已通过安全渠道交付','{"action":"EXPORTED","recordCount":128}',now()-interval '9 days',now()-interval '8 days',now()-interval '8 days'),
   ('PRIV-DEMO-SAAS-004','demo_webapp','team_user_0058',md5('webapp-device-58')::uuid,'DELETE','ANALYTICSHUB','EMAIL','COMPLETED','team-user-58@example.org','去标识化请求','demo_agent','个人标识已匿名化，团队统计保留','{"action":"ANONYMIZED","scope":"personal_identifiers"}',now()-interval '14 days',now()-interval '13 days',now()-interval '13 days');
 
--- Semantic aliases keep raw SDK naming independent from stable platform contracts.
+-- 将 SDK 的原始事件名映射到看板引用的稳定业务定义。
 INSERT INTO analytics.analytics_semantic_definitions (
     project_id, source_kind, semantic_key, definition_origin, display_name,
     category, description, is_active
@@ -458,7 +456,7 @@ INSERT INTO analytics.analytics_semantic_aliases (project_id, source_kind, raw_k
   ('demo_webapp','EVENT_TYPE','member_invited','custom.member.invited')
 ON CONFLICT (project_id, source_kind, raw_key) DO UPDATE SET semantic_key = EXCLUDED.semantic_key;
 
--- Valid declarative layouts make every example useful immediately after seeding.
+-- 写入可直接打开的演示看板布局。
 INSERT INTO analytics.analytics_dashboards (
     project_id, dashboard_key, display_name, description, schema_version,
     definition, revision, is_default, is_active

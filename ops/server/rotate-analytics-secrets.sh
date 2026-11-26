@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Rotate AnalyticsHub database password and admin token.
-# Secrets are written only to root-owned env/credential files and are not
-# printed to stdout.
+# 轮换数据库密码与管理令牌；新值只写入管理员专用配置文件，不通过标准输出返回。
 
 PG_SUPERUSER="${PG_SUPERUSER:-postgres}"
 APP_NAME="${APP_NAME:-analyticshub}"

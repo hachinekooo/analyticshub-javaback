@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Configure swap for small servers.
+# 为内存较小的服务器配置交换空间。
 
 SWAP_FILE="${SWAP_FILE:-/swapfile}"
 SWAP_SIZE="${SWAP_SIZE:-2G}"

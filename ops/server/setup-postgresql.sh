@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install and initialize local PostgreSQL for AnalyticsHub.
-# The database is kept localhost-only by default.
+# 安装并初始化供 AnalyticsHub 使用的 PostgreSQL，默认只监听本机。
 
 PG_VERSION="${PG_VERSION:-15}"
 PG_PORT="${PG_PORT:-5432}"
@@ -36,8 +35,7 @@ install_postgresql_el() {
 name=PostgreSQL ${PG_VERSION}
 baseurl=https://mirrors.aliyun.com/postgresql/repos/yum/${PG_VERSION}/redhat/rhel-3-x86_64
 enabled=1
-# RPM payloads must validate against the PostgreSQL Global Development Group
-# signing key fetched from the independent official PostgreSQL origin.
+# 用独立的 PostgreSQL 官方来源提供的签名密钥校验 RPM 软件包。
 gpgcheck=1
 gpgkey=${PGDG_GPG_KEY_URL}
 sslverify=1

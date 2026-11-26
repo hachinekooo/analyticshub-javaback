@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install certbot and optionally issue a certificate.
+# 安装 Certbot；按参数决定是否同时签发证书。
 
 DOMAIN="${DOMAIN:-analytics.example.com}"
 EXTRA_DOMAIN="${EXTRA_DOMAIN:-}"

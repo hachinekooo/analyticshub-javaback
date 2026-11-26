@@ -109,8 +109,7 @@ run_provision() {
       unset ANALYTICS_DB_PASSWORD || true
     fi
 
-    # Source the script so the test can replace only the root guard. All
-    # provisioning commands still go through the command stubs above.
+    # 载入脚本只替换管理员检查；实际建库命令仍走上面的替身。
     source "$TARGET_SCRIPT"
     require_root() { :; }
     main
