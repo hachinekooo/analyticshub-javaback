@@ -17,11 +17,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
- * Validates declarative dashboard JSON.
- *
- * <p>The contract is intentionally allow-list based. Dashboard definitions may
- * select built-in widgets and data parameters, but cannot carry executable
- * HTML, JavaScript, SQL, arbitrary URLs or dynamic import instructions.</p>
+ * 校验看板的声明式配置：只接受受支持的组件、参数和显式注册的扩展，不把配置当作可执行代码或任意查询。
  */
 @Component
 public class DashboardDefinitionValidator {
@@ -40,7 +36,7 @@ public class DashboardDefinitionValidator {
     );
 
     private static final Set<String> ROOT_FIELDS = Set.of(
-            "schemaVersion", "defaultRange", "widgets"
+            "schemaVersion", "defaultRange", "widgets", "layoutMode", "topicOrder"
     );
     private static final Set<String> WIDGET_FIELDS = Set.of(
             "id", "type", "layout", "config"
@@ -48,7 +44,7 @@ public class DashboardDefinitionValidator {
     private static final Set<String> LAYOUT_FIELDS = Set.of(
             "x", "y", "w", "h", "minW", "minH"
     );
-    private static final Set<String> COMMON_CONFIG_FIELDS = Set.of("title");
+    private static final Set<String> COMMON_CONFIG_FIELDS = Set.of("title", "sectionLabel");
     private static final Set<String> CORE_WIDGET_TYPES = Set.of(
             "core.overview",
             "core.trends",
@@ -82,7 +78,7 @@ public class DashboardDefinitionValidator {
             Map.entry("core.devices", Set.of("pageSize")),
             Map.entry("core.sessions", Set.of("pageSize")),
             Map.entry("core.traffic", Set.of("metricType", "pageSize")),
-            Map.entry("core.governedMetric", Set.of("metricKey", "emptyState"))
+            Map.entry("core.governedMetric", Set.of("metricKey", "emptyState", "interval", "responseMetricKey"))
     );
 
     private final Map<String, RegisteredExtension> extensions;
@@ -133,6 +129,12 @@ public class DashboardDefinitionValidator {
         this.extensions = Map.copyOf(byType);
     }
 
+    /**
+     * 检查看板配置格式。
+     *
+     * @param schemaVersion 外层声明的看板结构版本（1 或 2），须等于定义内版本；不是事件数据版本。
+     * @param definition 待保存的看板 JSON 对象，不是可执行查询。
+     */
     public void validate(int schemaVersion, JsonNode definition) {
         if (schemaVersion < 1 || schemaVersion > CURRENT_SCHEMA_VERSION) {
             fail("当前仅支持 dashboard schemaVersion=1 / 2");
@@ -145,6 +147,16 @@ public class DashboardDefinitionValidator {
         }
         requireOnlyFields(definition, ROOT_FIELDS, "definition");
         requireInteger(definition.get("schemaVersion"), schemaVersion, schemaVersion, "schemaVersion");
+
+        if (definition.has("layoutMode")) {
+            String mode = requireText(definition.get("layoutMode"), 16, "layoutMode");
+            if (!Set.of("automatic", "custom").contains(mode)) {
+                fail("layoutMode 仅支持 automatic / custom");
+            }
+        }
+        if (definition.has("topicOrder")) {
+            requireInteger(definition.get("topicOrder"), 0, 1000, "topicOrder");
+        }
 
         JsonNode defaultRange = definition.get("defaultRange");
         if (defaultRange != null && !defaultRange.isNull()) {
@@ -275,6 +287,7 @@ public class DashboardDefinitionValidator {
         if (config.has("title")) {
             requireText(config.get("title"), 100, path + ".title");
         }
+        if (config.has("sectionLabel")) validateDisplayName(config.get("sectionLabel"));
         if (config.has("emptyState")) {
             validateDisplayName(config.get("emptyState"));
         }
@@ -339,10 +352,20 @@ public class DashboardDefinitionValidator {
                 validateOptionalEventKey(config, "metricType", path);
                 validateOptionalInteger(config, "pageSize", 1, 200, path);
             }
-            case "core.governedMetric" ->
-                    requireAnalyticsKey(config.get("metricKey"), 100, path + ".metricKey");
+            case "core.governedMetric" -> {
+                requireAnalyticsKey(config.get("metricKey"), 100, path + ".metricKey");
+                if (config.has("responseMetricKey")) {
+                    requireAnalyticsKey(config.get("responseMetricKey"), 100, path + ".responseMetricKey");
+                    if (config.has("interval") || config.get("responseMetricKey").equals(config.get("metricKey"))) {
+                        fail(path + ".responseMetricKey 必须引用不同的指标，且不能与 interval 一起使用");
+                    }
+                }
+                if (config.has("interval")
+                        && !Set.of("day", "week").contains(requireText(config.get("interval"), 10, path + ".interval"))) {
+                    fail(path + ".interval 仅支持 day 或 week");
+                }
+            }
             default -> {
-                // Widgets without type-specific configuration only accept the common title.
             }
         }
     }

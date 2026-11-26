@@ -32,6 +32,25 @@ import static org.mockito.Mockito.when;
 class AnalyticsMetricEvaluationServiceTest {
 
     @Test
+    void weeklyRangeExcludesBothCutWeeksAndCurrentWeek() {
+        var range = AnalyticsMetricEvaluationService.completeWeeks(
+                AdminQueryUtils.resolveRange("2026-11-04", "2026-11-30"), Instant.parse("2026-11-24T08:00:00Z"));
+        assertThat(range.start()).isEqualTo(Instant.parse("2026-11-09T00:00:00Z"));
+        assertThat(range.end()).isEqualTo(Instant.parse("2026-11-23T00:00:00Z"));
+    }
+
+    @Test
+    void weeklyRangeUsesExclusiveMondayBoundaryAndAllowsNoCompleteWeek() {
+        Instant now = Instant.parse("2026-11-24T08:00:00Z");
+        var full = AnalyticsMetricEvaluationService.completeWeeks(
+                AdminQueryUtils.resolveRange("2026-11-16", "2026-11-22"), now);
+        assertThat(full.end()).isEqualTo(Instant.parse("2026-11-23T00:00:00Z"));
+        var partial = AnalyticsMetricEvaluationService.completeWeeks(
+                AdminQueryUtils.resolveRange("2026-11-17", "2026-11-23"), now);
+        assertThat(partial.start()).isEqualTo(partial.end());
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void propertyBreakdownReturnsTypedEmptyResultWithoutInventingRows() {
         var objectMapper = JsonMapper.builder().build();

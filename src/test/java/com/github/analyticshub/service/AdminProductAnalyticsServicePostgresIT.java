@@ -75,6 +75,7 @@ class AdminProductAnalyticsServicePostgresIT {
     private ActorIdentityResolver actorIdentityResolver;
     private AnalyticsPropertyFilterService propertyFilterService;
     private AnalyticsQueryProperties queryProperties;
+    private SemanticDictionaryService semantics;
 
     @BeforeEach
     void setUp() {
@@ -109,7 +110,7 @@ class AdminProductAnalyticsServicePostgresIT {
         when(dataSourceManager.getTableName(PROJECT_ID, "actor_identity_links"))
                 .thenReturn(quoted(PREFIX + "actor_identity_links"));
 
-        SemanticDictionaryService semantics = mock(SemanticDictionaryService.class);
+        semantics = mock(SemanticDictionaryService.class);
         when(semantics.resolveActiveEventAliases(eq(PROJECT_ID), anyList())).thenAnswer(invocation -> {
             Map<String, List<String>> result = new LinkedHashMap<>();
             for (String key : invocation.<List<String>>getArgument(1)) result.put(key, List.of(key));
@@ -148,13 +149,13 @@ class AdminProductAnalyticsServicePostgresIT {
         insertEvent(organicUser, "landing", "2026-01-01T01:00:00Z", "{\"source\":\"organic\"}");
         insertEvent(organicUser, "checkout", "2026-01-01T01:05:00Z", null);
         insertEvent(organicUser, "purchase", "2026-01-01T01:10:00Z", null);
-        // A later first-step event must not move this actor to another attribution group.
+        // 同一统计身份再次进入，不能让已有漏斗样本改归到后一次入口。
         insertEvent(organicUser, "landing", "2026-01-01T01:15:00Z", "{\"source\":\"ad\"}");
 
         insertEvent(adUser, "landing", "2026-01-01T02:00:00Z", "{\"source\":\"ad\"}");
         insertEvent(adUser, "purchase", "2026-01-01T02:05:00Z", null);
 
-        // Checkout before entry does not satisfy step two; the later checkout does.
+        // 入口之前的结账不算第二步，入口之后的结账才算。
         insertEvent(reorderedUser, "checkout", "2026-01-01T02:55:00Z", null);
         insertEvent(reorderedUser, "landing", "2026-01-01T03:00:00Z", "{\"source\":\"organic\"}");
         insertEvent(reorderedUser, "checkout", "2026-01-01T03:05:00Z", null);
@@ -605,13 +606,14 @@ class AdminProductAnalyticsServicePostgresIT {
         AdminEventsResponse eventRecords = new AdminEventQueryService(
                 dataSourceManager,
                 JsonMapper.builder().build(),
-                actorIdentityResolver
+                actorIdentityResolver, semantics
         ).listEvents(
                 PROJECT_ID,
                 "2026-01-01T00:00:00Z",
                 "2026-01-02T00:00:00Z",
                 1,
                 20,
+                null,
                 null,
                 null,
                 null,
@@ -664,7 +666,7 @@ class AdminProductAnalyticsServicePostgresIT {
         AdminEventsResponse response = new AdminEventQueryService(
                 dataSourceManager,
                 JsonMapper.builder().build(),
-                actorIdentityResolver
+                actorIdentityResolver, semantics
         ).listEvents(
                 PROJECT_ID,
                 "2026-01-01T00:00:00Z",
@@ -674,6 +676,7 @@ class AdminProductAnalyticsServicePostgresIT {
                 null,
                 null,
                 cloudActor.toString(),
+                null,
                 null
         );
 
@@ -701,7 +704,7 @@ class AdminProductAnalyticsServicePostgresIT {
         AdminEventsResponse responseFromRawAnonymousActor = new AdminEventQueryService(
                 dataSourceManager,
                 JsonMapper.builder().build(),
-                actorIdentityResolver
+                actorIdentityResolver, semantics
         ).listEvents(
                 PROJECT_ID,
                 "2026-01-01T00:00:00Z",
@@ -711,6 +714,7 @@ class AdminProductAnalyticsServicePostgresIT {
                 null,
                 null,
                 anonymousActor.toString(),
+                null,
                 null
         );
         assertThat(responseFromRawAnonymousActor.items()).extracting(item -> item.eventType())
@@ -719,7 +723,7 @@ class AdminProductAnalyticsServicePostgresIT {
         AdminEventsResponse responseWithRawActorIntersection = new AdminEventQueryService(
                 dataSourceManager,
                 JsonMapper.builder().build(),
-                actorIdentityResolver
+                actorIdentityResolver, semantics
         ).listEvents(
                 PROJECT_ID,
                 "2026-01-01T00:00:00Z",
@@ -729,6 +733,7 @@ class AdminProductAnalyticsServicePostgresIT {
                 null,
                 anonymousActor.toString(),
                 cloudActor.toString(),
+                null,
                 null
         );
         assertThat(responseWithRawActorIntersection.items()).extracting(item -> item.eventType())
@@ -737,7 +742,7 @@ class AdminProductAnalyticsServicePostgresIT {
         assertThatThrownBy(() -> new AdminEventQueryService(
                 dataSourceManager,
                 JsonMapper.builder().build(),
-                actorIdentityResolver
+                actorIdentityResolver, semantics
         ).listEvents(
                 PROJECT_ID,
                 "2026-01-01T00:00:00Z",
@@ -747,9 +752,33 @@ class AdminProductAnalyticsServicePostgresIT {
                 null,
                 null,
                 "not-a-uuid",
+                null,
                 null
         )).isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("resolvedActorId 格式无效");
+    }
+
+    @Test
+    void eventRecordsFilterSchemaVersionBeforeCountingAndPaging() {
+        UUID device = UUID.randomUUID();
+        String actor = UUID.randomUUID().toString();
+        insertEvent(actor, device, "legacy", "2026-01-01T01:00:00Z", "2026-01-01T01:00:01Z",
+                "{\"event_schema_version\":\"3\"}");
+        insertEvent(actor, device, "current", "2026-01-01T02:00:00Z", "2026-01-01T02:00:01Z",
+                "{\"event_schema_version\":\"4\"}");
+        insertEvent(actor, device, "unversioned", "2026-01-01T03:00:00Z", "2026-01-01T03:00:01Z", "{}");
+        AdminEventQueryService records = new AdminEventQueryService(
+                dataSourceManager, JsonMapper.builder().build(), actorIdentityResolver, semantics
+        );
+        String from = "2026-01-01T00:00:00Z";
+        String to = "2026-01-02T00:00:00Z";
+        AdminEventsResponse history = records.listEvents(PROJECT_ID, from, to, 1, 1, null, actor, null, null, 3);
+        assertThat(history.total()).isEqualTo(1L);
+        assertThat(history.items()).extracting(item -> item.eventType()).containsExactly("legacy");
+        assertThat(records.listEvents(PROJECT_ID, from, to, 1, 1, null, actor, null, null, 4).items())
+                .extracting(item -> item.eventType()).containsExactly("current");
+        assertThat(records.listEvents(PROJECT_ID, from, to, 1, 1, null, actor, null, null, null).total())
+                .isEqualTo(3L);
     }
 
     @Test
@@ -1094,7 +1123,7 @@ class AdminProductAnalyticsServicePostgresIT {
 
         insertEvent(firstUser, "signup", "2026-01-01T10:00:00Z", null);
         insertEvent(firstUser, "open", "2026-01-01T12:00:00Z", null);
-        // D1 is the next UTC calendar day, even when less than 24 hours after signup.
+        // 第 1 天指 UTC 次日，即便距注册还不到 24 小时。
         insertEvent(firstUser, "open", "2026-01-02T09:00:00Z", null);
         insertEvent(firstUser, "open", "2026-01-08T11:00:00Z", null);
         insertEvent(firstUser, "open", "2026-01-08T12:00:00Z", null);
@@ -1585,6 +1614,49 @@ class AdminProductAnalyticsServicePostgresIT {
         ))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("至少需要 2 个不同事件");
+    }
+
+    @Test
+    void milestoneFunnelRequiresFirstPageButCountsConfirmedOutcomesWithoutIntermediatePages() {
+        when(propertyFilterService.requireGroupable(PROJECT_ID, "page"))
+                .thenReturn(AnalyticsPropertyDataType.INTEGER);
+        UUID actor = UUID.randomUUID();
+        insertEvent(actor, "page_visible", "2026-11-01T23:59:00Z", "{\"page\":1,\"flow\":\"before\"}");
+        insertEvent(actor, "page_visible", "2026-11-02T10:00:00Z", "{\"page\":2,\"flow\":\"before\"}");
+        insertEvent(actor, "finished", "2026-11-02T10:01:00Z", "{\"flow\":\"before\"}");
+        insertEvent(actor, "page_visible", "2026-11-02T11:00:00Z", "{\"page\":1,\"flow\":\"complete\"}");
+        insertEvent(actor, "page_visible", "2026-11-02T11:01:00Z", "{\"page\":2,\"flow\":\"complete\"}");
+        insertEvent(actor, "page_visible", "2026-11-02T11:02:00Z", "{\"page\":2,\"flow\":\"complete\"}");
+        insertEvent(actor, "finished", "2026-11-02T11:03:00Z", "{\"flow\":\"complete\"}");
+        insertEvent(actor, "page_visible", "2026-11-02T12:00:00Z", "{\"page\":1.0,\"flow\":\"incomplete\"}");
+        insertEvent(actor, "finished", "2026-11-02T12:01:00Z", "{\"flow\":\"incomplete\"}");
+        var result = service.getFunnel(PROJECT_ID, "2026-11-02", "2026-11-02", "page_visible,finished",
+                null, "flow", null, new AdminProductAnalyticsService.FirstEventMilestones("page", List.of("1", "2")));
+
+        assertThat(result.groups().getFirst().steps())
+                .extracting(com.github.analyticshub.dto.AdminFunnelStepResult::users)
+                .containsExactly(2L, 1L, 2L);
+        assertThat(result.groups().getFirst().steps().get(1).conversionRate()).isEqualTo(0.5);
+    }
+
+    @Test
+    void eventRecordsSelectSemanticAliasesBeforeVersionFilteringAndPaging() {
+        UUID actor = UUID.randomUUID();
+        insertEvent(actor, "旧版 完成,信", "2026-11-02T09:00:00Z", "{\"event_schema_version\":\"3\"}");
+        insertEvent(actor, "letter_saved", "2026-11-02T10:00:00Z", "{\"event_schema_version\":\"4\"}");
+        insertEvent(actor, "other", "2026-11-02T11:00:00Z", "{\"event_schema_version\":\"4\"}");
+        when(semantics.resolveActiveEventAliases(PROJECT_ID, List.of("custom.letter.saved")))
+                .thenReturn(Map.of("custom.letter.saved", List.of("旧版 完成,信", "letter_saved")));
+        var records = new AdminEventQueryService(dataSourceManager, JsonMapper.builder().build(), actorIdentityResolver, semantics);
+
+        var allVersions = records.listEvents(PROJECT_ID, "2026-11-02", "2026-11-02", 2, 1,
+                null, null, null, null, null, "custom.letter.saved");
+        assertThat(allVersions.total()).isEqualTo(2);
+        assertThat(allVersions.items()).extracting(AdminEventRecord::eventType).containsExactly("旧版 完成,信");
+        var v4 = records.listEvents(PROJECT_ID, "2026-11-02", "2026-11-02", 1, 1,
+                null, null, null, null, 4, "custom.letter.saved");
+        assertThat(v4.total()).isEqualTo(1);
+        assertThat(v4.items()).extracting(AdminEventRecord::eventType).containsExactly("letter_saved");
     }
 
     private void insertEvent(UUID userId, String eventType, String createdAt, String properties) {

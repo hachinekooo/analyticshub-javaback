@@ -13,6 +13,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -27,6 +28,18 @@ class AnalyticsMetricDependencyServiceTest {
         assertThatCode(() -> service.requireUnusedByActiveDashboards("project", Set.of()))
                 .doesNotThrowAnyException();
         verifyNoInteractions(jdbcTemplate);
+    }
+
+    @Test
+    void trendDependencyProtectsTheMetricTypeWithoutBlockingScalarReferences() {
+        when(jdbcTemplate.queryForList(contains("->> 'interval' IN ('day', 'week')"), any(Object[].class)))
+                .thenReturn(List.of(Map.of("dashboard_key", "overview", "metric_key", "app.active")));
+
+        assertThatThrownBy(() -> service.requireUnusedByActiveTrendDashboards("project", "app.active"))
+                .isInstanceOfSatisfying(BusinessException.class, exception -> {
+                    assertThat(exception.getCode()).isEqualTo("ANALYTICS_METRIC_IN_USE");
+                    assertThat(exception.getDetails()).containsEntry("dashboardKeys", List.of("overview"));
+                });
     }
 
     @Test

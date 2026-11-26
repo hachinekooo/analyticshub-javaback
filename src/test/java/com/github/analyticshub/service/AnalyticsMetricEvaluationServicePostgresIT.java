@@ -146,6 +146,30 @@ class AnalyticsMetricEvaluationServicePostgresIT {
     }
 
     @Test
+    void dailyAndWeeklyTrendsDeduplicateLinkedActorsAndFillEmptyBuckets() {
+        when(configuration.getMetric(PROJECT_ID, "active")).thenReturn(metric(
+                "active", AnalyticsMetricType.UNIQUE_ACTORS, "{\"semanticEvent\":\"app.open\"}"));
+        when(semantics.resolveActiveEventAliases(PROJECT_ID, List.of("app.open")))
+                .thenReturn(Map.of("app.open", List.of("open")));
+        String anonymous = "11111111-1111-1111-1111-111111111111";
+        String cloud = "22222222-2222-2222-2222-222222222222";
+        jdbc.update("INSERT INTO analytics_actor_identity_links VALUES (?, ?::uuid, ?::uuid)", PROJECT_ID, anonymous, cloud);
+        int day = 86_400_000;
+        insertEvent("open", null, anonymous, "{}", 0); // 周六开始有数据，按周从下周一统计。
+        insertEvent("open", null, anonymous, "{}", 2 * day);
+        insertEvent("open", cloud, cloud, "{}", 3 * day);
+        jdbc.update("INSERT INTO analytics_events VALUES ('other', ?, 'open', NULL, ?::uuid, '{}'::jsonb)",
+                RANGE_START + 4 * day, anonymous);
+        var days = service.evaluate(PROJECT_ID, "active", "2026-08-03T00:00:00Z",
+                "2026-08-06T00:00:00Z", "day").result().path("days");
+        assertThat(days).extracting(point -> point.path("actors").asInt()).containsExactly(1, 1, 0);
+        var weeks = service.evaluate(PROJECT_ID, "active", "2026-07-27T00:00:00Z",
+                "2026-08-17T00:00:00Z", "week").result().path("weeks");
+        assertThat(weeks).extracting(point -> point.path("actors").asInt()).containsExactly(1, 0);
+        assertThat(weeks.get(0).path("weekStart").asString()).isEqualTo("2026-08-03T00:00:00Z");
+    }
+
+    @Test
     void numericSummaryCalculatesAllStatisticsAndIgnoresNonNumericValues() {
         when(configuration.getMetric(PROJECT_ID, "duration_summary")).thenReturn(metric(
                 "duration_summary", AnalyticsMetricType.NUMERIC_PROPERTY_SUMMARY, """
@@ -169,7 +193,7 @@ class AnalyticsMetricEvaluationServicePostgresIT {
 
         assertThat(result.path("sampleCount").asInt()).isEqualTo(4);
         assertThat(result.path("average").asDouble()).isEqualTo(25D);
-        assertThat(result.path("median").asDouble()).isEqualTo(20D);
+        assertThat(result.path("median").asDouble()).isEqualTo(25D);
         assertThat(result.path("p90").asDouble()).isEqualTo(40D);
         assertThat(result.path("min").asDouble()).isEqualTo(10D);
         assertThat(result.path("max").asDouble()).isEqualTo(40D);

@@ -12,6 +12,7 @@ import com.github.analyticshub.dto.AnalyticsPropertyDefinitionRequest;
 import com.github.analyticshub.dto.AnalyticsPropertyDefinitionResponse;
 import com.github.analyticshub.dto.TrustedSchemaPolicyResponse;
 import com.github.analyticshub.exception.BusinessException;
+import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,6 +38,7 @@ import java.util.regex.Pattern;
  * 导入在系统库事务内同时更新属性、指标、pack 快照和审计记录。</p>
  */
 @Service
+@RequiredArgsConstructor
 public class AnalysisConfigurationService {
 
     private static final Pattern PROJECT_ID = Pattern.compile("^[a-z0-9_-]{1,50}$");
@@ -63,24 +65,6 @@ public class AnalysisConfigurationService {
     private final SemanticDictionaryService semanticDictionaryService;
     private final AnalysisPackOwnershipService packOwnershipService;
     private final AnalyticsMetricDependencyService metricDependencyService;
-
-    public AnalysisConfigurationService(
-            JdbcTemplate jdbcTemplate,
-            ObjectMapper objectMapper,
-            AnalyticsPropertyDefinitionService propertyDefinitionService,
-            AnalyticsPropertyFilterService propertyFilterService,
-            SemanticDictionaryService semanticDictionaryService,
-            AnalysisPackOwnershipService packOwnershipService,
-            AnalyticsMetricDependencyService metricDependencyService
-    ) {
-        this.jdbcTemplate = jdbcTemplate;
-        this.objectMapper = objectMapper;
-        this.propertyDefinitionService = propertyDefinitionService;
-        this.propertyFilterService = propertyFilterService;
-        this.semanticDictionaryService = semanticDictionaryService;
-        this.packOwnershipService = packOwnershipService;
-        this.metricDependencyService = metricDependencyService;
-    }
 
     @Transactional(readOnly = true)
     public List<AnalyticsMetricDefinitionResponse> listMetrics(String projectId) {
@@ -191,6 +175,13 @@ public class AnalysisConfigurationService {
         validateMetricRequest(project, request, trustedSchemaPolicy);
         if (!request.active()) {
             metricDependencyService.requireUnusedByActiveDashboards(project, Set.of(key));
+        } else {
+            if (request.metricType() != AnalyticsMetricType.UNIQUE_ACTORS) {
+                metricDependencyService.requireUnusedByActiveTrendDashboards(project, key);
+            }
+            if (!DashboardGovernedMetricPolicy.supportsResponseSummary(request.metricType(), request.definition())) {
+                metricDependencyService.requireUnusedByActiveResponseSummaries(project, key);
+            }
         }
         jdbcTemplate.update("""
                 INSERT INTO analytics_metric_definitions
@@ -209,6 +200,11 @@ public class AnalysisConfigurationService {
                 .orElseThrow(() -> new IllegalStateException("Metric definition was not persisted"));
     }
 
+    /**
+     * 将新版配置应用到项目；报表使用已入库的规则，不直接读取仓库里的 Pack 文件。
+     *
+     * @param request 完整配置快照及版本，不是增量补丁；省略既有配置会触发停用确认。
+     */
     @Transactional
     public AnalysisPackResponse importPack(
             String projectId,
@@ -346,6 +342,14 @@ public class AnalysisConfigurationService {
         return rows.isEmpty() ? null : rows.getFirst();
     }
 
+    /**
+     * 确保一个分析包版本只对应一份内容。
+     *
+     * @param existing 当前已安装的分析包；首次导入为空。
+     * @param nextVersion 新快照版本；不允许比当前版本小。
+     * @param nextChecksum 新清单摘要；同版本重试必须与已安装版本一致。
+     * @param nextDisplayName 新快照的显示名；同版本重试不能改名。
+     */
     private void validatePackVersion(
             ExistingPack existing,
             int nextVersion,
@@ -455,6 +459,15 @@ public class AnalysisConfigurationService {
         return result;
     }
 
+    /**
+     * 在写入前确认新快照是否会停用既有配置。
+     *
+     * @param existing 当前已安装的配置快照；首次导入时为空。
+     * @param nextPropertyKeys 新清单声明的属性键全集。
+     * @param nextMetricKeys 新清单声明的指标键全集。
+     * @param nextPolicy 新快照的可信版本规则；为空会移除该包此前声明的规则。
+     * @param confirmed 只有显式为 true 才允许停用旧快照中缺失的配置。
+     */
     private void requireDeactivationConfirmation(
             ExistingPack existing,
             Set<String> nextPropertyKeys,
@@ -542,6 +555,7 @@ public class AnalysisConfigurationService {
         }
     }
 
+    /** 项目可信版本是可用范围，不等于每个指标都能使用这些版本。 */
     private void validateMetricSchemaScope(Boolean active, JsonNode definition, TrustedSchemaPolicy policy) {
         if (!Boolean.TRUE.equals(active)) return;
         JsonNode scopeNode = definition.get("schemaScope");
@@ -656,7 +670,7 @@ public class AnalysisConfigurationService {
                     "semanticEvent", "propertyFilters", "schemaScope", "schemaScopeReason"
             );
             case FUNNEL_CONVERSION -> Set.of(
-                    "steps", "groupBy", "journeyKey", "valueLabels",
+                    "steps", "groupBy", "journeyKey", "valueLabels", "firstEventMilestones",
                     "propertyFilters", "schemaScope", "schemaScopeReason"
             );
             case RETENTION -> Set.of(
@@ -697,6 +711,19 @@ public class AnalysisConfigurationService {
                 });
                 if (new java.util.HashSet<>(semanticKeys).size() != semanticKeys.size()) {
                     throw invalid("FUNNEL_CONVERSION.steps 不能包含重复事件");
+                }
+                var milestones = AdminProductAnalyticsService.parseFirstEventMilestones(request.definition());
+                if (milestones != null) {
+                    if (semanticKeys.size() + milestones.values().size() - 1 > 12
+                            || optionalText(request.definition(), "journeyKey") == null
+                            || optionalText(request.definition(), "groupBy") != null) {
+                        throw invalid("firstEventMilestones 需要 journeyKey，不能分组，展开后最多 12 步");
+                    }
+                    var type = propertyFilterService.requireGroupable(projectId, milestones.propertyKey());
+                    if (type != AnalyticsPropertyDataType.INTEGER && type != AnalyticsPropertyDataType.STRING) {
+                        throw invalid("firstEventMilestones 只支持已登记的整数或字符串属性");
+                    }
+                    milestones.stepKeys(semanticKeys.getFirst(), type);
                 }
                 requireSemanticEvents(projectId, semanticKeys);
                 propertyFilterService.requireGroupable(

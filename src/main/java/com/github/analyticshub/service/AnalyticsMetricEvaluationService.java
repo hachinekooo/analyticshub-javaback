@@ -5,8 +5,10 @@ import com.github.analyticshub.config.MultiDataSourceManager;
 import com.github.analyticshub.dto.AnalyticsMetricDefinitionResponse;
 import com.github.analyticshub.dto.AnalyticsMetricResultClassification;
 import com.github.analyticshub.dto.AnalyticsMetricResultResponse;
+import com.github.analyticshub.dto.AnalyticsMetricType;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
+import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.QueryTimeoutException;
@@ -18,16 +20,23 @@ import tools.jackson.databind.node.ObjectNode;
 
 import javax.sql.DataSource;
 import java.time.Duration;
+import java.time.DayOfWeek;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
+import java.time.temporal.TemporalAdjusters;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** 按已验证的 metricKey 计算通用指标，Dashboard 不再自行拼事件名和 SQL。 */
+/** 读取项目已保存的指标规则，从该项目的事件库计算结果供管理端展示。 */
 @Service
+@RequiredArgsConstructor
 public class AnalyticsMetricEvaluationService {
 
     private final AnalysisConfigurationService configurationService;
@@ -40,33 +49,22 @@ public class AnalyticsMetricEvaluationService {
     private final ProjectTransactionExecutor projectTransactions;
     private final ObjectMapper objectMapper;
 
-    public AnalyticsMetricEvaluationService(
-            AnalysisConfigurationService configurationService,
-            AdminProductAnalyticsService productAnalyticsService,
-            AnalyticsPropertyFilterService propertyFilterService,
-            SemanticDictionaryService semanticDictionaryService,
-            ActorIdentityResolver actorIdentityResolver,
-            MultiDataSourceManager dataSourceManager,
-            AnalyticsQueryProperties queryProperties,
-            ProjectTransactionExecutor projectTransactions,
-            ObjectMapper objectMapper
-    ) {
-        this.configurationService = configurationService;
-        this.productAnalyticsService = productAnalyticsService;
-        this.propertyFilterService = propertyFilterService;
-        this.semanticDictionaryService = semanticDictionaryService;
-        this.actorIdentityResolver = actorIdentityResolver;
-        this.dataSourceManager = dataSourceManager;
-        this.queryProperties = queryProperties;
-        this.projectTransactions = projectTransactions;
-        this.objectMapper = objectMapper;
-    }
-
     public AnalyticsMetricResultResponse evaluate(
             String projectId,
             String metricKey,
             String from,
             String to
+    ) {
+        return evaluate(projectId, metricKey, from, to, null);
+    }
+
+    /**
+     * 按同一指标规则计算整个所选区间，或按天／周分别计算去重人数。
+     *
+     * @param interval 空值按整段计算；只有去重人数支持 day 或 week。
+     */
+    public AnalyticsMetricResultResponse evaluate(
+            String projectId, String metricKey, String from, String to, String interval
     ) {
         AnalyticsMetricDefinitionResponse metric = configurationService.getMetric(projectId, metricKey);
         if (!metric.active()) {
@@ -77,9 +75,16 @@ public class AnalyticsMetricEvaluationService {
                 .compareTo(Duration.ofDays(queryProperties.getMaxRangeDays())) > 0) {
             throw BusinessException.analyticsQueryRangeExceeded(queryProperties.getMaxRangeDays());
         }
-        JsonNode result = switch (metric.metricType()) {
-            case EVENT_COUNT -> evaluateEventAggregate(projectId, metric.definition(), range, false);
-            case UNIQUE_ACTORS -> evaluateEventAggregate(projectId, metric.definition(), range, true);
+        if (interval != null && (!(interval.equals("day") || interval.equals("week"))
+                || metric.metricType() != AnalyticsMetricType.UNIQUE_ACTORS)) {
+            throw new IllegalArgumentException("仅 UNIQUE_ACTORS 指标支持 interval=day 或 week");
+        }
+        JsonNode result = interval != null
+                ? evaluateEventAggregate(projectId, metric.definition(),
+                        interval.equals("week") ? completeWeeks(range, Instant.now()) : range, true, interval)
+                : switch (metric.metricType()) {
+            case EVENT_COUNT -> evaluateEventAggregate(projectId, metric.definition(), range, false, null);
+            case UNIQUE_ACTORS -> evaluateEventAggregate(projectId, metric.definition(), range, true, null);
             case FUNNEL_CONVERSION -> objectMapper.valueToTree(productAnalyticsService.getFunnel(
                     projectId,
                     range.start().toString(),
@@ -87,7 +92,8 @@ public class AnalyticsMetricEvaluationService {
                     requiredTextList(metric.definition(), "steps", 2, 12),
                     optionalText(metric.definition(), "groupBy"),
                     optionalText(metric.definition(), "journeyKey"),
-                    serializedFilters(metric.definition())
+                    serializedFilters(metric.definition()),
+                    AdminProductAnalyticsService.parseFirstEventMilestones(metric.definition())
             ));
             case RETENTION -> objectMapper.valueToTree(productAnalyticsService.getRetention(
                     projectId,
@@ -215,7 +221,10 @@ public class AnalyticsMetricEvaluationService {
             return result;
         }
         result.put("average", values.stream().mapToDouble(Double::doubleValue).average().orElse(0D));
-        result.put("median", percentile(values, 0.5D));
+        int middle = values.size() / 2;
+        result.put("median", values.size() % 2 == 0
+                ? values.get(middle - 1) / 2d + values.get(middle) / 2d
+                : values.get(middle));
         result.put("p90", percentile(values, 0.9D));
         result.put("min", values.getFirst());
         result.put("max", values.getLast());
@@ -324,11 +333,13 @@ public class AnalyticsMetricEvaluationService {
 
     private record MetricCandidate(String actorId, JsonNode properties) {}
 
+    /** 事件字典决定查哪些事件名，指标自己的筛选决定纳入哪些版本和属性值。 */
     private JsonNode evaluateEventAggregate(
             String projectId,
             JsonNode definition,
             AdminQueryUtils.Range range,
-            boolean uniqueActors
+            boolean uniqueActors,
+            String interval
     ) {
         MultiDataSourceManager.ProjectConfig config = dataSourceManager.getProjectConfig(projectId);
         if (config == null || !Boolean.TRUE.equals(config.isActive())) {
@@ -341,6 +352,11 @@ public class AnalyticsMetricEvaluationService {
         AnalyticsPropertyFilterService.CompiledPropertyFilters filters = propertyFilterService.compile(
                 projectId, serializedFilters(definition), "properties"
         );
+        if (interval != null && (!range.start().isBefore(range.end()) || aliases.isEmpty())) {
+            ObjectNode empty = objectMapper.createObjectNode();
+            empty.putArray(interval.equals("week") ? "weeks" : "days");
+            return empty;
+        }
         if (aliases.isEmpty()) {
             return numericResult(uniqueActors ? "actors" : "occurrences", 0L);
         }
@@ -349,13 +365,17 @@ public class AnalyticsMetricEvaluationService {
         String linksTable = dataSourceManager.getTableName(projectId, "actor_identity_links");
         return executeMetricQuery(dataSource, jdbc -> {
             String placeholders = String.join(",", aliases.stream().map(ignored -> "?").toList());
+            String filterSql = filters.isEmpty() ? "" : " AND " + filters.sql();
+            if (interval != null) {
+                return uniqueActorsTrend(jdbc, eventsTable, linksTable, projectId, range,
+                        aliases, placeholders, filterSql, filters.arguments(), interval.equals("week"));
+            }
             List<Object> arguments = new ArrayList<>();
             arguments.add(projectId);
             arguments.add(range.start().toEpochMilli());
             arguments.add(range.end().toEpochMilli());
             arguments.addAll(aliases);
             arguments.addAll(filters.arguments());
-            String filterSql = filters.isEmpty() ? "" : " AND " + filters.sql();
             enforceMatchingEventBudget(
                     jdbc, eventsTable, placeholders, filterSql, arguments
             );
@@ -381,12 +401,89 @@ public class AnalyticsMetricEvaluationService {
             if (actors.size() > queryProperties.getMaxCandidateRows()) {
                 throw BusinessException.analyticsQueryBudgetExceeded(queryProperties.getMaxCandidateRows());
             }
+            // 允许多个事件版本时仍对整个区间统一去重，不能相加各版人数。
             Map<String, String> canonical = actorIdentityResolver.resolveCanonicalActors(
                     jdbc, linksTable, projectId, actors
             );
             long count = canonical.values().stream().distinct().count();
             return numericResult("actors", count);
         });
+    }
+
+    static AdminQueryUtils.Range completeWeeks(AdminQueryUtils.Range selected, Instant now) {
+        Instant start = utcWeekStart(selected.start());
+        if (start.isBefore(selected.start())) start = start.plus(Duration.ofDays(7));
+        Instant end = utcWeekStart(selected.end().isBefore(now) ? selected.end() : now);
+        return new AdminQueryUtils.Range(start, end.isBefore(start) ? start : end);
+    }
+
+    private static Instant utcWeekStart(Instant instant) {
+        return instant.atOffset(ZoneOffset.UTC).toLocalDate()
+                .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+                .atStartOfDay().toInstant(ZoneOffset.UTC);
+    }
+
+    private record BucketActor(Instant bucketStart, String actorId) {}
+
+    /** 日点和周点分别在各自时间段内去重，合计不等于整段的去重人数。 */
+    private ObjectNode uniqueActorsTrend(
+            JdbcTemplate jdbc, String eventsTable, String linksTable, String projectId, AdminQueryUtils.Range range,
+            List<String> aliases, String placeholders, String filterSql, List<Object> filterArguments, boolean weekly
+    ) {
+        ObjectNode result = objectMapper.createObjectNode();
+        var buckets = result.putArray(weekly ? "weeks" : "days");
+        Instant start = range.start();
+        if (weekly) {
+            List<Object> coverageArguments = new ArrayList<>();
+            coverageArguments.add(projectId);
+            coverageArguments.add(range.end().toEpochMilli());
+            coverageArguments.addAll(aliases);
+            coverageArguments.addAll(filterArguments);
+            List<Long> firstEvents = jdbc.queryForList(
+                    "SELECT event_timestamp FROM " + eventsTable
+                            + " WHERE project_id = ? AND event_timestamp < ?"
+                            + " AND event_type IN (" + placeholders + ")" + filterSql
+                            + " ORDER BY event_timestamp LIMIT 1",
+                    Long.class, coverageArguments.toArray()
+            );
+            if (firstEvents.isEmpty()) return result;
+            // 首条符合指标条件的事件所在周不能证明整周都有数据，最早从下一周算。
+            Instant coverageStart = utcWeekStart(Instant.ofEpochMilli(firstEvents.getFirst())).plus(Duration.ofDays(7));
+            if (start.isBefore(coverageStart)) start = coverageStart;
+        }
+        if (!start.isBefore(range.end())) return result;
+        List<Object> arguments = new ArrayList<>();
+        arguments.add(projectId);
+        arguments.add(start.toEpochMilli());
+        arguments.add(range.end().toEpochMilli());
+        arguments.addAll(aliases);
+        arguments.addAll(filterArguments);
+        enforceMatchingEventBudget(jdbc, eventsTable, placeholders, filterSql, arguments);
+        List<BucketActor> rows = jdbc.query(
+                "SELECT DISTINCT date_trunc(" + (weekly ? "'week'" : "'day'")
+                        + ", to_timestamp(event_timestamp / 1000.0), 'UTC') AS bucket_start, "
+                        + "COALESCE(NULLIF(BTRIM(user_id), ''), device_id::text) AS actor_id FROM " + eventsTable
+                        + " WHERE project_id = ? AND event_timestamp >= ? AND event_timestamp < ?"
+                        + " AND event_type IN (" + placeholders + ")" + filterSql,
+                (rs, rowNum) -> new BucketActor(rs.getTimestamp("bucket_start").toInstant(), rs.getString("actor_id")),
+                arguments.toArray()
+        );
+        Map<String, String> canonical = actorIdentityResolver.resolveCanonicalActors(
+                jdbc, linksTable, projectId, rows.stream().map(BucketActor::actorId).distinct().toList()
+        );
+        Map<Instant, Set<String>> actorsByBucket = new HashMap<>();
+        for (BucketActor row : rows) {
+            String actor = canonical.get(row.actorId());
+            if (actor != null) actorsByBucket.computeIfAbsent(row.bucketStart(), ignored -> new LinkedHashSet<>()).add(actor);
+        }
+        Duration step = Duration.ofDays(weekly ? 7 : 1);
+        Instant firstBucket = weekly ? start : start.truncatedTo(ChronoUnit.DAYS);
+        for (Instant bucket = firstBucket; bucket.isBefore(range.end()); bucket = bucket.plus(step)) {
+            buckets.addObject()
+                    .put(weekly ? "weekStart" : "dayStart", bucket.toString())
+                    .put("actors", actorsByBucket.getOrDefault(bucket, Set.of()).size());
+        }
+        return result;
     }
 
     private void enforceMatchingEventBudget(

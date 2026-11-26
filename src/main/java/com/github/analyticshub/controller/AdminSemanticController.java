@@ -21,6 +21,7 @@ import com.github.analyticshub.service.AnalyticsPropertyDefinitionService;
 import com.github.analyticshub.service.AnalysisConfigurationService;
 import com.github.analyticshub.service.AnalyticsMetricEvaluationService;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -34,6 +35,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 管理项目级语义字典，并把项目业务库的原始事件目录与系统库语义定义合并展示。
  */
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/admin/projects/{projectId}")
 public class AdminSemanticController {
 
@@ -41,18 +43,6 @@ public class AdminSemanticController {
     private final AnalyticsPropertyDefinitionService propertyDefinitionService;
     private final AnalysisConfigurationService analysisConfigurationService;
     private final AnalyticsMetricEvaluationService metricEvaluationService;
-
-    public AdminSemanticController(
-            SemanticDictionaryService semanticDictionaryService,
-            AnalyticsPropertyDefinitionService propertyDefinitionService,
-            AnalysisConfigurationService analysisConfigurationService,
-            AnalyticsMetricEvaluationService metricEvaluationService
-    ) {
-        this.semanticDictionaryService = semanticDictionaryService;
-        this.propertyDefinitionService = propertyDefinitionService;
-        this.analysisConfigurationService = analysisConfigurationService;
-        this.metricEvaluationService = metricEvaluationService;
-    }
 
     /** 查询已采集原始事件及其当前语义解析，不执行跨数据库 JOIN。 */
     @GetMapping("/event-catalog")
@@ -150,17 +140,24 @@ public class AdminSemanticController {
         return ApiResponse.success(analysisConfigurationService.upsertMetric(projectId, metricKey, request));
     }
 
+    /**
+     * 供看板和指标预览查询已登记指标，版本筛选取自指标定义。
+     * 默认返回所选期间的汇总；只有去重人数指标支持趋势，周趋势只显示已结束的 UTC 完整周。
+     *
+     * @param interval 不传取选定期间汇总；只有去重人数指标接受 {@code day} 或 {@code week}。
+     */
     @GetMapping("/metric-results/{metricKey}")
     public ApiResponse<AnalyticsMetricResultResponse> metricResult(
             @PathVariable("projectId") String projectId,
             @PathVariable("metricKey") String metricKey,
             @RequestParam(value = "from", required = false) String from,
-            @RequestParam(value = "to", required = false) String to
+            @RequestParam(value = "to", required = false) String to,
+            @RequestParam(value = "interval", required = false) String interval
     ) {
-        return ApiResponse.success(metricEvaluationService.evaluate(projectId, metricKey, from, to));
+        return ApiResponse.success(metricEvaluationService.evaluate(projectId, metricKey, from, to, interval));
     }
 
-    /** 原子导入声明式项目分析配置，并记录版本、校验和及审计事实。 */
+    /** 列出项目登记的分析包及其版本历史。 */
     @GetMapping("/analysis-packs")
     public ApiResponse<java.util.List<AnalysisPackDetailResponse>> listAnalysisPacks(
             @PathVariable("projectId") String projectId

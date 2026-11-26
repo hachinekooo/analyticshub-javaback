@@ -7,6 +7,7 @@ import com.github.analyticshub.dto.AdminEventRecord;
 import com.github.analyticshub.dto.AdminEventsResponse;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.util.CryptoUtils;
+import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -23,6 +24,7 @@ import java.util.Objects;
  * 承担旅程窗口、属性预算等独立策略。</p>
  */
 @Service
+@RequiredArgsConstructor
 public class AdminEventQueryService {
 
     private static final System.Logger log = System.getLogger(AdminEventQueryService.class.getName());
@@ -30,19 +32,28 @@ public class AdminEventQueryService {
     private final MultiDataSourceManager dataSourceManager;
     private final ObjectMapper objectMapper;
     private final ActorIdentityResolver actorIdentityResolver;
-
-    public AdminEventQueryService(MultiDataSourceManager dataSourceManager,
-                                  ObjectMapper objectMapper,
-                                  ActorIdentityResolver actorIdentityResolver) {
-        this.dataSourceManager = dataSourceManager;
-        this.objectMapper = objectMapper;
-        this.actorIdentityResolver = actorIdentityResolver;
-    }
+    private final SemanticDictionaryService semanticDictionaryService;
 
     public AdminEventsResponse listEvents(String projectId, String from, String to,
                                           Integer page, Integer pageSize,
                                           String eventType, String userId,
-                                          String resolvedActorId, String deviceId) {
+                                          String resolvedActorId, String deviceId, Integer eventSchemaVersion) {
+        return listEvents(projectId, from, to, page, pageSize, eventType, userId, resolvedActorId, deviceId,
+                eventSchemaVersion, null);
+    }
+
+    /**
+     * 查询指定项目的原始事件；总数和列表共用筛选条件，不应用看板的指标定义。
+     *
+     * @param userId 按事件原样保存的统计身份筛选。
+     * @param resolvedActorId 按归一身份展开关联成员；和 userId 同传时取交集。
+     * @param eventSchemaVersion 匹配事件属性中的版本号；空值不筛选版本。
+     * @param semanticEvent 项目的业务定义键；和 raw eventType 互斥。
+     */
+    public AdminEventsResponse listEvents(String projectId, String from, String to,
+                                          Integer page, Integer pageSize, String eventType, String userId,
+                                          String resolvedActorId, String deviceId, Integer eventSchemaVersion,
+                                          String semanticEvent) {
         String normalizedProjectId = normalizeProjectId(projectId);
         AdminQueryUtils.Range range = AdminQueryUtils.resolveRange(from, to);
         AdminQueryUtils.Paging paging = AdminQueryUtils.resolvePaging(page, pageSize);
@@ -71,14 +82,29 @@ public class AdminEventQueryService {
         args.add(range.end().toEpochMilli());
 
         if (eventType != null && !eventType.isBlank()) {
+            if (semanticEvent != null) throw new IllegalArgumentException("eventType 与 semanticEvent 不能同时使用");
             where.append(" AND event_type = ? ");
             args.add(eventType.trim());
+        }
+        if (semanticEvent != null) {
+            String key = semanticEvent.trim();
+            List<String> aliases = semanticDictionaryService.resolveActiveEventAliases(normalizedProjectId, List.of(key))
+                    .getOrDefault(key, List.of());
+            if (aliases.isEmpty()) {
+                // 业务事件未配置原始事件名时应返回空结果，不能退化成查全部事件。
+                where.append(" AND FALSE ");
+            } else {
+                where.append(" AND event_type IN (")
+                        .append(String.join(",", java.util.Collections.nCopies(aliases.size(), "?"))).append(") ");
+                args.addAll(aliases);
+            }
         }
         if (userId != null && !userId.isBlank()) {
             where.append(" AND user_id = ? ");
             args.add(userId.trim());
         }
         if (!resolvedActorMembers.isEmpty()) {
+            // 匹配归一身份及其关联身份，不改写原事件；若同时给了 userId，仍只取两者交集。
             where.append(" AND lower(user_id) IN (")
                     .append(String.join(",", resolvedActorMembers.stream().map(ignored -> "?").toList()))
                     .append(") ");
@@ -87,6 +113,10 @@ public class AdminEventQueryService {
         if (deviceId != null && !deviceId.isBlank()) {
             where.append(" AND device_id = ?::uuid ");
             args.add(deviceId.trim());
+        }
+        if (eventSchemaVersion != null) {
+            where.append(" AND properties ->> 'event_schema_version' = ? ");
+            args.add(eventSchemaVersion.toString());
         }
 
         String countSql = String.format("SELECT COUNT(*) FROM %s %s", eventsTable, where);

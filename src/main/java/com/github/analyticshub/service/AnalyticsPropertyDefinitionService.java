@@ -5,6 +5,7 @@ import com.github.analyticshub.dto.AnalyticsPropertyDefinitionRequest;
 import com.github.analyticshub.dto.AnalyticsPropertyDefinitionResponse;
 import com.github.analyticshub.dto.AnalyticsPropertyDefinitionsResponse;
 import com.github.analyticshub.exception.BusinessException;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -28,6 +29,7 @@ import java.util.regex.Pattern;
  * 未注册、敏感或未声明对应能力的属性不能进入筛选、分组和旅程计算。</p>
  */
 @Service
+@RequiredArgsConstructor
 public class AnalyticsPropertyDefinitionService {
 
     private static final Pattern PROJECT_ID = Pattern.compile("^[a-z0-9_-]{1,50}$");
@@ -40,16 +42,6 @@ public class AnalyticsPropertyDefinitionService {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
     private final AnalysisPackOwnershipService packOwnershipService;
-
-    public AnalyticsPropertyDefinitionService(
-            JdbcTemplate jdbcTemplate,
-            ObjectMapper objectMapper,
-            AnalysisPackOwnershipService packOwnershipService
-    ) {
-        this.jdbcTemplate = jdbcTemplate;
-        this.objectMapper = objectMapper;
-        this.packOwnershipService = packOwnershipService;
-    }
 
     @Transactional(readOnly = true)
     public AnalyticsPropertyDefinitionsResponse list(String projectId) {
@@ -84,6 +76,11 @@ public class AnalyticsPropertyDefinitionService {
         return saved;
     }
 
+    /**
+     * 在分析包导入中写入属性定义。
+     *
+     * @param targetPackMetricKeys 本次整包导入将更新或停用的指标键，属性写入时暂不检查这些指标的旧引用。
+     */
     AnalyticsPropertyDefinitionResponse upsertFromPack(
             String projectId,
             String propertyKey,
@@ -230,6 +227,10 @@ public class AnalyticsPropertyDefinitionService {
         if (groupBy != null && !hasCapability(definitions.get(groupBy), false)) {
             blockers.add(owner + " groupBy=" + groupBy);
         }
+        String milestoneProperty = textOrNull(config.path("firstEventMilestones").get("propertyKey"));
+        if (milestoneProperty != null && !hasCapability(definitions.get(milestoneProperty), false)) {
+            blockers.add(owner + " firstEventMilestones.propertyKey=" + milestoneProperty);
+        }
         String journeyKey = textOrNull(config.get("journeyKey"));
         if (journeyKey != null && !hasCapability(definitions.get(journeyKey), true)) {
             blockers.add(owner + " journeyKey=" + journeyKey);
@@ -339,6 +340,14 @@ public class AnalyticsPropertyDefinitionService {
         return !next.containsAll(current);
     }
 
+    /**
+     * 在收紧属性能力前校验活跃指标及相关引用。
+     *
+     * @param checkFilter 检查指标筛选或数值计算对该属性的依赖。
+     * @param checkGroup 检查按属性分组或把该属性展开为阶段的依赖。
+     * @param checkJourney 检查按该属性串联操作流程的依赖。
+     * @param excludedMetricKeys 随同一分析包更新或停用的指标；只跳过其旧指标定义，不跳过看板检查。
+     */
     private void requireNoDependencies(
             String projectId,
             String propertyKey,
@@ -357,7 +366,8 @@ public class AnalyticsPropertyDefinitionService {
             JsonNode definition = objectMapper.readTree(resultSet.getString("definition"));
             if ((checkFilter && (filterReferences(definition, propertyKey)
                     || propertyKey.equals(textOrNull(definition.get("propertyKey")))))
-                    || (checkGroup && propertyKey.equals(textOrNull(definition.get("groupBy"))))
+                    || (checkGroup && (propertyKey.equals(textOrNull(definition.get("groupBy")))
+                        || propertyKey.equals(textOrNull(definition.path("firstEventMilestones").get("propertyKey")))))
                     || (checkJourney && propertyKey.equals(textOrNull(definition.get("journeyKey"))))) {
                 throw invalid("属性 " + propertyKey + " 仍被指标 " + metricKey + " 使用，不能停用对应能力");
             }

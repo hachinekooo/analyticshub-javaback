@@ -10,6 +10,7 @@ import com.github.analyticshub.dto.AdminRetentionResponse;
 import com.github.analyticshub.dto.AnalyticsPropertyDataType;
 import com.github.analyticshub.exception.BusinessException;
 import com.github.analyticshub.projectdb.ProjectTransactionExecutor;
+import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.transaction.TransactionTimedOutException;
@@ -37,6 +38,7 @@ import java.util.Set;
  * 数据量变大后可以把同一口径迁移到物化表或分析型存储。</p>
  */
 @Service
+@RequiredArgsConstructor
 public class AdminProductAnalyticsService {
 
     private static final System.Logger log = System.getLogger(AdminProductAnalyticsService.class.getName());
@@ -51,22 +53,6 @@ public class AdminProductAnalyticsService {
     private final AnalyticsQueryProperties queryProperties;
     private final ProjectTransactionExecutor projectTransactions;
     private final AnalyticsPropertyFilterService propertyFilterService;
-
-    public AdminProductAnalyticsService(
-            MultiDataSourceManager dataSourceManager,
-            SemanticDictionaryService semanticDictionaryService,
-            ActorIdentityResolver actorIdentityResolver,
-            AnalyticsQueryProperties queryProperties,
-            ProjectTransactionExecutor projectTransactions,
-            AnalyticsPropertyFilterService propertyFilterService
-    ) {
-        this.dataSourceManager = dataSourceManager;
-        this.semanticDictionaryService = semanticDictionaryService;
-        this.actorIdentityResolver = actorIdentityResolver;
-        this.queryProperties = queryProperties;
-        this.projectTransactions = projectTransactions;
-        this.propertyFilterService = propertyFilterService;
-    }
 
     public AdminFunnelResponse getFunnel(
             String projectId,
@@ -98,6 +84,57 @@ public class AdminProductAnalyticsService {
             String journeyKey,
             String propertyFilters
     ) {
+        return getFunnel(projectId, from, to, steps, groupBy, journeyKey, propertyFilters, null);
+    }
+
+    public record FirstEventMilestones(String propertyKey, List<String> values) {
+        public FirstEventMilestones {
+            values = List.copyOf(values);
+        }
+
+        Map<String, String> stepKeys(String event, AnalyticsPropertyDataType type) {
+            Map<String, String> result = new LinkedHashMap<>();
+            for (String value : values) {
+                String normalized = normalizeMilestoneValue(value, type);
+                if (normalized == null || result.putIfAbsent(normalized, event + "::" + value) != null) {
+                    throw new IllegalArgumentException("firstEventMilestones.values 与属性类型不匹配或存在重复值");
+                }
+            }
+            return result;
+        }
+    }
+
+    static FirstEventMilestones parseFirstEventMilestones(tools.jackson.databind.JsonNode definition) {
+        var node = definition.get("firstEventMilestones");
+        if (node == null) return null;
+        if (!node.isObject() || node.size() != 2 || !node.path("propertyKey").isString()
+                || !node.path("values").isArray() || node.path("values").isEmpty()
+                || node.path("values").size() > 11) {
+            throw new IllegalArgumentException("firstEventMilestones 需要 propertyKey 和 1 到 11 个有序值");
+        }
+        String propertyKey = normalizePropertyKey(node.path("propertyKey").asString());
+        if (propertyKey.isBlank()) throw new IllegalArgumentException("firstEventMilestones.propertyKey 不能为空");
+        List<String> values = new ArrayList<>();
+        for (var value : node.path("values")) {
+            if (!value.isString() || !value.asString().matches("[A-Za-z0-9_-]{1,80}") || values.contains(value.asString())) {
+                throw new IllegalArgumentException("firstEventMilestones.values 必须为不重复的稳定值");
+            }
+            values.add(value.asString());
+        }
+        return new FirstEventMilestones(propertyKey, values);
+    }
+
+    /**
+     * @param steps 按顺序指定事件定义键，以逗号分隔。
+     * @param groupBy 首步属性的分组维度；不能与 milestones 同用。
+     * @param journeyKey 流程标识的属性键；里程碑模式必填。
+     * @param propertyFilters 候选事件的 JSON 属性条件。
+     * @param milestones 将第一种事件按属性值拆成里程碑；各步骤以首步为分母，空值走普通逐步漏斗。
+     */
+    AdminFunnelResponse getFunnel(
+            String projectId, String from, String to, String steps, String groupBy,
+            String journeyKey, String propertyFilters, FirstEventMilestones milestones
+    ) {
         String normalizedProjectId = normalizeProjectId(projectId);
         AdminQueryUtils.Range range = AdminQueryUtils.resolveRange(from, to);
         validateInteractiveRange(range.start(), range.end());
@@ -108,8 +145,16 @@ public class AdminProductAnalyticsService {
         SemanticSelection selection = resolveSelection(normalizedProjectId, semanticSteps);
         String normalizedGroupBy = normalizePropertyKey(groupBy);
         String normalizedJourneyKey = normalizePropertyKey(journeyKey);
+        if (milestones != null && (!normalizedGroupBy.isBlank() || normalizedJourneyKey.isBlank())) {
+            throw new IllegalArgumentException("firstEventMilestones 需要 journeyKey 且不能同时使用 groupBy");
+        }
+        String projectedProperty = milestones == null ? normalizedGroupBy : milestones.propertyKey();
         AnalyticsPropertyDataType resolvedGroupDataType = propertyFilterService
-                .requireGroupable(normalizedProjectId, normalizedGroupBy);
+                .requireGroupable(normalizedProjectId, projectedProperty);
+        if (milestones != null && resolvedGroupDataType != AnalyticsPropertyDataType.INTEGER
+                && resolvedGroupDataType != AnalyticsPropertyDataType.STRING) {
+            throw new IllegalArgumentException("firstEventMilestones 只支持已登记的整数或字符串属性");
+        }
         AnalyticsPropertyDataType groupDataType = resolvedGroupDataType;
         propertyFilterService.requireJourneyKey(normalizedProjectId, normalizedJourneyKey);
         AnalyticsPropertyFilterService.CompiledPropertyFilters compiledFilters =
@@ -125,7 +170,7 @@ public class AdminProductAnalyticsService {
                     range.start(),
                     range.end(),
                     selection.rawKeys(),
-                    normalizedGroupBy,
+                    projectedProperty,
                     groupDataType,
                     normalizedJourneyKey,
                     compiledFilters
@@ -134,9 +179,24 @@ public class AdminProductAnalyticsService {
             return resolveCanonicalActors(jdbcTemplate, normalizedProjectId, queriedRows);
         });
 
+        List<String> evaluatedSteps = semanticSteps;
+        if (milestones != null) {
+            // 按属性值把同一种事件拆成不同里程碑；丢弃未配置的值，其他事件不变。
+            String firstEvent = semanticSteps.getFirst();
+            Map<String, String> stepByValue = milestones.stepKeys(firstEvent, groupDataType);
+            evaluatedSteps = new ArrayList<>(stepByValue.values());
+            evaluatedSteps.addAll(semanticSteps.subList(1, semanticSteps.size()));
+            rows = rows.stream().map(row -> {
+                if (!firstEvent.equals(row.eventType())) return row;
+                String step = stepByValue.get(normalizeMilestoneValue(row.groupValue(), groupDataType));
+                return step == null ? null : new EventRow(row.id(), step, row.createdAt(), row.actorId(),
+                        null, false, row.journeyValue());
+            }).filter(java.util.Objects::nonNull).toList();
+        }
+        List<String> funnelSteps = evaluatedSteps;
         Map<String, Map<String, ActorTimeline>> groups = buildFunnelGroups(
                 rows,
-                semanticSteps,
+                funnelSteps,
                 normalizedGroupBy,
                 groupDataType,
                 normalizedJourneyKey
@@ -145,7 +205,9 @@ public class AdminProductAnalyticsService {
                 .sorted(Map.Entry.comparingByKey())
                 .map(entry -> new AdminFunnelGroupResult(
                         entry.getKey(),
-                        calculateFunnelSteps(semanticSteps, entry.getValue())
+                        milestones == null
+                                ? calculateFunnelSteps(funnelSteps, entry.getValue())
+                                : calculateFirstEventMilestones(funnelSteps, entry.getValue())
                 ))
                 .toList();
 
@@ -153,7 +215,7 @@ public class AdminProductAnalyticsService {
                 normalizedProjectId,
                 range.start().toString(),
                 range.end().toString(),
-                semanticSteps,
+                funnelSteps,
                 normalizedGroupBy,
                 normalizedJourneyKey,
                 normalizedJourneyKey.isBlank() ? "actors" : "journeys",
@@ -175,6 +237,12 @@ public class AdminProductAnalyticsService {
         return getRetention(projectId, from, to, cohortEvent, returnEvent, days, null);
     }
 
+    /**
+     * @param cohortEvent 用于选出观察人群的起点事件定义键。
+     * @param returnEvent 在目标 UTC 自然日判断有无回访的事件定义键。
+     * @param days 逗号分隔的观察日编号，默认 1、7、30。
+     * @param propertyFilters 同时作用于起点和回访的候选事件。
+     */
     public AdminRetentionResponse getRetention(
             String projectId,
             String from,
@@ -237,6 +305,7 @@ public class AdminProductAnalyticsService {
         }
         returnPositions.values().forEach(positions -> positions.sort(Comparator.naturalOrder()));
 
+        // 每个统计身份只用筛选范围内最早的一次起点；回访按 UTC 自然日查找，不按满 24 小时计算。
         long cohortUsers = cohortPositions.size();
         List<AdminRetentionBucket> buckets = retentionDays.stream()
                 .map(day -> {
@@ -397,6 +466,25 @@ public class AdminProductAnalyticsService {
             reachedActors = currentReached;
             previousStepPositions = currentStepPositions;
             previousStepUsers = users;
+        }
+        return results;
+    }
+
+    /** 各里程碑独立匹配首步之后的事件，统一以首步为分母，不计算逐步流失率。 */
+    private List<AdminFunnelStepResult> calculateFirstEventMilestones(
+            List<String> steps, Map<String, ActorTimeline> journeys
+    ) {
+        String firstStep = steps.getFirst();
+        int entered = journeys.size();
+        List<AdminFunnelStepResult> results = new ArrayList<>();
+        results.add(new AdminFunnelStepResult(1, firstStep, entered, entered > 0 ? 1d : 0d, null));
+        for (int index = 1; index < steps.size(); index++) {
+            String step = steps.get(index);
+            long reached = journeys.values().stream()
+                    .filter(timeline -> timeline.firstAfter(step, timeline.firstAfter(firstStep, null)) != null)
+                    .count();
+            results.add(new AdminFunnelStepResult(index + 1, step, reached,
+                    entered > 0 ? roundRate((double) reached / entered) : 0d, null));
         }
         return results;
     }
@@ -673,6 +761,18 @@ public class AdminProductAnalyticsService {
             case INTEGER -> "CASE WHEN jsonb_typeof(properties -> ?) = 'number' AND mod((properties ->> ?)::numeric, 1) = 0 THEN properties ->> ? ELSE NULL END AS group_value";
             case NUMBER -> "CASE WHEN jsonb_typeof(properties -> ?) = 'number' THEN properties ->> ? ELSE NULL END AS group_value";
         };
+    }
+
+    private static String normalizeMilestoneValue(String value, AnalyticsPropertyDataType type) {
+        if (value == null || value.length() > AnalyticsPropertyValueNormalizer.MAX_VALUE_LENGTH) return null;
+        if (type == AnalyticsPropertyDataType.INTEGER) {
+            try {
+                return Long.toString(new java.math.BigDecimal(value).longValueExact());
+            } catch (NumberFormatException | ArithmeticException ignored) {
+                return null;
+            }
+        }
+        return normalizeGroupValue(value, type);
     }
 
     private static String normalizeGroupValue(String value, AnalyticsPropertyDataType type) {

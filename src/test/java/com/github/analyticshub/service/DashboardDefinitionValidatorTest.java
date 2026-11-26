@@ -61,6 +61,20 @@ class DashboardDefinitionValidatorTest {
     }
 
     @Test
+    void validatesOptionalPresentationFields() {
+        var valid = objectMapper.readTree("""
+                {"schemaVersion":2,"layoutMode":"automatic","topicOrder":20,"widgets":[]}
+                """);
+        assertThatCode(() -> validator.validate(2, valid)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> validator.validate(2, objectMapper.readTree("""
+                {"schemaVersion":2,"layoutMode":"masonry","widgets":[]}
+                """))).isInstanceOf(BusinessException.class).hasMessageContaining("layoutMode");
+        assertThatThrownBy(() -> validator.validate(2, objectMapper.readTree("""
+                {"schemaVersion":2,"topicOrder":-1,"widgets":[]}
+                """))).isInstanceOf(BusinessException.class).hasMessageContaining("topicOrder");
+    }
+
+    @Test
     void rejectsExecutableOrRemoteFields() throws Exception {
         var definition = objectMapper.readTree("""
                 {

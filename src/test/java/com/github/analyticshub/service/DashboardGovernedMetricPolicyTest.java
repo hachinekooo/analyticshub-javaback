@@ -24,6 +24,18 @@ class DashboardGovernedMetricPolicyTest {
     private final DashboardGovernedMetricPolicy policy = new DashboardGovernedMetricPolicy(configuration);
 
     @Test
+    void weeklyPresentationRejectsAnEventCountEvenWhenScalarAlreadyExists() throws Exception {
+        var scalar = objectMapper.readTree(dashboard("example.count"));
+        var weekly = objectMapper.readTree(dashboard("example.count")
+                .replace("\"metricKey\":", "\"interval\":\"week\",\"metricKey\":"));
+        when(configuration.getMetric("project", "example.count")).thenReturn(metric("example.count", true));
+
+        assertThatThrownBy(() -> policy.validateForWrite("project", weekly, scalar, false))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo("DASHBOARD_GOVERNED_METRIC_UNAVAILABLE"));
+    }
+
+    @Test
     void validatesOnlyNewMetricReferences() throws Exception {
         var existing = objectMapper.readTree(dashboard("existing.metric"));
         var updated = objectMapper.readTree(dashboard("existing.metric", "new.metric"));
@@ -73,6 +85,20 @@ class DashboardGovernedMetricPolicyTest {
                 "project", key, Map.of("en", key), AnalyticsMetricType.EVENT_COUNT,
                 objectMapper.createObjectNode(), null, active, Instant.EPOCH, Instant.EPOCH
         );
+    }
+
+    @Test
+    void responseSummaryRequiresAnActiveTwoStepActorFunnel() throws Exception {
+        var updated = objectMapper.readTree(dashboard("answers")
+                .replace("\"metricKey\":", "\"responseMetricKey\":\"responses\",\"metricKey\":"));
+        when(configuration.getMetric("project", "answers")).thenReturn(metric("answers", true));
+        when(configuration.getMetric("project", "responses")).thenReturn(metric("responses", true));
+        assertThatThrownBy(() -> policy.validateForWrite("project", updated, null, true))
+                .isInstanceOf(BusinessException.class);
+        when(configuration.getMetric("project", "responses")).thenReturn(new AnalyticsMetricDefinitionResponse(
+                "project", "responses", Map.of("en", "responses"), AnalyticsMetricType.FUNNEL_CONVERSION,
+                objectMapper.readTree("{\"steps\":[\"seen\",\"responded\"]}"), null, true, Instant.EPOCH, Instant.EPOCH));
+        assertThatCode(() -> policy.validateForWrite("project", updated, null, true)).doesNotThrowAnyException();
     }
 
     private static String dashboard(String... metricKeys) {

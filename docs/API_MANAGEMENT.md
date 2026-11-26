@@ -253,12 +253,26 @@ X-Admin-Token: your_admin_token
 GET /api/admin/events?projectId=your_project
 ```
 **参数**：
-- `page`, `pageSize`: 分页参数
-- `eventType`: 筛选事件类型
+- `page`, `pageSize`：默认第 1 页、每页 50 条，单页最多 200 条。先筛选后分页，按事件发生时间从新到旧返回。
+- `eventType`: 精确筛选一个原始事件类型。
+- `semanticEvent`：按项目业务事件定义匹配原始事件名，不可与非空白的 `eventType` 同传。定义键格式不合法返回 400；键合法但定义未登记或已停用返回 `409 SEMANTIC_DEFINITION_UNAVAILABLE`；已启用但未配置映射则返回零条。
+- `eventSchemaVersion`: 可选正整数，按事件自身的 `properties.event_schema_version` 筛选，不是 App 版本。省略时查所有版本（含没有版本字段的事件）。筛选先于计数与分页，仅影响事件列表，不改变旅程与指标口径。
 - `userId`: 按事件写入时的原始统计身份精确筛选
-- `resolvedActorId`: 按归一身份筛选完整旅程；可传归一 actor 或其已绑定的匿名 raw actor，都会返回关联前后的事件
+- `resolvedActorId`：按当前身份关联查事件；可传归一身份或已关联的匿名身份。结果仍受时间范围和其他筛选限制。
 - `deviceId`: 筛选设备
-- `from`, `to`: 时间范围
+- `from`, `to`：按事件发生时间筛选。两者都省略时查询最近 7 天；只传 `to` 则从该结束边界往前取 7 天。纯日期按 UTC 解析，结束日期包含当天；传具体时间戳时不包含结束时刻。
+
+`data.total` 是匹配的事件记录总数，不是用户数；`data.items` 只包含当前页。下面示例查询指定时间内的 V4 事件：
+
+```bash
+curl -G 'https://analytics.example.com/api/admin/events' \
+  -H "X-Admin-Token: $ANALYTICSHUB_ADMIN_TOKEN" \
+  --data-urlencode 'projectId=your_project' \
+  --data-urlencode 'eventType=task_completed' \
+  --data-urlencode 'eventSchemaVersion=4' \
+  --data-urlencode 'from=2026-10-01' \
+  --data-urlencode 'to=2026-10-07'
+```
 
 **响应示例：**
 
@@ -266,26 +280,32 @@ GET /api/admin/events?projectId=your_project
 {
   "success": true,
   "data": {
+    "projectId": "your_project",
+    "rangeStart": "2026-10-01T00:00:00Z",
+    "rangeEnd": "2026-10-08T00:00:00Z",
     "page": 1,
-    "pageSize": 20,
-    "total": 5000,
+    "pageSize": 50,
+    "total": 1,
     "items": [
       {
         "eventId": "evt_x1y2z3",
-        "eventType": "button_click",
-        "eventTimestamp": 1673520000000,
-        "deviceId": "550e8400-...",
+        "eventType": "task_completed",
+        "eventTimestamp": 1790812800000,
+        "createdAt": "2026-10-01T00:00:01Z",
+        "deviceId": "50d2bc65-d650-4455-a2be-daf43a259e38",
         "userId": "550e8400-e29b-41d4-a716-446655440000",
         "resolvedActorId": "0f8fad5b-d9cb-469f-a165-70867728950e",
         "identityScope": "anonymous",
         "actorLinked": true,
-        "sessionId": "sess_abc",
+        "sessionId": "2aef0a96-90a0-40a0-9a71-c26df961cb82",
         "properties": {
-          "button_id": "login_btn"
+          "event_schema_version": "4",
+          "identity_scope": "anonymous"
         }
       }
     ]
-  }
+  },
+  "timestamp": "2026-10-08T00:01:00Z"
 }
 ```
 
@@ -304,14 +324,13 @@ GET /api/admin/events/journey?projectId=your_project&anchorEventId=evt_x1y2z3&be
 
 - `anchorEventId` 必填，必须来自当前项目的真实事件；调用方不需要预先查询或复制 actor ID。
 - `beforeMinutes`、`afterMinutes` 默认各 60 分钟，单侧最大 7 天。
-- 有 actor 时自动解析匿名与登录后的归一身份；遗留事件没有 actor 时，退化为同设备时间线。
+- 锚点带有效身份 UUID 时按归一身份查；没有有效身份 UUID 时查同设备时间线。
 - 事件按发生时间正序返回，`anchorEventId` 可用于在 UI 中高亮所选事件。
 - 单次最多返回最接近锚点的 200 条事件；`truncated=true` 时应向管理员明确提示范围内还有其他事件。
-- 旅程事件包含完整 `properties`，供受控管理员连续排查；该接口不得暴露给普通项目成员或公共客户端。
+- 事件属性供受控管理员排查；该接口不得暴露给普通项目成员或公共客户端。
 - 正常属性直接返回；超过 64 KiB 或超出整段响应预算的属性会标记 `propertiesDeferred=true`。
-  其中不超过 2 MiB 的属性可由管理端调用
-  `GET /api/admin/events/properties?projectId=...&eventId=...` 单独读取；超过 2 MiB 时仅返回大小且不提供在线加载，
-  避免异常数据拖垮服务端或浏览器。
+  管理端可调用 `GET /api/admin/events/properties?projectId=...&eventId=...` 单独读取。
+  已记录的属性大小超过 2 MiB 时，旅程只显示大小，单独读取接口也会拒绝请求。
 - V8 起，事件写入会同时保存 `properties_size_bytes` 与 `identity_scope` 查询元数据；旅程候选只读取该整数判断
   是否加载属性，不会为了估算大小批量解压 JSONB。升级前、同样受 1 MiB 请求上限约束的历史事件由后台任务
   按主键小批次、独立事务、可续跑地回填；回填完成前，尚未处理的旧属性按需加载，不阻塞服务启动。
@@ -920,7 +939,11 @@ DELETE /api/admin/projects/{projectId}/dashboards/{dashboardKey}?expectedRevisio
 
 创建时 `expectedRevision` 为 `0`；更新和删除必须传当前 revision，过期返回 409。
 
-`definition.defaultRange` 仅接受 `24h`、`7d`、`30d`、`90d`、`custom`；`custom` 表示不预置日期。它是项目 Dashboard 的初始查询范围，不是用户每次在页面选择日期后都会更新的临时状态。
+`definition.defaultRange` 仅接受 `24h`、`7d`、`30d`、`90d`、`custom`；`custom` 不指定项目预设，界面在用户未选择日期时明确使用近 7 个 UTC 自然日，不代表查询全历史。用户在页面选择日期不会回写此配置。
+
+`definition.layoutMode` 可选：`automatic` 按组件类型编排浏览页面，`custom` 按已保存的网格位置和尺寸浏览；旧定义缺省时继续按保存位置展示。`definition.topicOrder` 可选，是 0–1000 的整数，用于固定专题顺序；不影响指标查询。
+
+组件可用本地化 `config.sectionLabel` 标记所在分组的起点，供长报表定位；不会改变卡片的顺序或查询条件。
 
 `core.overview.config.metricKeys` 是有序选择：system 指标由 AnalyticsHub 事实直接计算；`core.*` 业务指标复用官方语义 Key，并且只有完成有效映射后才可新加入配置和在正常大屏展示。后端会在 Dashboard 写入边界再次校验，旧前端或脚本不能绕过。已保存业务指标后来因停用或清空映射而失效时，读取会隐藏该指标但保留原配置；无关布局编辑仍可保存，重新加入其他失效指标仍会被拒绝。历史 Dashboard 未保存该字段时，由当前可用指标生成动态兼容默认值；普通布局保存不会隐式固化，只有管理员实际编辑概览选择后才转为显式配置。
 
@@ -941,6 +964,18 @@ GET /api/admin/projects/{projectId}/analysis-packs
 PUT /api/admin/projects/{projectId}/analysis-packs/{packKey}
 GET /api/admin/metrics/data-quality?projectId=...&from=...&to=...
 ```
+
+看板和指标预览通过 `metric-results` 传项目、指标键与日期，不传采集协议版本。后端先按事件字典解析原始事件名，再执行该项目已保存的指标定义和版本筛选。若同一指标明确纳入多个版本，接口返回一次聚合后的结果；去重人数是在全部匹配记录归一身份后计算，不是各版本人数相加。原始事件按版本筛查使用事件明细接口，不影响看板指标。项目可信版本用于校验指标可选范围，不替代指标自己的筛选。
+
+`FUNNEL_CONVERSION` 可用 `firstEventMilestones: { "propertyKey": "...", "values": ["1", "2"] }` 将首个事件按属性值拆成里程碑。需要已登记的可分组整数/字符串属性和 `journeyKey`，不能同时配置 `groupBy`。第一个值决定入组，后续各步独立匹配同一旅程中入组后的事件；中间步骤缺失不吞掉后续事实。各步骤以首步为分母，不返回逐步流失率。普通漏斗仍按原顺序计算。
+
+去重人数指标（`UNIQUE_ACTORS`）按下列方式返回：
+
+- 不传 `interval`：`result.actors` 为整个所选区间的去重人数。
+- `interval=day`：`result.days`，每项包含 `dayStart`（UTC 00:00）和 `actors`。首尾日只计入查询范围内的记录；零表示没有匹配事件。
+- `interval=week`：`result.weeks`，每项包含 `weekStart`（周一 UTC 00:00）和 `actors`。只返回已结束的完整周，并从首条匹配事件的下一周开始；没有可比较的周时返回空数组。
+
+看板的 `core.governedMetric` 可配置对应的 `interval`。逐日或逐周人数不能相加当作整个区间的人数。
 
 属性定义明确 `STRING / BOOLEAN / INTEGER / NUMBER` 类型，以及 `filterable / groupable / journeyKey / sensitive` 能力。敏感属性不能开启筛选、分组或旅程关联。漏斗、留存、运营概览、趋势、事件排行和 App 版本分布使用同一 `propertyFilters` 合同：
 

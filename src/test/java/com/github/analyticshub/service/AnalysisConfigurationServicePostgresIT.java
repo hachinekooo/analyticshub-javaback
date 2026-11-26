@@ -172,6 +172,37 @@ class AnalysisConfigurationServicePostgresIT {
     }
 
     @Test
+    void activeSurveyProtectsItsResponseMetricFromManualAndPackChanges() {
+        var funnel = objectMapper.readTree("{\"steps\":[\"survey.shown\",\"survey.answered\"]}");
+        var manual = new AnalyticsMetricDefinitionRequest(Map.of("en", "Answers"),
+                AnalyticsMetricType.FUNNEL_CONVERSION, funnel, null, true);
+        inTransaction(() -> service.upsertMetric(PROJECT_ID, "manual.answers", manual));
+        var pack = manifest(null, "pack.answers");
+        var packed = (tools.jackson.databind.node.ObjectNode) pack.path("metrics").get(0);
+        packed.put("metricType", "FUNNEL_CONVERSION");
+        packed.set("definition", funnel);
+        inTransaction(() -> service.importPack(PROJECT_ID, "survey", request(1, pack)));
+        for (String key : List.of("manual.answers", "pack.answers")) {
+            jdbcTemplate.update("""
+                    INSERT INTO analytics_dashboards
+                        (project_id,dashboard_key,display_name,schema_version,definition,is_active)
+                    VALUES (?, ?, '{"en":"Survey"}'::jsonb, 2, ?::jsonb, TRUE)
+                    """, PROJECT_ID, key, """
+                    {"widgets":[{"type":"core.governedMetric","config":{"responseMetricKey":"%s"}}]}
+                    """.formatted(key));
+        }
+        var incompatible = new AnalyticsMetricDefinitionRequest(Map.of("en", "Answers"),
+                AnalyticsMetricType.UNIQUE_ACTORS, objectMapper.readTree("{\"semanticEvent\":\"survey.answered\"}"), null, true);
+        assertThatThrownBy(() -> inTransaction(() -> service.upsertMetric(PROJECT_ID, "manual.answers", incompatible)))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("回答概况");
+        assertThatThrownBy(() -> inTransaction(() -> service.importPack(PROJECT_ID, "survey",
+                request(2, manifest(null, "pack.answers")))))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("回答概况");
+        new AnalyticsMetricDependencyService(jdbcTemplate).requireUnusedByActiveResponseSummaries("other", "pack.answers");
+        assertThat(service.getMetric(PROJECT_ID, "pack.answers").definition()).isEqualTo(funnel);
+    }
+
+    @Test
     void inactiveDashboardCannotBeReactivatedAfterItsMetricIsDeactivated() throws Exception {
         AnalyticsMetricDefinitionRequest activeMetric = new AnalyticsMetricDefinitionRequest(
                 Map.of("en", "Lifecycle metric"), AnalyticsMetricType.EVENT_COUNT,
